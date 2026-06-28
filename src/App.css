@@ -817,3 +817,42 @@
   border-radius: 6px;
   border: 1px solid #fecaca;
 }
+
+/* ══════════════════════════════════════
+   Cash Ledger page
+══════════════════════════════════════ */
+
+/* Type badges */
+.cl-badge-in {
+  display: inline-block;
+  background: #d4f5e3;
+  color: #1a7a45;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.cl-badge-out {
+  display: inline-block;
+  background: #fde2df;
+  color: #c0392b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* Amount columns */
+.cl-amount-in  { color: #2ECC71; font-weight: 700; }
+.cl-amount-out { color: #E74C3C; font-weight: 700; }
+
+/* ══════════════════════════════════════
+   Reports page
+══════════════════════════════════════ */
+.rp-tabs {
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
