@@ -1,35 +1,44 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/electron-vite.animate.svg'
+import { HashRouter, Routes, Route } from 'react-router-dom'
+import { GarageProvider } from './store/GarageContext'
+import Sidebar from './components/Sidebar'
+import Home from './pages/Home'
+import CashLedger from './pages/CashLedger'
+import MaintenanceInvoices from './pages/MaintenanceInvoices'
+import DirectSales from './pages/DirectSales'
+import SalesInvoices from './pages/SalesInvoices'
+import PurchaseInvoices from './pages/PurchaseInvoices'
+import PendingDebts from './pages/PendingDebts'
+import DailyExpenses from './pages/DailyExpenses'
+import Suppliers from './pages/Suppliers'
+import Employees from './pages/Employees'
+import Reports from './pages/Reports'
+import UnknownPhones from './pages/UnknownPhones'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
-
+export default function App() {
   return (
-    <>
-      <div>
-        <a href="https://electron-vite.github.io" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    <GarageProvider>
+      <HashRouter>
+        <div className="app-layout">
+          <Sidebar />
+          <main className="main-content">
+            <Routes>
+              <Route path="/"                   element={<Home />} />
+              <Route path="/cash-ledger"        element={<CashLedger />} />
+              <Route path="/sales-invoices"     element={<SalesInvoices />} />
+              <Route path="/purchase-invoices"  element={<PurchaseInvoices />} />
+              <Route path="/maintenance"        element={<MaintenanceInvoices />} />
+              <Route path="/direct-sales"       element={<DirectSales />} />
+              <Route path="/pending-debts"      element={<PendingDebts />} />
+              <Route path="/expenses"           element={<DailyExpenses />} />
+              <Route path="/suppliers"          element={<Suppliers />} />
+              <Route path="/employees"          element={<Employees />} />
+              <Route path="/reports"            element={<Reports />} />
+              <Route path="/unknown-phones"     element={<UnknownPhones />} />
+            </Routes>
+          </main>
+        </div>
+      </HashRouter>
+    </GarageProvider>
   )
 }
-
-export default App
