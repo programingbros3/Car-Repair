@@ -1,0 +1,328 @@
+// ─── Shared types between main process DB functions and renderer IPC calls ────
+
+export type InvoiceType = 'maintenance' | 'direct_sale'
+export type PaymentMethod = 'cash' | 'cheque' | 'visa' | 'debt'
+
+// ── Payment ───────────────────────────────────────────────────────────────────
+
+export interface PaymentInput {
+  method: PaymentMethod
+  amount: number
+  chequeNumber?: string
+  issueDate?: string
+  cashDate?: string
+  bankName?: string
+  transactionNumber?: string
+  notes?: string
+}
+
+// ── Invoice Items ─────────────────────────────────────────────────────────────
+
+export interface InvoiceItemInput {
+  item_name: string
+  quantity: number
+  unit_price: number
+  customer_owned?: boolean
+  notes?: string
+}
+
+export interface InvoiceItemRow {
+  id: number
+  invoice_id: number
+  invoice_type: InvoiceType
+  item_name: string
+  quantity: number
+  unit_price: number
+  customer_owned: number
+  notes: string | null
+}
+
+// ── Maintenance ───────────────────────────────────────────────────────────────
+
+export interface MaintenanceInvoiceInput {
+  customer_name: string
+  customer_phone?: string
+  car_plate: string
+  car_type?: string
+  car_color?: string
+  date_received: string
+  warranty?: string
+  notes?: string
+  items: InvoiceItemInput[]
+  payments: PaymentInput[]
+}
+
+export interface MaintenanceInvoiceRow {
+  id: number
+  customer_name: string
+  customer_phone: string | null
+  car_plate: string
+  car_type: string | null
+  car_color: string | null
+  date_received: string
+  date_released: string | null
+  status: 'in_progress' | 'delivered'
+  warranty: string | null
+  notes: string | null
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  created_at: string
+}
+
+export interface MaintenanceInvoiceDetail extends MaintenanceInvoiceRow {
+  items: InvoiceItemRow[]
+}
+
+export interface MaintenanceFilters {
+  status?: 'in_progress' | 'delivered'
+  car_plate?: string
+  customer_name?: string
+  date_from?: string
+  date_to?: string
+}
+
+export interface ReleaseCarInput {
+  invoiceId: number
+  date_released: string
+  payments: PaymentInput[]
+}
+
+// ── Direct Sale ───────────────────────────────────────────────────────────────
+
+export interface DirectSaleInput {
+  customer_name: string
+  customer_phone?: string
+  sale_date: string
+  warranty?: string
+  notes?: string
+  items: InvoiceItemInput[]
+  payments: PaymentInput[]
+}
+
+export interface DirectSaleRow {
+  id: number
+  customer_name: string
+  customer_phone: string | null
+  sale_date: string
+  warranty: string | null
+  notes: string | null
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  created_at: string
+}
+
+export interface DirectSaleDetail extends DirectSaleRow {
+  items: InvoiceItemRow[]
+}
+
+export interface DirectSaleFilters {
+  customer_name?: string
+  date_from?: string
+  date_to?: string
+}
+
+// ── Pending Debts ─────────────────────────────────────────────────────────────
+
+export interface PendingDebt {
+  invoice_id: number
+  invoice_type: InvoiceType
+  customer_name: string
+  customer_phone: string | null
+  invoice_date: string
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+}
+
+export interface DebtFilters {
+  invoice_type?: InvoiceType
+  customer_name?: string
+}
+
+// ── Suppliers ─────────────────────────────────────────────────────────────────
+
+export interface SupplierItemInput {
+  item_name: string
+  quantity: number
+  unit_price: number
+  notes?: string
+}
+
+export interface SupplierItemRow {
+  id: number
+  invoice_id: number
+  item_name: string
+  quantity: number
+  unit_price: number
+  notes: string | null
+}
+
+export interface SupplierInvoiceInput {
+  supplier_name: string
+  supplier_phone?: string
+  purchase_date: string
+  notes?: string
+  items: SupplierItemInput[]
+  payments: PaymentInput[]
+}
+
+export interface SupplierInvoiceRow {
+  id: number
+  supplier_name: string
+  supplier_phone: string | null
+  purchase_date: string
+  notes: string | null
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  created_at: string
+}
+
+export interface SupplierInvoiceDetail extends SupplierInvoiceRow {
+  items: SupplierItemRow[]
+}
+
+export interface SupplierFilters {
+  supplier_name?: string
+  date_from?: string
+  date_to?: string
+}
+
+export interface SupplierPendingDebt {
+  invoice_id: number
+  supplier_name: string
+  supplier_phone: string | null
+  purchase_date: string
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+}
+
+// ── Cash Ledger ───────────────────────────────────────────────────────────────
+
+export interface LedgerEntryInput {
+  transaction_date: string
+  reference_type: string
+  reference_id: number
+  amount_in: number
+  amount_out: number
+  notes?: string
+}
+
+export interface LedgerRow {
+  id: number
+  transaction_date: string
+  reference_type: string
+  reference_id: number
+  amount_in: number
+  amount_out: number
+  balance_after: number
+  notes: string | null
+  created_at: string
+}
+
+export interface LedgerSummary {
+  total_in: number
+  total_out: number
+  balance: number
+}
+
+// ── Expenses & Employees ──────────────────────────────────────────────────────
+
+export interface DailyExpenseInput {
+  description: string
+  amount: number
+  expense_date: string
+  notes?: string
+}
+
+export interface DailyExpenseRow {
+  id: number
+  description: string
+  amount: number
+  expense_date: string
+  notes: string | null
+  created_at: string
+}
+
+export interface ExpenseFilters {
+  date_from?: string
+  date_to?: string
+  search?: string
+}
+
+export interface EmployeeInput {
+  name: string
+  phone?: string
+}
+
+export interface EmployeeRow {
+  id: number
+  name: string
+  phone: string | null
+  created_at: string
+}
+
+export interface SalaryInput {
+  amount: number
+  payment_date: string
+  notes?: string
+}
+
+export interface SalaryRow {
+  id: number
+  employee_id: number
+  employee_name: string
+  amount: number
+  payment_date: string
+  notes: string | null
+  created_at: string
+}
+
+// ── Reports ───────────────────────────────────────────────────────────────────
+
+export interface DailyReport {
+  date: string
+  maintenance_income: number
+  direct_sale_income: number
+  debt_collected: number
+  supplier_expenses: number
+  daily_expenses: number
+  salaries: number
+  total_in: number
+  total_out: number
+  net: number
+  entries: LedgerRow[]
+}
+
+export interface MonthlyReportDay {
+  date: string
+  total_in: number
+  total_out: number
+  net: number
+}
+
+export interface MonthlyReport {
+  month: number
+  year: number
+  total_in: number
+  total_out: number
+  net: number
+  days: MonthlyReportDay[]
+}
+
+export interface DebtReport {
+  customer_debts: PendingDebt[]
+  supplier_debts: SupplierPendingDebt[]
+  total_customer_debt: number
+  total_supplier_debt: number
+}
+
+export interface TopCustomer {
+  customer_name: string
+  customer_phone: string | null
+  visit_count: number
+  total_spent: number
+}
