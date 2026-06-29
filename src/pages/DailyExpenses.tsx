@@ -1,87 +1,65 @@
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
-
-/* ════════════════════════════════════════
-   Types
-════════════════════════════════════════ */
-type Expense = {
-  id: number
-  description: string
-  amount: number
-  date: string
-  notes: string
-}
-
-/* ════════════════════════════════════════
-   Initial data
-════════════════════════════════════════ */
-const INITIAL_EXPENSES: Expense[] = [
-  { id: 1, description: 'فاتورة كهرباء',      amount: 450,  date: '2026-06-26', notes: 'فاتورة شهر يونيو' },
-  { id: 2, description: 'شراء قطع غيار',       amount: 1200, date: '2026-06-27', notes: '' },
-  { id: 3, description: 'وجبات غداء للعمال',   amount: 180,  date: '2026-06-28', notes: 'ثلاثة عمال' },
-]
+import { useGarage } from '../store/GarageContext'
+import type { Expense } from '../store/GarageContext'
 
 /* ════════════════════════════════════════
    Module-level helpers
 ════════════════════════════════════════ */
+const DRAFT_KEY = 'garage-exp-draft'
 const today = () => new Date().toISOString().slice(0, 10)
 
-/* Normalize Arabic: unify alef forms, teh marbuta, alef maqsura, strip spaces */
 const normalizeAr = (s: string) =>
-  s
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .replace(/\s+/g, '')
-    .toLowerCase()
+  s.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, '').toLowerCase()
 
-const emptyForm = () => ({
-  description: '',
-  amount:      '',
-  date:        today(),
-  notes:       '',
-})
-
-/* ── Validation ── */
-const validateDescription = (v: string) => v.trim() ? '' : 'الوصف مطلوب'
-const validateAmount      = (v: string) => Number(v) > 0 ? '' : 'المبلغ يجب أن يكون أكبر من صفر'
+const emptyForm = () => ({ description: '', amount: '', date: today(), notes: '' })
 
 /* ════════════════════════════════════════
    Component
 ════════════════════════════════════════ */
 export default function DailyExpenses() {
-  /* expenses */
-  const [expenses, setExpenses] = useState<Expense[]>(INITIAL_EXPENSES)
+  const { expenses, setExpenses } = useGarage()
 
   /* form */
-  const [showForm, setShowForm]               = useState(false)
-  const [editingExpense, setEditingExpense]   = useState<Expense | null>(null)
-  const [form, setForm]                       = useState(emptyForm)
+  const [showForm,       setShowForm]       = useState(false)
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
+  const [form,           setForm]           = useState(emptyForm)
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
-  /* filters */
-  const [search, setSearch]         = useState('')
-  const [filterFrom, setFilterFrom] = useState('')
-  const [filterTo, setFilterTo]     = useState('')
+  /* modals */
+  const [detailsExp, setDetailsExp] = useState<Expense | null>(null)
 
-  /* ── Fuse.js fuzzy search over normalized description ── */
+  /* filters */
+  const [search,     setSearch]     = useState('')
+  const [filterFrom, setFilterFrom] = useState('')
+  const [filterTo,   setFilterTo]   = useState('')
+
+  /* ── Draft restore / persist ── */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (!raw) return
+      const { form: f } = JSON.parse(raw) as { form: typeof form }
+      setShowForm(true); setForm(f)
+    } catch { localStorage.removeItem(DRAFT_KEY) }
+  }, [])
+
+  useEffect(() => {
+    if (showForm && !editingExpense) {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ form }))
+    }
+  }, [showForm, editingExpense, form])
+
+  /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => expenses.map((exp, i) => ({
-      _idx:        i,
-      description: normalizeAr(exp.description),
-    })),
+    () => expenses.map((exp, i) => ({ _idx: i, description: normalizeAr(exp.description) })),
     [expenses],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, {
-      keys: ['description'],
-      threshold: 0.4,
-      ignoreLocation: true,
-    }),
+    () => new Fuse(fuseItems, { keys: ['description'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 
-  /* ── Filtered expenses ── */
   const filteredExpenses = useMemo(() => {
     const q = search.trim()
     let result = q
@@ -95,7 +73,6 @@ export default function DailyExpenses() {
   const hasFilters   = !!search.trim() || !!filterFrom || !!filterTo
   const clearFilters = () => { setSearch(''); setFilterFrom(''); setFilterTo('') }
 
-  /* ── Total of filtered expenses ── */
   const totalExpenses = useMemo(
     () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
     [filteredExpenses],
@@ -104,58 +81,42 @@ export default function DailyExpenses() {
   /* ── Form helpers ── */
   const setField = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
 
-  /* ── Open edit form by clicking a row ── */
   const openEdit = (exp: Expense) => {
+    localStorage.removeItem(DRAFT_KEY)
     setEditingExpense(exp)
-    setForm({
-      description: exp.description,
-      amount:      String(exp.amount),
-      date:        exp.date,
-      notes:       exp.notes,
-    })
+    setForm({ description: exp.description, amount: String(exp.amount), date: exp.date, notes: exp.notes })
     setSubmitAttempted(false)
     setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   /* ── Validation ── */
-  const descriptionErr = validateDescription(form.description)
-  const amountErr      = validateAmount(form.amount)
+  const descriptionErr = form.description.trim() ? '' : 'الوصف مطلوب'
+  const amountErr      = Number(form.amount) > 0 ? '' : 'المبلغ يجب أن يكون أكبر من صفر'
   const hasErrors      = !!descriptionErr || !!amountErr
 
-  /* ── Save (add or update) ── */
+  /* ── Save ── */
   const handleSave = () => {
     setSubmitAttempted(true)
     if (hasErrors) return
-
     if (editingExpense) {
       setExpenses(prev => prev.map(e => e.id !== editingExpense.id ? e : {
-        ...e,
-        description: form.description,
-        amount:      Number(form.amount),
-        date:        form.date,
-        notes:       form.notes,
+        ...e, description: form.description, amount: Number(form.amount), date: form.date, notes: form.notes,
       }))
     } else {
       setExpenses(prev => [{
-        id:          Date.now(),
-        description: form.description,
-        amount:      Number(form.amount),
-        date:        form.date,
-        notes:       form.notes,
+        id: Date.now(), description: form.description, amount: Number(form.amount), date: form.date, notes: form.notes,
       }, ...prev])
     }
     clearForm()
   }
 
   const clearForm = () => {
-    setShowForm(false)
-    setSubmitAttempted(false)
-    setForm(emptyForm())
-    setEditingExpense(null)
+    localStorage.removeItem(DRAFT_KEY)
+    setShowForm(false); setSubmitAttempted(false)
+    setForm(emptyForm()); setEditingExpense(null)
   }
 
-  /* ── UI helpers ── */
   const showErr = (msg: string) => submitAttempted && msg ? <span className="mi-err">{msg}</span> : null
   const errCls  = (bad: boolean) => bad ? ' mi-input-err' : ''
 
@@ -164,7 +125,6 @@ export default function DailyExpenses() {
   ════════════════════════════════════════ */
   return (
     <div>
-      {/* ── Page header ── */}
       <div className="page-header mi-page-header">
         <h1 className="page-title">المصاريف اليومية</h1>
         {!showForm && (
@@ -178,9 +138,7 @@ export default function DailyExpenses() {
       {showForm && (
         <div className={`mi-card mi-form-card${editingExpense ? ' mi-form-card-edit' : ''}`}>
           <h2 className="mi-section-title">
-            {editingExpense
-              ? `تعديل المصروف — ${editingExpense.description}`
-              : 'بيانات المصروف'}
+            {editingExpense ? `تعديل المصروف — ${editingExpense.description}` : 'بيانات المصروف'}
           </h2>
           <div className="mi-form-grid">
             <label className="mi-field">
@@ -190,7 +148,6 @@ export default function DailyExpenses() {
                 className={errCls(submitAttempted && !!descriptionErr)} />
               {showErr(descriptionErr)}
             </label>
-
             <label className="mi-field">
               <span>المبلغ (₪) <span className="mi-required">*</span></span>
               <input type="number" min={0} value={form.amount}
@@ -198,13 +155,11 @@ export default function DailyExpenses() {
                 className={errCls(submitAttempted && !!amountErr)} />
               {showErr(amountErr)}
             </label>
-
             <label className="mi-field">
               <span>التاريخ</span>
               <input type="date" value={form.date} max={today()}
                 onChange={e => setField('date', e.target.value)} />
             </label>
-
             <label className="mi-field mi-field-full">
               <span>ملاحظات</span>
               <textarea rows={3} value={form.notes}
@@ -212,7 +167,6 @@ export default function DailyExpenses() {
                 placeholder="أي ملاحظات إضافية..." />
             </label>
           </div>
-
           <div className="mi-form-actions">
             <button className="btn btn-primary" onClick={handleSave}>
               {editingExpense ? 'حفظ التعديلات' : 'حفظ المصروف'}
@@ -234,16 +188,10 @@ export default function DailyExpenses() {
       <div className="mi-card">
         <h2 className="mi-section-title">المصاريف المسجلة</h2>
 
-        {/* Filter bar */}
         <div className="mi-filters">
           <div className="mi-search-wrap">
-            <input
-              type="text"
-              className="mi-search-input"
-              placeholder="🔍  بحث بالوصف..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <input type="text" className="mi-search-input" placeholder="🔍  بحث بالوصف..."
+              value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="mi-date-range">
             <div className="mi-filter-field">
@@ -257,48 +205,83 @@ export default function DailyExpenses() {
                 onChange={e => setFilterTo(e.target.value)} />
             </div>
             {hasFilters && (
-              <button className="btn btn-ghost mi-clear-btn" onClick={clearFilters}>
-                مسح الفلتر
-              </button>
+              <button className="btn btn-ghost mi-clear-btn" onClick={clearFilters}>مسح الفلتر</button>
             )}
           </div>
         </div>
 
-        {/* Table */}
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
               <tr>
                 <th>الوصف</th>
-                <th>المبلغ</th>
+                <th>المبلغ ₪</th>
                 <th>التاريخ</th>
                 <th>ملاحظات</th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {filteredExpenses.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="mi-empty-row">لا توجد مصاريف تطابق البحث</td>
-                </tr>
+                <tr><td colSpan={5} className="mi-empty-row">لا توجد مصاريف تطابق البحث</td></tr>
               ) : filteredExpenses.map((exp, i) => (
-                <tr
-                  key={exp.id}
-                  className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
-                  onClick={() => openEdit(exp)}
-                >
+                <tr key={exp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                  onClick={() => setDetailsExp(exp)}>
                   <td>{exp.description}</td>
                   <td className="mi-amount">{exp.amount.toLocaleString('ar-EG')} ₪</td>
                   <td>{exp.date}</td>
                   <td>{exp.notes || '—'}</td>
+                  <td>
+                    <div className="mi-actions" onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-sm-outline" onClick={() => setDetailsExp(exp)}>تفاصيل</button>
+                      <button className="btn btn-sm-outline" onClick={() => openEdit(exp)}>تعديل</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        {!showForm && (
-          <p className="mi-row-hint">اضغط على أي صف لتعديل بياناته</p>
-        )}
       </div>
+
+      {/* ════ Details Modal ════ */}
+      {detailsExp && (
+        <div className="mi-modal-overlay" onClick={() => setDetailsExp(null)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تفاصيل المصروف</h3>
+              <button className="mi-modal-close" onClick={() => setDetailsExp(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid">
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الوصف</span>
+                  <strong>{detailsExp.description}</strong>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">المبلغ</span>
+                  <span className="mi-amount">{detailsExp.amount.toLocaleString('ar-EG')} ₪</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">التاريخ</span>
+                  <span>{detailsExp.date}</span>
+                </div>
+                {detailsExp.notes && (
+                  <div className="mi-detail-item mi-detail-full">
+                    <span className="mi-detail-label">ملاحظات</span>
+                    <span>{detailsExp.notes}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-secondary"
+                onClick={() => { console.log('=== طباعة مصروف ===', detailsExp) }}>طباعة</button>
+              <button className="btn btn-ghost" onClick={() => setDetailsExp(null)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,23 +1,23 @@
 import { NavLink } from 'react-router-dom'
 
 const navItems = [
-  { to: '/',                  icon: '🏠', label: 'الرئيسية'        },
-  { to: '/cash-ledger',       icon: '🏦', label: 'الصندوق الرئيسي' },
-  { to: '/maintenance',       icon: '🔧', label: 'سيارات الصيانة'  },
-  { to: '/direct-sales',      icon: '🛒', label: 'البيع المباشر'   },
-  { to: '/pending-debts',     icon: '💰', label: 'الديون المعلقة'  },
-  { to: '/expenses',          icon: '💸', label: 'المصاريف اليومية' },
-  { to: '/suppliers',         icon: '🏪', label: 'الموردون'        },
-  { to: '/employees',         icon: '👷', label: 'الموظفون والرواتب' },
-  { to: '/reports',           icon: '📊', label: 'التقارير'         },
+  { to: '/',                   icon: '🏠', label: 'الرئيسية'           },
+  { to: '/cash-ledger',        icon: '🏦', label: 'الصندوق الرئيسي'   },
+  { to: '/sales-invoices',     icon: '🧾', label: 'فواتير البيع'       },
+  { to: '/purchase-invoices',  icon: '📥', label: 'فواتير الشراء'      },
+  { to: '/maintenance',        icon: '🔧', label: 'سيارات الصيانة'    },
+  { to: '/direct-sales',       icon: '🛒', label: 'البيع المباشر'     },
+  { to: '/pending-debts',      icon: '💰', label: 'الديون المعلقة'    },
+  { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
+  { to: '/suppliers',          icon: '🏪', label: 'الموردون'          },
+  { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
+  { to: '/reports',            icon: '📊', label: 'التقارير'           },
+  { to: '/unknown-phones',     icon: '❓', label: 'أرقام غير معروفة'  },
 ]
 
 function getArabicDate(): string {
   return new Date().toLocaleDateString('ar-EG', {
-    weekday: 'long',
-    year:    'numeric',
-    month:   'long',
-    day:     'numeric',
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
 }
 

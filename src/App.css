@@ -856,3 +856,117 @@
   margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
+
+/* ══════════════════════════════════════
+   Extra stat value colors
+══════════════════════════════════════ */
+.stat-card .stat-value.cars-orange { color: #F39C12; }
+.stat-card .stat-value.debt-red    { color: #E74C3C; }
+
+/* ══════════════════════════════════════
+   Extra badges
+══════════════════════════════════════ */
+.mi-badge-green {
+  display: inline-block;
+  background: #d4f5e3;
+  color: #1a7a45;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.mi-badge-yellow {
+  display: inline-block;
+  background: #FEF9C3;
+  color: #854D0E;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.mi-badge-red {
+  display: inline-block;
+  background: #fde2df;
+  color: #c0392b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.mi-badge-purple {
+  display: inline-block;
+  background: #EDE9FE;
+  color: #6D28D9;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.mi-badge-gray {
+  display: inline-block;
+  background: #F3F4F6;
+  color: #4B5563;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════
+   Home page — weekly ops table
+══════════════════════════════════════ */
+.home-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+/* ══════════════════════════════════════
+   Amount-range filter inputs
+══════════════════════════════════════ */
+.mi-amount-input {
+  font-family: inherit;
+  font-size: 0.88rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  outline: none;
+  width: 90px;
+  direction: ltr;
+  transition: border-color 0.15s;
+}
+.mi-amount-input:focus { border-color: #3498DB; }
+
+/* ══════════════════════════════════════
+   Section divider (maintenance two-section)
+══════════════════════════════════════ */
+.mi-section-divider {
+  border: none;
+  border-top: 2px dashed #e0e6ee;
+  margin: 2rem 0;
+}
+
+/* ══════════════════════════════════════
+   Delivered badge
+══════════════════════════════════════ */
+.mi-badge-delivered {
+  display: inline-block;
+  background: #d4f5e3;
+  color: #1a7a45;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: 20px;
+  white-space: nowrap;
+}
