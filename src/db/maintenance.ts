@@ -174,20 +174,63 @@ export function addMaintenanceItem(invoiceId: number, item: InvoiceItemInput): v
 
 export function updateMaintenanceInvoice(
   invoiceId: number,
-  updates: { warranty?: string; notes?: string },
+  updates: {
+    customer_name?: string
+    customer_phone?: string
+    car_plate?: string
+    car_type?: string
+    car_color?: string
+    date_received?: string
+    warranty?: string
+    notes?: string
+    items?: InvoiceItemInput[]   // إذا موجودة، تُستبدل كل البنود ويُعاد حساب الإجمالي/المتبقّي
+  },
 ): void {
   const db = getDB()
 
-  const fields: string[] = []
-  const values: unknown[] = []
+  const run = db.transaction(() => {
+    // ── 1) تحديث الحقول النصية ──
+    const fields: string[] = []
+    const values: unknown[] = []
 
-  if (updates.warranty !== undefined) { fields.push('warranty = ?'); values.push(updates.warranty) }
-  if (updates.notes    !== undefined) { fields.push('notes = ?');    values.push(updates.notes)    }
+    if (updates.customer_name  !== undefined) { fields.push('customer_name = ?');  values.push(updates.customer_name) }
+    if (updates.customer_phone !== undefined) { fields.push('customer_phone = ?'); values.push(updates.customer_phone ?? null) }
+    if (updates.car_plate      !== undefined) { fields.push('car_plate = ?');      values.push(updates.car_plate.toUpperCase()) }
+    if (updates.car_type       !== undefined) { fields.push('car_type = ?');       values.push(updates.car_type ?? null) }
+    if (updates.car_color      !== undefined) { fields.push('car_color = ?');      values.push(updates.car_color ?? null) }
+    if (updates.date_received  !== undefined) { fields.push('date_received = ?');  values.push(updates.date_received) }
+    if (updates.warranty       !== undefined) { fields.push('warranty = ?');       values.push(updates.warranty ?? null) }
+    if (updates.notes          !== undefined) { fields.push('notes = ?');          values.push(updates.notes ?? null) }
 
-  if (fields.length === 0) return
+    if (fields.length > 0) {
+      values.push(invoiceId)
+      db.prepare(`UPDATE maintenance_invoices SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+    }
 
-  values.push(invoiceId)
-  db.prepare(`UPDATE maintenance_invoices SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+    // ── 2) استبدال البنود وإعادة حساب الإجمالي/المتبقّي (فقط إذا مُرِّرت البنود) ──
+    if (updates.items !== undefined) {
+      db.prepare(
+        `DELETE FROM invoice_items WHERE invoice_id = ? AND invoice_type = 'maintenance'`
+      ).run(invoiceId)
+
+      insertItems(invoiceId, updates.items)
+
+      const total_amount = calcTotal(updates.items)
+      const current = db.prepare(
+        `SELECT amount_paid FROM maintenance_invoices WHERE id = ?`
+      ).get(invoiceId) as { amount_paid: number } | undefined
+      const amount_paid = current?.amount_paid ?? 0
+      const amount_remaining = total_amount - amount_paid
+
+      db.prepare(`
+        UPDATE maintenance_invoices
+        SET total_amount = ?, amount_remaining = ?
+        WHERE id = ?
+      `).run(total_amount, amount_remaining, invoiceId)
+    }
+  })
+
+  run()
 }
 
 // ─── Day 2: Release car ───────────────────────────────────────────────────────
