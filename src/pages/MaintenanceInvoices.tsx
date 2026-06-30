@@ -1,11 +1,16 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage, CarRecord, CarItem, PayMethod, PaymentRow } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Local Types
 ════════════════════════════════════════ */
-type FormPart    = { id: number; name: string; qty: number; unitPrice: number; isCustomerPart: boolean; warranty: string; notes: string }
+type FormPartType = 'part' | 'service'
+type FormPart    = { id: number; partType: FormPartType; name: string; qty: number; unitPrice: number; warranty: string; notes: string }
 type FormPartErr = { nameErr: string; qtyErr: string }
 
 /* ════════════════════════════════════════
@@ -25,7 +30,11 @@ const emptyForm = () => ({
 })
 
 const newFormPart = (): FormPart => ({
-  id: nextPartId++, name: '', qty: 1, unitPrice: 0, isCustomerPart: false, warranty: '', notes: '',
+  id: nextPartId++, partType: 'part', name: '', qty: 1, unitPrice: 0, warranty: '', notes: '',
+})
+
+const newFormService = (): FormPart => ({
+  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: 0, warranty: '', notes: '',
 })
 
 const emptyPayRow = (): PaymentRow => ({
@@ -36,10 +45,12 @@ const emptyPayRow = (): PaymentRow => ({
 const daysInShop = (d: string) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000))
 
 const blockDigits     = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
+const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault() }
 const validateName    = (v: string) => v.trim() ? '' : 'اسم الزبون مطلوب'
 const validatePlate   = (v: string) => v.trim() ? '' : 'نمرة السيارة مطلوبة'
+const validatePhone   = (v: string) => v.trim() ? '' : 'رقم الهاتف مطلوب'
 
-const PAY_LABELS: Record<PayMethod, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 
 function applySectionFilters(
   cars: CarRecord[], fuse: Fuse<{ _idx: number; customerName: string }>,
@@ -94,7 +105,7 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
    Component
 ════════════════════════════════════════ */
 export default function MaintenanceInvoices() {
-  const { maintenanceCars: cars, setMaintenanceCars: setCars } = useGarage()
+  const { maintenanceCars: cars, reload } = useGarage()
 
   /* form */
   const [showForm, setShowForm]               = useState(false)
@@ -109,6 +120,7 @@ export default function MaintenanceInvoices() {
   const [deliveryCar, setDeliveryCar]   = useState<CarRecord | null>(null)
   const [deliveryDate, setDeliveryDate] = useState(today())
   const [paymentRows, setPaymentRows]   = useState<PaymentRow[]>([])
+  const [deleteCar, setDeleteCar]       = useState<CarRecord | null>(null)
 
   /* In-progress filters */
   const [ipSearch, setIpSearch] = useState(''); const [ipPhone, setIpPhone] = useState('')
@@ -154,16 +166,12 @@ export default function MaintenanceInvoices() {
   }, [showForm, editingCar, form, parts])
 
   /* Form helpers */
-  const setField   = (f: string, v: string) => setForm(prev => ({ ...prev, [f]: v }))
-  const addPart    = () => setParts(prev => [...prev, newFormPart()])
-  const removePart = (id: number) => setParts(prev => prev.filter(p => p.id !== id))
-  const updatePart = (id: number, field: keyof FormPart, value: string | number | boolean) =>
-    setParts(prev => prev.map(p => {
-      if (p.id !== id) return p
-      const u = { ...p, [field]: value }
-      if (field === 'isCustomerPart' && value === true) u.unitPrice = 0
-      return u
-    }))
+  const setField    = (f: string, v: string) => setForm(prev => ({ ...prev, [f]: v }))
+  const addPart     = () => setParts(prev => [...prev, newFormPart()])
+  const addService  = () => setParts(prev => [...prev, newFormService()])
+  const removePart  = (id: number) => setParts(prev => prev.filter(p => p.id !== id))
+  const updatePart  = (id: number, field: keyof FormPart, value: string | number) =>
+    setParts(prev => prev.map(p => p.id !== id ? p : { ...p, [field]: value }))
 
   const doOpenEdit = (car: CarRecord) => {
     localStorage.removeItem(DRAFT_KEY)
@@ -172,8 +180,8 @@ export default function MaintenanceInvoices() {
       carPlate: car.carPlate, carType: car.carType, carColor: car.carColor,
       dateReceived: car.dateReceived, generalNotes: car.notes })
     const ep: FormPart[] = car.items.length > 0
-      ? car.items.map(item => ({ id: nextPartId++, name: item.name, qty: item.quantity,
-          unitPrice: item.unitPrice, isCustomerPart: item.customerOwned, warranty: item.warranty, notes: item.notes }))
+      ? car.items.map(item => ({ id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
+          unitPrice: item.unitPrice, warranty: item.warranty, notes: item.notes }))
       : [newFormPart()]
     setParts(ep); setSubmitAttempted(false); setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -184,35 +192,37 @@ export default function MaintenanceInvoices() {
   }
 
   /* Validation */
-  const formTotal = parts.reduce((s, p) => s + p.qty * (p.isCustomerPart ? 0 : p.unitPrice), 0)
+  const formTotal = parts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
   const nameErr   = validateName(form.customerName)
   const plateErr  = validatePlate(form.carPlate)
+  const phoneErr  = validatePhone(form.phone)
   const partsErrMap: Record<number, FormPartErr> = {}
   for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: p.qty >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
-  const hasErrors = !!nameErr || !!plateErr || Object.values(partsErrMap).some(e => e.nameErr || e.qtyErr)
+  const hasErrors = !!nameErr || !!plateErr || !!phoneErr || Object.values(partsErrMap).some(e => e.nameErr || e.qtyErr)
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSubmitAttempted(true)
     if (hasErrors) return
     const newItems: CarItem[] = parts.map(p => ({
-      name: p.name, quantity: p.qty, unitPrice: p.isCustomerPart ? 0 : p.unitPrice,
-      warranty: p.warranty, customerOwned: p.isCustomerPart, notes: p.notes,
+      name: p.name, quantity: p.partType === 'service' ? 1 : p.qty, unitPrice: p.unitPrice,
+      warranty: p.warranty, partType: p.partType, notes: p.notes,
     }))
-    const phone = form.phone.trim() || '0000'
-    if (editingCar) {
-      setCars(prev => prev.map(c => c.id !== editingCar.id ? c : {
-        ...c, customerName: form.customerName, phone, carPlate: form.carPlate,
-        carType: form.carType, carColor: form.carColor, dateReceived: form.dateReceived,
-        notes: form.generalNotes, total: formTotal, items: newItems,
-      }))
-    } else {
-      setCars(prev => [{
-        id: Date.now(), customerName: form.customerName, phone, carPlate: form.carPlate,
-        carType: form.carType, carColor: form.carColor, dateReceived: form.dateReceived,
-        status: 'in_progress', notes: form.generalNotes, total: formTotal, items: newItems,
-      }, ...prev])
+    const phone = form.phone.trim()
+    const carData: CarRecord = {
+      id: editingCar?.id ?? 0,
+      customerName: form.customerName, phone, carPlate: form.carPlate,
+      carType: form.carType, carColor: form.carColor, dateReceived: form.dateReceived,
+      status: editingCar?.status ?? 'in_progress', deliveredDate: editingCar?.deliveredDate,
+      notes: form.generalNotes, total: formTotal, items: newItems,
     }
-    clearForm()
+    try {
+      if (editingCar) await dbService.maintenance.update(carData)
+      else            await dbService.maintenance.add(carData)
+      await reload()
+      clearForm()
+    } catch (err) {
+      showError('تعذّر حفظ فاتورة الصيانة', err)
+    }
   }
 
   const clearForm = () => {
@@ -231,10 +241,16 @@ export default function MaintenanceInvoices() {
   const totalPaid    = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
   const remaining    = invoiceTotal - totalPaid
 
-  const handleDeliverySave = () => {
-    console.log('=== تسليم سيارة ===', { car: deliveryCar, deliveryDate, paymentRows, totalPaid, remaining })
-    setCars(prev => prev.map(c => c.id !== deliveryCar!.id ? c : { ...c, status: 'delivered' as const, deliveredDate: deliveryDate }))
-    setDeliveryCar(null)
+  const handleDeliverySave = async () => {
+    if (!deliveryCar) return
+    const rows = paymentRows.filter(r => r.amount > 0)
+    try {
+      await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows)
+      await reload()
+      setDeliveryCar(null)
+    } catch (err) {
+      showError('تعذّر تسليم السيارة', err)
+    }
   }
 
   /* UI helpers */
@@ -242,6 +258,38 @@ export default function MaintenanceInvoices() {
   const showPartErr = (id: number, f: keyof FormPartErr) => submitAttempted && partsErrMap[id]?.[f] ? <span className="mi-err">{partsErrMap[id][f]}</span> : null
   const errCls      = (bad: boolean) => bad ? ' mi-input-err' : ''
   const fmt         = (n: number) => n.toLocaleString('ar-EG')
+
+  const handlePrintCar = (car: CarRecord) => {
+    const rows = car.items.map(item => `
+      <tr>
+        <td>${item.partType === 'service' ? 'خدمة' : 'قطعة'}</td>
+        <td>${item.name}</td>
+        <td>${item.quantity}</td>
+        <td>${fmt(item.unitPrice)} ₪</td>
+        <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+        <td>${item.warranty || '—'}</td>
+        <td>${item.notes || '—'}</td>
+      </tr>`).join('')
+    const body = `
+      <div class="detail-grid">
+        <div class="detail-item"><label>اسم الزبون</label><span>${car.customerName}</span></div>
+        <div class="detail-item"><label>رقم الهاتف</label><span>${car.phone && car.phone !== '0000' ? car.phone : 'غير معروف'}</span></div>
+        <div class="detail-item"><label>نمرة السيارة</label><span>${car.carPlate}</span></div>
+        <div class="detail-item"><label>نوع السيارة</label><span>${car.carType || '—'}</span></div>
+        <div class="detail-item"><label>اللون</label><span>${car.carColor || '—'}</span></div>
+        <div class="detail-item"><label>تاريخ الاستلام</label><span>${car.dateReceived}</span></div>
+        ${car.deliveredDate ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${car.deliveredDate}</span></div>` : ''}
+        ${car.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${car.notes}</span></div>` : ''}
+      </div>
+      <table>
+        <thead><tr><th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="detail-grid" style="margin-top:16px;grid-template-columns:1fr;">
+        <div class="detail-item"><label>الإجمالي الكلي</label><span class="amount-in">${fmt(car.total)} ₪</span></div>
+      </div>`
+    printPdf('فاتورة صيانة', body)
+  }
 
   const renderFilters = (
     search: string, setSearch: (v:string)=>void, phone: string, setPhone: (v:string)=>void,
@@ -304,9 +352,11 @@ export default function MaintenanceInvoices() {
               {showErr(nameErr)}
             </label>
             <label className="mi-field">
-              <span>رقم الهاتف</span>
-              <input type="text" value={form.phone}
-                onChange={e => setField('phone', e.target.value)} placeholder="اتركه فارغاً إذا غير معروف" />
+              <span>رقم الهاتف <span className="mi-required">*</span></span>
+              <input type="text" value={form.phone} onKeyDown={allowPhoneChars}
+                onChange={e => setField('phone', e.target.value)} placeholder="05XXXXXXXX"
+                className={errCls(submitAttempted && !!phoneErr)} />
+              {showErr(phoneErr)}
             </label>
             <label className="mi-field">
               <span>نمرة السيارة <span className="mi-required">*</span></span>
@@ -335,16 +385,24 @@ export default function MaintenanceInvoices() {
 
           <div className="mi-parts-header">
             <h2 className="mi-section-title">القطع والخدمات</h2>
-            <button className="btn btn-secondary" onClick={addPart}>+ إضافة قطعة</button>
+            <div className="mi-actions">
+              <button className="btn btn-secondary" onClick={addPart}>+ إضافة قطعة</button>
+              <button className="btn btn-sm-green" onClick={addService}>+ إضافة خدمة</button>
+            </div>
           </div>
           <div className="mi-parts-table-wrap">
             <table className="mi-parts-table">
               <thead>
-                <tr><th>اسم القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>من عند الزبون</th><th>الكفالة</th><th>ملاحظات</th><th></th></tr>
+                <tr><th>النوع</th><th>اسم القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الكفالة</th><th>ملاحظات</th><th></th></tr>
               </thead>
               <tbody>
                 {parts.map(part => (
                   <tr key={part.id}>
+                    <td className="mi-td-center">
+                      {part.partType === 'service'
+                        ? <span className="mi-badge-blue">خدمة</span>
+                        : <span className="mi-badge-orange">قطعة</span>}
+                    </td>
                     <td>
                       <input type="text" placeholder="اسم القطعة أو الخدمة" value={part.name}
                         className={'mi-td-input' + errCls(submitAttempted && !!partsErrMap[part.id]?.nameErr)}
@@ -352,19 +410,15 @@ export default function MaintenanceInvoices() {
                       {showPartErr(part.id, 'nameErr')}
                     </td>
                     <td>
-                      <input type="number" min={1} value={part.qty}
+                      <input type="number" min={1} value={part.partType === 'service' ? 1 : part.qty}
+                        disabled={part.partType === 'service'}
                         className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!partsErrMap[part.id]?.qtyErr)}
                         onChange={e => updatePart(part.id, 'qty', Math.max(1, Number(e.target.value)))} />
                       {showPartErr(part.id, 'qtyErr')}
                     </td>
                     <td>
                       <input type="number" min={0} value={part.unitPrice} className="mi-td-input mi-td-num"
-                        disabled={part.isCustomerPart}
                         onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))} />
-                    </td>
-                    <td className="mi-td-center">
-                      <input type="checkbox" className="mi-checkbox" checked={part.isCustomerPart}
-                        onChange={e => updatePart(part.id, 'isCustomerPart', e.target.checked)} />
                     </td>
                     <td><input type="text" placeholder="مثال: 3 أشهر" value={part.warranty} className="mi-td-input" onChange={e => updatePart(part.id, 'warranty', e.target.value)} /></td>
                     <td><input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input" onChange={e => updatePart(part.id, 'notes', e.target.value)} /></td>
@@ -412,9 +466,9 @@ export default function MaintenanceInvoices() {
                   <td><span className="mi-badge-orange">قيد الصيانة</span></td>
                   <td>
                     <div className="mi-actions">
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsCar(car)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEdit(car)}>تعديل</button>
                       <button className="btn btn-sm-green" onClick={() => openDelivery(car)}>تسليم</button>
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteCar(car)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -455,8 +509,8 @@ export default function MaintenanceInvoices() {
                   <td><span className="mi-badge-delivered">تم التسليم</span></td>
                   <td>
                     <div className="mi-actions">
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsCar(car)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEdit(car)}>تعديل</button>
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteCar(car)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -479,9 +533,9 @@ export default function MaintenanceInvoices() {
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{detailsCar.customerName}</strong></div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">رقم الهاتف</span>
-                  <span className={detailsCar.phone && detailsCar.phone !== '0000' ? 'mi-phone-highlight' : ''}>
-                    {detailsCar.phone && detailsCar.phone !== '0000' ? detailsCar.phone : 'غير معروف'}
-                  </span>
+                  {detailsCar.phone && detailsCar.phone !== '0000'
+                    ? <span className="mi-phone-highlight">{detailsCar.phone}</span>
+                    : <span className="mi-badge-gray">غير معروف</span>}
                 </div>
                 <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span><span className="mi-plate">{detailsCar.carPlate}</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">نوع السيارة</span><span>{detailsCar.carType}</span></div>
@@ -504,17 +558,21 @@ export default function MaintenanceInvoices() {
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead>
-                    <tr><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>من عند الزبون</th><th>ملاحظات</th></tr>
+                    <tr><th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th></tr>
                   </thead>
                   <tbody>
                     {detailsCar.items.map((item, idx) => (
                       <tr key={idx}>
+                        <td className="mi-td-center">
+                          {item.partType === 'service'
+                            ? <span className="mi-badge-blue">خدمة</span>
+                            : <span className="mi-badge-orange">قطعة</span>}
+                        </td>
                         <td>{item.name}</td>
                         <td className="mi-td-center">{item.quantity}</td>
                         <td className="mi-td-center">{fmt(item.unitPrice)} ₪</td>
                         <td className="mi-td-center">{fmt(item.quantity * item.unitPrice)} ₪</td>
                         <td>{item.warranty || '—'}</td>
-                        <td className="mi-td-center">{item.customerOwned ? '✓' : '—'}</td>
                         <td>{item.notes || '—'}</td>
                       </tr>
                     ))}
@@ -529,7 +587,7 @@ export default function MaintenanceInvoices() {
               <LinkedOpsSection phone={detailsCar.phone} source="maintenance" id={detailsCar.id} />
             </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-secondary" onClick={() => { console.log('=== طباعة سيارة ===', detailsCar) }}>طباعة</button>
+              <button className="btn btn-secondary" onClick={() => handlePrintCar(detailsCar)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsCar(null)}>إغلاق</button>
             </div>
           </div>
@@ -588,8 +646,8 @@ export default function MaintenanceInvoices() {
                 <div key={row.id} className="pay-row">
                   <div className="pay-row-main">
                     <select className="pay-select" value={row.method} onChange={e => updatePaymentRow(row.id, { method: e.target.value as PayMethod })}>
-                      {(Object.entries(PAY_LABELS) as [PayMethod, string][]).map(([val, label]) => (
-                        <option key={val} value={val}>{label}</option>
+                      {(['cash', 'check', 'visa'] as Exclude<PayMethod, 'debt'>[]).map(val => (
+                        <option key={val} value={val}>{PAY_LABELS[val]}</option>
                       ))}
                     </select>
                     <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
@@ -629,6 +687,19 @@ export default function MaintenanceInvoices() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteCar && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف سيارة "${deleteCar.customerName}" — ${deleteCar.carPlate}؟`}
+          onConfirm={async () => {
+            try { await dbService.maintenance.delete(deleteCar.id); await reload(); setDeleteCar(null) }
+            catch (err) { showError('تعذّر حذف السيارة', err) }
+          }}
+          onCancel={() => setDeleteCar(null)}
+        />
       )}
     </div>
   )

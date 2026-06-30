@@ -1,7 +1,11 @@
 import { useState, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow } from '../store/GarageContext'
+import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow, CarRecord, SaleRecord } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Helpers / Constants
@@ -18,10 +22,35 @@ const STATUS_CLS:    Record<SaleInvoiceStatus, string> = { paid: 'mi-badge-green
 
 const fmt = (n: number) => n.toLocaleString('ar-EG')
 
+const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
+}
+
 const blankRow = (): PaymentRow => ({
   id: Date.now() + Math.random(), method: 'cash', amount: 0,
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
 })
+
+function printInvoice(inv: SaleInvoice): void {
+  const body = `
+    <div class="detail-grid">
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.id}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
+      <div class="detail-item"><label>نوع الفاتورة</label><span>${TYPE_LABELS[inv.type]}</span></div>
+      <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
+      <div class="detail-item"><label>اسم الزبون</label><span>${inv.customerName}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
+      ${inv.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${inv.carPlate}</span></div>` : ''}
+      ${inv.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${inv.carType}</span></div>` : ''}
+      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${inv.details}</span></div>` : ''}
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
+      <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.paid)} ₪</span></div>
+      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
+    </div>`
+  printPdf('فاتورة بيع', body)
+}
 
 /* ════════════════════════════════════════
    LinkedOpsSection
@@ -73,7 +102,7 @@ const invToForm = (inv: SaleInvoice): EditForm => ({
    Component
 ════════════════════════════════════════ */
 export default function SalesInvoices() {
-  const { salesInvoices, setSalesInvoices } = useGarage()
+  const { salesInvoices, reload } = useGarage()
 
   /* ── Search & Filter ── */
   const [search,       setSearch]       = useState('')
@@ -90,12 +119,16 @@ export default function SalesInvoices() {
   const [warnInv,    setWarnInv]    = useState<SaleInvoice | null>(null)
   const [editInv,    setEditInv]    = useState<SaleInvoice | null>(null)
   const [editForm,   setEditForm]   = useState<EditForm | null>(null)
+  const [editSubmitted, setEditSubmitted] = useState(false)
 
   /* ── Payment modal ── */
   const [payInvoice,  setPayInvoice]  = useState<SaleInvoice | null>(null)
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([blankRow()])
   const [payDate,     setPayDate]     = useState(today())
   const [payNotes,    setPayNotes]    = useState('')
+
+  /* ── Delete ── */
+  const [deleteInv, setDeleteInv] = useState<SaleInvoice | null>(null)
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
@@ -136,22 +169,48 @@ export default function SalesInvoices() {
     if (!warnInv) return
     setEditInv(warnInv)
     setEditForm(invToForm(warnInv))
+    setEditSubmitted(false)
     setWarnInv(null)
   }
 
-  const saveEdit = () => {
+  const editNameErr  = editForm && !editForm.customerName.trim() ? 'اسم الزبون مطلوب' : ''
+  const editPhoneErr = editForm && !editForm.phone.trim() ? 'رقم الهاتف مطلوب' : ''
+  const editPlateErr = editForm && editForm.type === 'maintenance' && !editForm.carPlate.trim() ? 'نمرة السيارة مطلوبة' : ''
+
+  const closeEdit = () => { setEditInv(null); setEditForm(null); setEditSubmitted(false) }
+
+  const saveEdit = async () => {
     if (!editInv || !editForm) return
-    const total     = Number(editForm.total) || 0
-    const paid      = Math.min(Number(editForm.paid) || 0, total)
-    const remaining = total - paid
-    const status: SaleInvoiceStatus = remaining <= 0 ? 'paid' : paid === 0 ? 'full_debt' : 'partial_debt'
-    const phone = editForm.phone.trim() || '0000'
-    setSalesInvoices(prev => prev.map(inv => inv.id !== editInv.id ? inv : {
-      ...inv, date: editForm.date, type: editForm.type,
-      customerName: editForm.customerName, phone, total, paid, remaining, status,
-      carPlate: editForm.carPlate, carType: editForm.carType, details: editForm.details,
-    }))
-    setEditInv(null); setEditForm(null)
+    setEditSubmitted(true)
+    if (editNameErr || editPhoneErr || editPlateErr) return
+    const total = Number(editForm.total) || 0
+    const paid  = Math.min(Number(editForm.paid) || 0, total)
+    const phone = editForm.phone.trim()
+    /* فاتورة البيع عرض مجمّع؛ التعديل يوجَّه للفاتورة الأصلية حسب نوعها.
+       (الإجمالي/المدفوع مشتقّان في DB من البنود والدفعات.) */
+    try {
+      if (editInv.type === 'maintenance') {
+        const car: CarRecord = {
+          id: editInv.id, customerName: editForm.customerName, phone,
+          carPlate: editForm.carPlate, carType: editForm.carType, carColor: '',
+          dateReceived: editForm.date, status: 'delivered',
+          notes: editForm.details, total, items: [],
+        }
+        await dbService.maintenance.update(car)
+      } else {
+        const sale: SaleRecord = {
+          id: editInv.id, customerName: editForm.customerName, phone,
+          saleDate: editForm.date, warranty: '', notes: editForm.details,
+          total, amountPaid: paid, amountRemaining: total - paid,
+          status: 'partial_debt', items: [], payments: [],
+        }
+        await dbService.directSale.update(sale)
+      }
+      await reload()
+      closeEdit()
+    } catch (err) {
+      showError('تعذّر حفظ تعديلات الفاتورة', err)
+    }
   }
 
   /* ── Payment flow ── */
@@ -169,16 +228,17 @@ export default function SalesInvoices() {
 
   const totalBeingPaid = paymentRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
 
-  const submitPayment = () => {
+  const submitPayment = async () => {
     if (!payInvoice || totalBeingPaid <= 0) return
-    const newPaid      = Math.min(payInvoice.paid + totalBeingPaid, payInvoice.total)
-    const newRemaining = payInvoice.total - newPaid
-    const newStatus: SaleInvoiceStatus = newRemaining <= 0 ? 'paid' : newPaid === 0 ? 'full_debt' : 'partial_debt'
-    setSalesInvoices(prev => prev.map(inv => inv.id !== payInvoice.id ? inv : {
-      ...inv, paid: newPaid, remaining: newRemaining, status: newStatus,
-      payments: [...inv.payments, ...paymentRows.map(r => ({ ...r, id: Date.now() + Math.random() }))],
-    }))
-    setPayInvoice(null)
+    const rows = paymentRows.filter(r => Number(r.amount) > 0)
+    try {
+      // دفعة على دين فاتورة بيع (صيانة/بيع مباشر) عبر قناة الديون الموحّدة
+      await dbService.debt.addPayment(payInvoice.id, payInvoice.type, rows, payDate)
+      await reload()
+      setPayInvoice(null)
+    } catch (err) {
+      showError('تعذّر تسجيل الدفعة', err)
+    }
   }
 
   /* ════════════════════════════════════════
@@ -286,11 +346,11 @@ export default function SalesInvoices() {
                   <td><span className={STATUS_CLS[inv.status]}>{STATUS_LABELS[inv.status]}</span></td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsInv(inv)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" onClick={() => setWarnInv(inv)}>تعديل</button>
                       {inv.remaining > 0 && (
                         <button className="btn btn-sm-green" onClick={() => openPay(inv)}>إضافة دفعة</button>
                       )}
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteInv(inv)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -370,63 +430,30 @@ export default function SalesInvoices() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => { console.log('=== طباعة فاتورة بيع ===', detailsInv) }}>طباعة</button>
+                onClick={() => printInvoice(detailsInv)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsInv(null)}>إغلاق</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ════ Warning Modal (before edit) ════ */}
+      {/* ════ Confirm before edit ════ */}
       {warnInv && (
-        <div className="mi-modal-overlay" onClick={() => setWarnInv(null)}>
-          <div className="mi-modal" onClick={e => e.stopPropagation()}>
-            <div className="mi-modal-header mi-modal-warn-header">
-              <h3>⚠️ تعديل فاتورة مغلقة</h3>
-              <button className="mi-modal-close" onClick={() => setWarnInv(null)}>✕</button>
-            </div>
-            <div className="mi-modal-body">
-              <div className="mi-warn-banner">
-                هذه الفاتورة مغلقة. هل أنت متأكد من رغبتك في التعديل؟
-              </div>
-              <div className="mi-detail-grid">
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">التاريخ</span>
-                  <span>{warnInv.date}</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">النوع</span>
-                  <span className={TYPE_CLS[warnInv.type]}>{TYPE_LABELS[warnInv.type]}</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">اسم الزبون</span>
-                  <strong>{warnInv.customerName}</strong>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الإجمالي</span>
-                  <span className="mi-amount">{fmt(warnInv.total)} ₪</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الحالة</span>
-                  <span className={STATUS_CLS[warnInv.status]}>{STATUS_LABELS[warnInv.status]}</span>
-                </div>
-              </div>
-            </div>
-            <div className="mi-modal-footer">
-              <button className="btn btn-danger" onClick={confirmEdit}>تأكيد التعديل</button>
-              <button className="btn btn-ghost" onClick={() => setWarnInv(null)}>إلغاء</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل فاتورة الزبون "${warnInv.customerName}"؟`}
+          onConfirm={confirmEdit}
+          onCancel={() => setWarnInv(null)}
+        />
       )}
 
       {/* ════ Edit Form Modal ════ */}
       {editInv && editForm && (
-        <div className="mi-modal-overlay" onClick={() => { setEditInv(null); setEditForm(null) }}>
+        <div className="mi-modal-overlay" onClick={closeEdit}>
           <div className="mi-modal mi-modal-lg" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>تعديل الفاتورة #{editInv.id}</h3>
-              <button className="mi-modal-close" onClick={() => { setEditInv(null); setEditForm(null) }}>✕</button>
+              <h3>تعديل — {editInv.customerName}</h3>
+              <button className="mi-modal-close" onClick={closeEdit}>✕</button>
             </div>
             <div className="mi-modal-body">
               <div className="mi-form-grid">
@@ -444,15 +471,17 @@ export default function SalesInvoices() {
                   </select>
                 </div>
                 <div className="mi-form-field">
-                  <label className="mi-form-label">اسم الزبون</label>
-                  <input type="text" className="mi-form-input" value={editForm.customerName}
+                  <label className="mi-form-label">اسم الزبون <span className="mi-required">*</span></label>
+                  <input type="text" className={'mi-form-input' + (editSubmitted && editNameErr ? ' mi-input-err' : '')} value={editForm.customerName}
                     onChange={e => setEditForm(f => f && { ...f, customerName: e.target.value })} />
+                  {editSubmitted && editNameErr && <span className="mi-err">{editNameErr}</span>}
                 </div>
                 <div className="mi-form-field">
-                  <label className="mi-form-label">رقم الهاتف</label>
-                  <input type="text" className="mi-form-input" value={editForm.phone}
-                    placeholder="اتركه فارغاً إذا غير معروف"
+                  <label className="mi-form-label">رقم الهاتف <span className="mi-required">*</span></label>
+                  <input type="text" className={'mi-form-input' + (editSubmitted && editPhoneErr ? ' mi-input-err' : '')} value={editForm.phone}
+                    placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
+                  {editSubmitted && editPhoneErr && <span className="mi-err">{editPhoneErr}</span>}
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">الإجمالي ₪</label>
@@ -465,9 +494,10 @@ export default function SalesInvoices() {
                     onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })} />
                 </div>
                 <div className="mi-form-field">
-                  <label className="mi-form-label">نمرة السيارة</label>
-                  <input type="text" className="mi-form-input" value={editForm.carPlate}
+                  <label className="mi-form-label">نمرة السيارة {editForm.type === 'maintenance' && <span className="mi-required">*</span>}</label>
+                  <input type="text" className={'mi-form-input' + (editSubmitted && editPlateErr ? ' mi-input-err' : '')} value={editForm.carPlate}
                     onChange={e => setEditForm(f => f && { ...f, carPlate: e.target.value })} />
+                  {editSubmitted && editPlateErr && <span className="mi-err">{editPlateErr}</span>}
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">نوع السيارة</label>
@@ -483,7 +513,7 @@ export default function SalesInvoices() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-primary" onClick={saveEdit}>حفظ التعديلات</button>
-              <button className="btn btn-ghost" onClick={() => { setEditInv(null); setEditForm(null) }}>إلغاء</button>
+              <button className="btn btn-ghost" onClick={closeEdit}>إلغاء</button>
             </div>
           </div>
         </div>
@@ -609,6 +639,23 @@ export default function SalesInvoices() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteInv && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف فاتورة الزبون "${deleteInv.customerName}"؟`}
+          onConfirm={async () => {
+            try {
+              if (deleteInv.type === 'maintenance') await dbService.maintenance.delete(deleteInv.id)
+              else                                  await dbService.directSale.delete(deleteInv.id)
+              await reload()
+              setDeleteInv(null)
+            } catch (err) { showError('تعذّر حذف الفاتورة', err) }
+          }}
+          onCancel={() => setDeleteInv(null)}
+        />
       )}
     </div>
   )

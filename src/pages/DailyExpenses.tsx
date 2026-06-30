@@ -2,6 +2,10 @@ import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { Expense } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Module-level helpers
@@ -14,11 +18,22 @@ const normalizeAr = (s: string) =>
 
 const emptyForm = () => ({ description: '', amount: '', date: today(), notes: '' })
 
+function printExpense(exp: Expense): void {
+  const body = `
+    <div class="detail-grid">
+      <div class="detail-item"><label>الوصف</label><span>${exp.description}</span></div>
+      <div class="detail-item"><label>المبلغ</label><span class="amount-out">${exp.amount.toLocaleString('ar-EG')} ₪</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${exp.date}</span></div>
+      ${exp.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${exp.notes}</span></div>` : ''}
+    </div>`
+  printPdf('مصروف يومي', body)
+}
+
 /* ════════════════════════════════════════
    Component
 ════════════════════════════════════════ */
 export default function DailyExpenses() {
-  const { expenses, setExpenses } = useGarage()
+  const { expenses, reload } = useGarage()
 
   /* form */
   const [showForm,       setShowForm]       = useState(false)
@@ -28,11 +43,14 @@ export default function DailyExpenses() {
 
   /* modals */
   const [detailsExp, setDetailsExp] = useState<Expense | null>(null)
+  const [deleteExp,  setDeleteExp]  = useState<Expense | null>(null)
 
   /* filters */
   const [search,     setSearch]     = useState('')
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo,   setFilterTo]   = useState('')
+  const [amtMin,     setAmtMin]     = useState('')
+  const [amtMax,     setAmtMax]     = useState('')
 
   /* ── Draft restore / persist ── */
   useEffect(() => {
@@ -67,11 +85,13 @@ export default function DailyExpenses() {
       : [...expenses]
     if (filterFrom) result = result.filter(e => e.date >= filterFrom)
     if (filterTo)   result = result.filter(e => e.date <= filterTo)
+    if (amtMin)     result = result.filter(e => e.amount >= Number(amtMin))
+    if (amtMax)     result = result.filter(e => e.amount <= Number(amtMax))
     return result
-  }, [expenses, search, filterFrom, filterTo, fuse])
+  }, [expenses, search, filterFrom, filterTo, amtMin, amtMax, fuse])
 
-  const hasFilters   = !!search.trim() || !!filterFrom || !!filterTo
-  const clearFilters = () => { setSearch(''); setFilterFrom(''); setFilterTo('') }
+  const hasFilters   = !!search.trim() || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
+  const clearFilters = () => { setSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('') }
 
   const totalExpenses = useMemo(
     () => filteredExpenses.reduce((s, e) => s + e.amount, 0),
@@ -87,7 +107,6 @@ export default function DailyExpenses() {
     setForm({ description: exp.description, amount: String(exp.amount), date: exp.date, notes: exp.notes })
     setSubmitAttempted(false)
     setShowForm(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   /* ── Validation ── */
@@ -96,19 +115,21 @@ export default function DailyExpenses() {
   const hasErrors      = !!descriptionErr || !!amountErr
 
   /* ── Save ── */
-  const handleSave = () => {
+  const handleSave = async () => {
     setSubmitAttempted(true)
     if (hasErrors) return
-    if (editingExpense) {
-      setExpenses(prev => prev.map(e => e.id !== editingExpense.id ? e : {
-        ...e, description: form.description, amount: Number(form.amount), date: form.date, notes: form.notes,
-      }))
-    } else {
-      setExpenses(prev => [{
-        id: Date.now(), description: form.description, amount: Number(form.amount), date: form.date, notes: form.notes,
-      }, ...prev])
+    const expData: Expense = {
+      id: editingExpense?.id ?? 0, description: form.description,
+      amount: Number(form.amount), date: form.date, notes: form.notes,
     }
-    clearForm()
+    try {
+      if (editingExpense) await dbService.expense.update(expData)
+      else                await dbService.expense.add(expData)
+      await reload()
+      clearForm()
+    } catch (err) {
+      showError('تعذّر حفظ المصروف', err)
+    }
   }
 
   const clearForm = () => {
@@ -119,6 +140,37 @@ export default function DailyExpenses() {
 
   const showErr = (msg: string) => submitAttempted && msg ? <span className="mi-err">{msg}</span> : null
   const errCls  = (bad: boolean) => bad ? ' mi-input-err' : ''
+
+  /* Shared form body (used inline for add, inside modal for edit) */
+  const formBody = (
+    <div className="mi-form-grid">
+      <label className="mi-field">
+        <span>الوصف <span className="mi-required">*</span></span>
+        <input type="text" value={form.description}
+          onChange={e => setField('description', e.target.value)} placeholder="وصف المصروف"
+          className={errCls(submitAttempted && !!descriptionErr)} />
+        {showErr(descriptionErr)}
+      </label>
+      <label className="mi-field">
+        <span>المبلغ (₪) <span className="mi-required">*</span></span>
+        <input type="number" min={0} value={form.amount}
+          onChange={e => setField('amount', e.target.value)} placeholder="0"
+          className={errCls(submitAttempted && !!amountErr)} />
+        {showErr(amountErr)}
+      </label>
+      <label className="mi-field">
+        <span>التاريخ</span>
+        <input type="date" value={form.date} max={today()}
+          onChange={e => setField('date', e.target.value)} />
+      </label>
+      <label className="mi-field mi-field-full">
+        <span>ملاحظات</span>
+        <textarea rows={3} value={form.notes}
+          onChange={e => setField('notes', e.target.value)}
+          placeholder="أي ملاحظات إضافية..." />
+      </label>
+    </div>
+  )
 
   /* ════════════════════════════════════════
      JSX
@@ -134,44 +186,31 @@ export default function DailyExpenses() {
         )}
       </div>
 
-      {/* ════ Form (add / edit) ════ */}
-      {showForm && (
-        <div className={`mi-card mi-form-card${editingExpense ? ' mi-form-card-edit' : ''}`}>
-          <h2 className="mi-section-title">
-            {editingExpense ? `تعديل المصروف — ${editingExpense.description}` : 'بيانات المصروف'}
-          </h2>
-          <div className="mi-form-grid">
-            <label className="mi-field">
-              <span>الوصف <span className="mi-required">*</span></span>
-              <input type="text" value={form.description}
-                onChange={e => setField('description', e.target.value)} placeholder="وصف المصروف"
-                className={errCls(submitAttempted && !!descriptionErr)} />
-              {showErr(descriptionErr)}
-            </label>
-            <label className="mi-field">
-              <span>المبلغ (₪) <span className="mi-required">*</span></span>
-              <input type="number" min={0} value={form.amount}
-                onChange={e => setField('amount', e.target.value)} placeholder="0"
-                className={errCls(submitAttempted && !!amountErr)} />
-              {showErr(amountErr)}
-            </label>
-            <label className="mi-field">
-              <span>التاريخ</span>
-              <input type="date" value={form.date} max={today()}
-                onChange={e => setField('date', e.target.value)} />
-            </label>
-            <label className="mi-field mi-field-full">
-              <span>ملاحظات</span>
-              <textarea rows={3} value={form.notes}
-                onChange={e => setField('notes', e.target.value)}
-                placeholder="أي ملاحظات إضافية..." />
-            </label>
-          </div>
+      {/* ════ Add Form (inline) ════ */}
+      {showForm && !editingExpense && (
+        <div className="mi-card mi-form-card">
+          <h2 className="mi-section-title">بيانات المصروف</h2>
+          {formBody}
           <div className="mi-form-actions">
-            <button className="btn btn-primary" onClick={handleSave}>
-              {editingExpense ? 'حفظ التعديلات' : 'حفظ المصروف'}
-            </button>
+            <button className="btn btn-primary" onClick={handleSave}>حفظ المصروف</button>
             <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Edit Modal ════ */}
+      {showForm && editingExpense && (
+        <div className="mi-modal-overlay" onClick={clearForm}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تعديل — {editingExpense.description}</h3>
+              <button className="mi-modal-close" onClick={clearForm}>✕</button>
+            </div>
+            <div className="mi-modal-body">{formBody}</div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" onClick={handleSave}>حفظ التعديلات</button>
+              <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
+            </div>
           </div>
         </div>
       )}
@@ -204,6 +243,16 @@ export default function DailyExpenses() {
               <input type="date" className="mi-date-input" value={filterTo} max={today()}
                 onChange={e => setFilterTo(e.target.value)} />
             </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">من مبلغ ₪</span>
+              <input type="number" min={0} className="mi-amount-input" value={amtMin}
+                onChange={e => setAmtMin(e.target.value)} placeholder="0" />
+            </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">إلى مبلغ ₪</span>
+              <input type="number" min={0} className="mi-amount-input" value={amtMax}
+                onChange={e => setAmtMax(e.target.value)} placeholder="∞" />
+            </div>
             {hasFilters && (
               <button className="btn btn-ghost mi-clear-btn" onClick={clearFilters}>مسح الفلتر</button>
             )}
@@ -233,8 +282,8 @@ export default function DailyExpenses() {
                   <td>{exp.notes || '—'}</td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsExp(exp)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" onClick={() => openEdit(exp)}>تعديل</button>
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteExp(exp)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -276,11 +325,24 @@ export default function DailyExpenses() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => { console.log('=== طباعة مصروف ===', detailsExp) }}>طباعة</button>
+                onClick={() => printExpense(detailsExp)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsExp(null)}>إغلاق</button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteExp && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف المصروف "${deleteExp.description}"؟`}
+          onConfirm={async () => {
+            try { await dbService.expense.delete(deleteExp.id); await reload(); setDeleteExp(null) }
+            catch (err) { showError('تعذّر حذف المصروف', err) }
+          }}
+          onCancel={() => setDeleteExp(null)}
+        />
       )}
     </div>
   )

@@ -1,7 +1,11 @@
 import { useState, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow } from '../store/GarageContext'
+import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense, SupplierRecord } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Helpers / Constants
@@ -18,10 +22,33 @@ const STATUS_CLS:    Record<PurchaseStatus, string> = { paid: 'mi-badge-green', 
 
 const fmt = (n: number) => n.toLocaleString('ar-EG')
 
+const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
+}
+
 const blankRow = (): PaymentRow => ({
   id: Date.now() + Math.random(), method: 'cash', amount: 0,
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
 })
+
+function printInvoice(inv: PurchaseInvoice): void {
+  const body = `
+    <div class="detail-grid">
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.id}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
+      <div class="detail-item"><label>النوع</label><span>${TYPE_LABELS[inv.type]}</span></div>
+      <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
+      <div class="detail-item"><label>الوصف / المورد</label><span>${inv.description}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
+      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${inv.details}</span></div>` : ''}
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
+      <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.paid)} ₪</span></div>
+      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
+    </div>`
+  printPdf('فاتورة شراء', body)
+}
 
 /* ════════════════════════════════════════
    LinkedOpsSection
@@ -72,7 +99,7 @@ const invToForm = (inv: PurchaseInvoice): EditForm => ({
    Component
 ════════════════════════════════════════ */
 export default function PurchaseInvoices() {
-  const { purchaseInvoices, setPurchaseInvoices } = useGarage()
+  const { purchaseInvoices, reload } = useGarage()
 
   /* ── Search & Filter ── */
   const [search,       setSearch]       = useState('')
@@ -95,6 +122,9 @@ export default function PurchaseInvoices() {
   const [paymentRows, setPaymentRows] = useState<PaymentRow[]>([blankRow()])
   const [payDate,     setPayDate]     = useState(today())
   const [payNotes,    setPayNotes]    = useState('')
+
+  /* ── Delete ── */
+  const [deleteInv, setDeleteInv] = useState<PurchaseInvoice | null>(null)
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
@@ -138,18 +168,35 @@ export default function PurchaseInvoices() {
     setWarnInv(null)
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editInv || !editForm) return
-    const total     = Number(editForm.total) || 0
-    const paid      = Math.min(Number(editForm.paid) || 0, total)
-    const remaining = total - paid
-    const status: PurchaseStatus = remaining <= 0 ? 'paid' : paid === 0 ? 'full_debt' : 'partial_debt'
-    const phone = editForm.phone.trim() || '0000'
-    setPurchaseInvoices(prev => prev.map(inv => inv.id !== editInv.id ? inv : {
-      ...inv, date: editForm.date, type: editForm.type, description: editForm.description,
-      phone, total, paid, remaining, status, details: editForm.details,
-    }))
-    setEditInv(null); setEditForm(null)
+    const total = Number(editForm.total) || 0
+    const paid  = Math.min(Number(editForm.paid) || 0, total)
+    const phone = editForm.phone.trim()
+    /* فاتورة الشراء عرض مجمّع؛ التعديل يوجَّه للسجل الأصلي حسب نوعه. */
+    try {
+      if (editInv.type === 'expense') {
+        const exp: Expense = {
+          id: editInv.id, description: editForm.description, amount: total,
+          date: editForm.date, notes: editForm.details,
+        }
+        await dbService.expense.update(exp)
+      } else if (editInv.type === 'supplier') {
+        const sup: SupplierRecord = {
+          id: editInv.id, supplierName: editForm.description, phone,
+          purchaseDate: editForm.date, notes: editForm.details,
+          total, amountPaid: paid, amountRemaining: total - paid, items: [], payments: [],
+        }
+        await dbService.supplierInvoice.update(sup)
+      } else {
+        showError('تعديل الرواتب يتم من صفحة الموظفين والرواتب')
+        return
+      }
+      await reload()
+      setEditInv(null); setEditForm(null)
+    } catch (err) {
+      showError('تعذّر حفظ تعديلات الفاتورة', err)
+    }
   }
 
   /* ── Payment flow ── */
@@ -167,16 +214,21 @@ export default function PurchaseInvoices() {
 
   const totalBeingPaid = paymentRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
 
-  const submitPayment = () => {
+  const submitPayment = async () => {
     if (!payInvoice || totalBeingPaid <= 0) return
-    const newPaid      = Math.min(payInvoice.paid + totalBeingPaid, payInvoice.total)
-    const newRemaining = payInvoice.total - newPaid
-    const newStatus: PurchaseStatus = newRemaining <= 0 ? 'paid' : newPaid === 0 ? 'full_debt' : 'partial_debt'
-    setPurchaseInvoices(prev => prev.map(inv => inv.id !== payInvoice.id ? inv : {
-      ...inv, paid: newPaid, remaining: newRemaining, status: newStatus,
-      payments: [...inv.payments, ...paymentRows.map(r => ({ ...r, id: Date.now() + Math.random() }))],
-    }))
-    setPayInvoice(null)
+    const rows = paymentRows.filter(r => Number(r.amount) > 0)
+    try {
+      if (payInvoice.type === 'supplier') {
+        await dbService.supplierInvoice.addDebtPayment(payInvoice.id, rows, payDate)
+      } else {
+        showError('لا يمكن إضافة دفعة لهذا النوع من الفواتير')
+        return
+      }
+      await reload()
+      setPayInvoice(null)
+    } catch (err) {
+      showError('تعذّر تسجيل الدفعة', err)
+    }
   }
 
   /* ════════════════════════════════════════
@@ -286,11 +338,11 @@ export default function PurchaseInvoices() {
                   <td><span className={STATUS_CLS[inv.status]}>{STATUS_LABELS[inv.status]}</span></td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsInv(inv)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" onClick={() => setWarnInv(inv)}>تعديل</button>
                       {inv.remaining > 0 && (
                         <button className="btn btn-sm-green" onClick={() => openPay(inv)}>إضافة دفعة</button>
                       )}
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteInv(inv)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -362,54 +414,21 @@ export default function PurchaseInvoices() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => { console.log('=== طباعة فاتورة شراء ===', detailsInv) }}>طباعة</button>
+                onClick={() => printInvoice(detailsInv)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsInv(null)}>إغلاق</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ════ Warning Modal (before edit) ════ */}
+      {/* ════ Confirm before edit ════ */}
       {warnInv && (
-        <div className="mi-modal-overlay" onClick={() => setWarnInv(null)}>
-          <div className="mi-modal" onClick={e => e.stopPropagation()}>
-            <div className="mi-modal-header mi-modal-warn-header">
-              <h3>⚠️ تعديل فاتورة مغلقة</h3>
-              <button className="mi-modal-close" onClick={() => setWarnInv(null)}>✕</button>
-            </div>
-            <div className="mi-modal-body">
-              <div className="mi-warn-banner">
-                هذه الفاتورة مغلقة. هل أنت متأكد من رغبتك في التعديل؟
-              </div>
-              <div className="mi-detail-grid">
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">التاريخ</span>
-                  <span>{warnInv.date}</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">النوع</span>
-                  <span className={TYPE_CLS[warnInv.type]}>{TYPE_LABELS[warnInv.type]}</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الوصف / المورد</span>
-                  <strong>{warnInv.description}</strong>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الإجمالي</span>
-                  <span className="mi-amount">{fmt(warnInv.total)} ₪</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الحالة</span>
-                  <span className={STATUS_CLS[warnInv.status]}>{STATUS_LABELS[warnInv.status]}</span>
-                </div>
-              </div>
-            </div>
-            <div className="mi-modal-footer">
-              <button className="btn btn-danger" onClick={confirmEdit}>تأكيد التعديل</button>
-              <button className="btn btn-ghost" onClick={() => setWarnInv(null)}>إلغاء</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل فاتورة "${warnInv.description}"؟`}
+          onConfirm={confirmEdit}
+          onCancel={() => setWarnInv(null)}
+        />
       )}
 
       {/* ════ Edit Form Modal ════ */}
@@ -417,7 +436,7 @@ export default function PurchaseInvoices() {
         <div className="mi-modal-overlay" onClick={() => { setEditInv(null); setEditForm(null) }}>
           <div className="mi-modal mi-modal-lg" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>تعديل الفاتورة #{editInv.id}</h3>
+              <h3>تعديل — {editInv.description}</h3>
               <button className="mi-modal-close" onClick={() => { setEditInv(null); setEditForm(null) }}>✕</button>
             </div>
             <div className="mi-modal-body">
@@ -444,7 +463,7 @@ export default function PurchaseInvoices() {
                 <div className="mi-form-field">
                   <label className="mi-form-label">رقم الهاتف</label>
                   <input type="text" className="mi-form-input" value={editForm.phone}
-                    placeholder="اتركه فارغاً إذا غير معروف"
+                    placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
                 </div>
                 <div className="mi-form-field">
@@ -592,6 +611,24 @@ export default function PurchaseInvoices() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteInv && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف فاتورة "${deleteInv.description}"؟`}
+          onConfirm={async () => {
+            try {
+              if (deleteInv.type === 'supplier')     await dbService.supplierInvoice.delete(deleteInv.id)
+              else if (deleteInv.type === 'expense') await dbService.expense.delete(deleteInv.id)
+              else                                   await dbService.salary.delete(deleteInv.id)
+              await reload()
+              setDeleteInv(null)
+            } catch (err) { showError('تعذّر حذف الفاتورة', err) }
+          }}
+          onCancel={() => setDeleteInv(null)}
+        />
       )}
     </div>
   )

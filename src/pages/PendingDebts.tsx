@@ -1,7 +1,11 @@
 import { useState, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { DebtRecord, DebtType } from '../store/GarageContext'
+import type { DebtRecord, DebtType, CarRecord, SaleRecord } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Local-only types (payment modal)
@@ -20,6 +24,10 @@ type PaymentRow = {
 const today = () => new Date().toISOString().slice(0, 10)
 let nextPayId = 1
 
+const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
+}
+
 const normalizeAr = (s: string) =>
   s.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, '').toLowerCase()
 
@@ -30,6 +38,34 @@ const emptyPayRow = (): PaymentRow => ({
 
 const PAY_LABELS: Record<PayMethod, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 const fmt = (n: number) => n.toLocaleString('ar-EG')
+
+function printDebt(debt: DebtRecord): void {
+  const body = `
+    <div class="detail-grid">
+      <div class="detail-item"><label>اسم الزبون</label><span>${debt.customerName}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${debt.phone && debt.phone !== '0000' ? debt.phone : 'غير معروف'}</span></div>
+      <div class="detail-item"><label>النوع</label><span>${debt.typeLabel}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${debt.date}</span></div>
+      ${debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${debt.carPlate}</span></div>` : ''}
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><label>الإجمالي</label><span>${fmt(debt.total)} ₪</span></div>
+      <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(debt.amountPaid)} ₪</span></div>
+      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
+    </div>`
+  printPdf('دين معلق', body)
+}
+
+type DebtEditForm = {
+  customerName: string; phone: string; date: string; carPlate: string
+  type: DebtType; total: string; amountPaid: string
+}
+
+const debtToForm = (d: DebtRecord): DebtEditForm => ({
+  customerName: d.customerName, phone: d.phone === '0000' ? '' : d.phone,
+  date: d.date, carPlate: d.carPlate, type: d.type,
+  total: String(d.total), amountPaid: String(d.amountPaid),
+})
 
 /* ════════════════════════════════════════
    LinkedOpsSection
@@ -67,7 +103,7 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
    Component
 ════════════════════════════════════════ */
 export default function PendingDebts() {
-  const { debts, setDebts } = useGarage()
+  const { debts, reload } = useGarage()
 
   /* filters */
   const [search,      setSearch]      = useState('')
@@ -78,6 +114,12 @@ export default function PendingDebts() {
 
   /* modals */
   const [detailsDebt, setDetailsDebt] = useState<DebtRecord | null>(null)
+  const [deleteDebt,  setDeleteDebt]  = useState<DebtRecord | null>(null)
+
+  /* edit modal */
+  const [editDebt,      setEditDebt]      = useState<DebtRecord | null>(null)
+  const [editForm,      setEditForm]      = useState<DebtEditForm | null>(null)
+  const [editSubmitted, setEditSubmitted] = useState(false)
 
   /* payment modal */
   const [payDebt,      setPayDebt]      = useState<DebtRecord | null>(null)
@@ -129,17 +171,56 @@ export default function PendingDebts() {
   const remainingAfter   = (payDebt?.amountRemaining ?? 0) - thisPaymentTotal
   const payExceedsDebt   = thisPaymentTotal > (payDebt?.amountRemaining ?? 0)
 
-  const handlePayConfirm = () => {
+  /* ── Edit flow ── */
+  const openEdit = (debt: DebtRecord) => { setEditDebt(debt); setEditForm(debtToForm(debt)); setEditSubmitted(false) }
+
+  const editNameErr  = editForm && !editForm.customerName.trim() ? 'اسم الزبون مطلوب' : ''
+  const editPhoneErr = editForm && !editForm.phone.trim() ? 'رقم الهاتف مطلوب' : ''
+
+  const saveEdit = async () => {
+    if (!editDebt || !editForm) return
+    setEditSubmitted(true)
+    if (editNameErr || editPhoneErr) return
+    const phone = editForm.phone.trim()
+    /* الدين هو فاتورة مصدر (صيانة/بيع مباشر)؛ نعدّل الفاتورة الأصلية حسب نوعها.
+       (الإجمالي/المدفوع مشتقّان في DB من البنود والدفعات ولا يُعدَّلان مباشرةً.) */
+    try {
+      if (editDebt.type === 'maintenance') {
+        const car: CarRecord = {
+          id: editDebt.id, customerName: editForm.customerName, phone,
+          carPlate: editForm.carPlate, carType: '', carColor: '',
+          dateReceived: editForm.date, status: 'delivered',
+          notes: '', total: editDebt.total, items: [],
+        }
+        await dbService.maintenance.update(car)
+      } else {
+        const sale: SaleRecord = {
+          id: editDebt.id, customerName: editForm.customerName, phone,
+          saleDate: editForm.date, warranty: '', notes: '',
+          total: editDebt.total, amountPaid: editDebt.amountPaid,
+          amountRemaining: editDebt.amountRemaining, status: 'partial_debt',
+          items: [], payments: [],
+        }
+        await dbService.directSale.update(sale)
+      }
+      await reload()
+      setEditDebt(null); setEditForm(null); setEditSubmitted(false)
+    } catch (err) {
+      showError('تعذّر تعديل الدين', err)
+    }
+  }
+
+  const handlePayConfirm = async () => {
     setPaySubmitted(true)
-    if (thisPaymentTotal <= 0 || payExceedsDebt) return
-    setDebts(prev => {
-      const updated = prev.map(d => {
-        if (d.id !== payDebt!.id) return d
-        return { ...d, amountPaid: d.amountPaid + thisPaymentTotal, amountRemaining: Math.max(0, d.amountRemaining - thisPaymentTotal) }
-      })
-      return updated.filter(d => d.amountRemaining > 0)
-    })
-    setPayDebt(null)
+    if (thisPaymentTotal <= 0 || payExceedsDebt || !payDebt) return
+    const rows = paymentRows.filter(r => r.amount > 0)
+    try {
+      await dbService.debt.addPayment(payDebt.id, payDebt.type, rows, payDate)
+      await reload()
+      setPayDebt(null)
+    } catch (err) {
+      showError('تعذّر تسجيل دفعة الدين', err)
+    }
   }
 
   /* ════════════════════════════════════════
@@ -232,8 +313,9 @@ export default function PendingDebts() {
                   <td className="pd-remaining">{fmt(debt.amountRemaining)} ₪</td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsDebt(debt)}>تفاصيل</button>
+                      <button className="btn btn-sm-outline" onClick={() => openEdit(debt)}>تعديل</button>
                       <button className="btn btn-sm-green" onClick={() => openPay(debt)}>إضافة دفعة</button>
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteDebt(debt)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -297,7 +379,7 @@ export default function PendingDebts() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => { console.log('=== طباعة دين ===', detailsDebt) }}>طباعة</button>
+                onClick={() => printDebt(detailsDebt)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsDebt(null)}>إغلاق</button>
             </div>
           </div>
@@ -406,6 +488,85 @@ export default function PendingDebts() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Edit Modal ════ */}
+      {editDebt && editForm && (
+        <div className="mi-modal-overlay" onClick={() => { setEditDebt(null); setEditForm(null); setEditSubmitted(false) }}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تعديل — {editDebt.customerName}</h3>
+              <button className="mi-modal-close" onClick={() => { setEditDebt(null); setEditForm(null); setEditSubmitted(false) }}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-form-grid">
+                <label className="mi-field">
+                  <span>اسم الزبون <span className="mi-required">*</span></span>
+                  <input type="text" value={editForm.customerName}
+                    className={editSubmitted && editNameErr ? 'mi-input-err' : ''}
+                    onChange={e => setEditForm(f => f && { ...f, customerName: e.target.value })} />
+                  {editSubmitted && editNameErr && <span className="mi-err">{editNameErr}</span>}
+                </label>
+                <label className="mi-field">
+                  <span>رقم الهاتف <span className="mi-required">*</span></span>
+                  <input type="text" value={editForm.phone} placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
+                    className={editSubmitted && editPhoneErr ? 'mi-input-err' : ''}
+                    onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
+                  {editSubmitted && editPhoneErr && <span className="mi-err">{editPhoneErr}</span>}
+                </label>
+                <label className="mi-field">
+                  <span>النوع</span>
+                  <select className="pay-select" value={editForm.type}
+                    onChange={e => setEditForm(f => f && { ...f, type: e.target.value as DebtType })}>
+                    <option value="maintenance">صيانة</option>
+                    <option value="direct_sale">بيع مباشر</option>
+                  </select>
+                </label>
+                <label className="mi-field">
+                  <span>التاريخ</span>
+                  <input type="date" value={editForm.date} max={today()}
+                    onChange={e => setEditForm(f => f && { ...f, date: e.target.value })} />
+                </label>
+                <label className="mi-field">
+                  <span>نمرة السيارة</span>
+                  <input type="text" value={editForm.carPlate}
+                    onChange={e => setEditForm(f => f && { ...f, carPlate: e.target.value })} />
+                </label>
+                <label className="mi-field">
+                  <span>الإجمالي ₪</span>
+                  <input type="number" min={0} value={editForm.total}
+                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })} />
+                </label>
+                <label className="mi-field">
+                  <span>المدفوع ₪</span>
+                  <input type="number" min={0} value={editForm.amountPaid}
+                    onChange={e => setEditForm(f => f && { ...f, amountPaid: e.target.value })} />
+                </label>
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" onClick={saveEdit}>حفظ التعديلات</button>
+              <button className="btn btn-ghost" onClick={() => { setEditDebt(null); setEditForm(null); setEditSubmitted(false) }}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteDebt && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف دين الزبون "${deleteDebt.customerName}"؟ سيتم حذف الفاتورة المصدر بالكامل.`}
+          onConfirm={async () => {
+            try {
+              if (deleteDebt.type === 'maintenance') await dbService.maintenance.delete(deleteDebt.id)
+              else                                   await dbService.directSale.delete(deleteDebt.id)
+              await reload()
+              setDeleteDebt(null)
+            } catch (err) { showError('تعذّر حذف الدين', err) }
+          }}
+          onCancel={() => setDeleteDebt(null)}
+        />
       )}
     </div>
   )

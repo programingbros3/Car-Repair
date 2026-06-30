@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage, SaleRecord, SaleItem, SaleStatus, PayMethod, PaymentRow } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
 
 /* ════════════════════════════════════════
    Local Types
@@ -24,10 +28,11 @@ const emptyForm = () => ({ customerName: '', phone: '', saleDate: today(), warra
 const newFormItem  = (): FormItem    => ({ id: nextItemId++, name: '', qty: 1, unitPrice: 0, notes: '' })
 const emptyPayRow  = (): PaymentRow  => ({ id: nextPayId++, method: 'cash', amount: 0, checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '' })
 
-const blockDigits  = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
-const validateName = (v: string) => v.trim() ? '' : 'اسم الزبون مطلوب'
+const blockDigits     = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
+const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault() }
+const validateName    = (v: string) => v.trim() ? '' : 'اسم الزبون مطلوب'
 
-const PAY_LABELS: Record<PayMethod, string>  = { cash: 'كاش', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string>  = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 const STATUS_LABELS: Record<SaleStatus, string> = { paid: 'مدفوع', partial_debt: 'دين جزئي', full_debt: 'دين كامل' }
 const STATUS_CLS:    Record<SaleStatus, string> = { paid: 'mi-badge-green', partial_debt: 'mi-badge-yellow', full_debt: 'mi-badge-red' }
 
@@ -66,7 +71,7 @@ function LinkedOpsSection({ phone, id }: { phone: string; id: number }) {
    Component
 ════════════════════════════════════════ */
 export default function DirectSales() {
-  const { directSales: invoices, setDirectSales: setInvoices } = useGarage()
+  const { directSales: invoices, reload } = useGarage()
 
   /* form */
   const [showForm, setShowForm]               = useState(false)
@@ -87,6 +92,7 @@ export default function DirectSales() {
   const [paymentRows,    setPaymentRows]    = useState<PaymentRow[]>([])
   const [payDate,        setPayDate]        = useState(today())
   const [payNotes,       setPayNotes]       = useState('')
+  const [deleteInvoice,  setDeleteInvoice]  = useState<SaleRecord | null>(null)
 
   /* Draft */
   useEffect(() => {
@@ -135,7 +141,6 @@ export default function DirectSales() {
       ? inv.items.map(it => ({ id: nextItemId++, name: it.name, qty: it.quantity, unitPrice: it.unitPrice, notes: it.notes }))
       : [newFormItem()]
     setItems(editItems); setSubmitAttempted(false); setShowForm(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   /* Validation */
@@ -145,25 +150,28 @@ export default function DirectSales() {
   for (const it of items) itemsErrMap[it.id] = { nameErr: it.name.trim() ? '' : 'اسم الصنف مطلوب', qtyErr: it.qty >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
   const hasErrors = !!nameErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr)
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSubmitAttempted(true)
     if (hasErrors) return
     const newItems: SaleItem[] = items.map((it, i) => ({ id: i + 1, name: it.name, quantity: it.qty, unitPrice: it.unitPrice, notes: it.notes }))
     const phone = form.phone.trim() || '0000'
-    if (editingInvoice) {
-      setInvoices(prev => prev.map(inv => inv.id !== editingInvoice.id ? inv : {
-        ...inv, customerName: form.customerName, phone, saleDate: form.saleDate,
-        warranty: form.warranty, notes: form.generalNotes, total: formTotal, items: newItems,
-      }))
-    } else {
-      setInvoices(prev => [{
-        id: Date.now(), customerName: form.customerName, phone, saleDate: form.saleDate,
-        warranty: form.warranty, notes: form.generalNotes, total: formTotal,
-        amountPaid: 0, amountRemaining: formTotal, status: 'full_debt' as SaleStatus,
-        items: newItems, payments: [],
-      }, ...prev])
+    const saleData: SaleRecord = {
+      id: editingInvoice?.id ?? 0,
+      customerName: form.customerName, phone, saleDate: form.saleDate,
+      warranty: form.warranty, notes: form.generalNotes, total: formTotal,
+      amountPaid: editingInvoice?.amountPaid ?? 0,
+      amountRemaining: editingInvoice?.amountRemaining ?? formTotal,
+      status: editingInvoice?.status ?? ('full_debt' as SaleStatus),
+      items: newItems, payments: editingInvoice?.payments ?? [],
     }
-    clearForm()
+    try {
+      if (editingInvoice) await dbService.directSale.update(saleData)
+      else                await dbService.directSale.add(saleData, [])
+      await reload()
+      clearForm()
+    } catch (err) {
+      showError('تعذّر حفظ فاتورة البيع', err)
+    }
   }
 
   const clearForm = () => {
@@ -185,17 +193,16 @@ export default function DirectSales() {
   const afterRemaining = invRemaining - thisPayTotal
   const payExceeds    = thisPayTotal > invRemaining
 
-  const handlePaySave = () => {
+  const handlePaySave = async () => {
     if (thisPayTotal <= 0 || payExceeds || !payInvoice) return
-    console.log('=== دفعة بيع مباشر ===', { invoice: payInvoice, paymentRows, thisPayTotal, payDate, payNotes })
-    setInvoices(prev => prev.map(inv => {
-      if (inv.id !== payInvoice.id) return inv
-      const newPaid      = inv.amountPaid + thisPayTotal
-      const newRemaining = Math.max(0, inv.amountRemaining - thisPayTotal)
-      const newStatus: SaleStatus = newRemaining === 0 ? 'paid' : newPaid > 0 ? 'partial_debt' : 'full_debt'
-      return { ...inv, amountPaid: newPaid, amountRemaining: newRemaining, status: newStatus }
-    }))
-    setPayInvoice(null)
+    const rows = paymentRows.filter(r => r.amount > 0)
+    try {
+      await dbService.directSale.addPayment(payInvoice.id, rows, payDate)
+      await reload()
+      setPayInvoice(null)
+    } catch (err) {
+      showError('تعذّر تسجيل الدفعة', err)
+    }
   }
 
   /* UI helpers */
@@ -203,6 +210,100 @@ export default function DirectSales() {
   const showItemErr = (id: number, f: keyof FormItemErr) => submitAttempted && itemsErrMap[id]?.[f] ? <span className="mi-err">{itemsErrMap[id][f]}</span> : null
   const errCls      = (bad: boolean) => bad ? ' mi-input-err' : ''
   const fmt         = (n: number) => n.toLocaleString('ar-EG')
+
+  const handlePrint = (inv: SaleRecord) => {
+    const rows = inv.items.map(item => `
+      <tr>
+        <td>${item.name}</td>
+        <td>${item.quantity}</td>
+        <td>${fmt(item.unitPrice)} ₪</td>
+        <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+        <td>${item.notes || '—'}</td>
+      </tr>`).join('')
+    const body = `
+      <div class="detail-grid">
+        <div class="detail-item"><label>اسم الزبون</label><span>${inv.customerName}</span></div>
+        <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
+        <div class="detail-item"><label>التاريخ</label><span>${inv.saleDate}</span></div>
+        <div class="detail-item"><label>الكفالة</label><span>${inv.warranty || '—'}</span></div>
+        ${inv.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${inv.notes}</span></div>` : ''}
+      </div>
+      <table>
+        <thead><tr><th>الصنف</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="detail-grid" style="margin-top:16px;">
+        <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
+        <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.amountPaid)} ₪</span></div>
+        <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.amountRemaining)} ₪</span></div>
+        <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
+      </div>`
+    printPdf('فاتورة بيع مباشر', body)
+  }
+
+  /* Shared form body (used inline for add, inside modal for edit) */
+  const formBody = (
+    <>
+      <div className="mi-form-grid">
+        <label className="mi-field">
+          <span>اسم الزبون <span className="mi-required">*</span></span>
+          <input type="text" value={form.customerName} onKeyDown={blockDigits}
+            onChange={e => setField('customerName', e.target.value)} placeholder="اسم الزبون"
+            className={errCls(submitAttempted && !!nameErr)} />
+          {showErr(nameErr)}
+        </label>
+        <label className="mi-field">
+          <span>رقم الهاتف</span>
+          <input type="text" value={form.phone} onKeyDown={allowPhoneChars}
+            onChange={e => setField('phone', e.target.value)} placeholder="اتركه فارغاً إذا غير معروف" />
+        </label>
+        <label className="mi-field">
+          <span>التاريخ</span>
+          <input type="date" value={form.saleDate} max={today()} onChange={e => setField('saleDate', e.target.value)} />
+        </label>
+        <label className="mi-field">
+          <span>الكفالة</span>
+          <input type="text" value={form.warranty} onChange={e => setField('warranty', e.target.value)} placeholder="مثال: 3 أشهر" />
+        </label>
+        <label className="mi-field mi-field-full">
+          <span>ملاحظات عامة</span>
+          <textarea rows={3} value={form.generalNotes} onChange={e => setField('generalNotes', e.target.value)} placeholder="أي ملاحظات إضافية..." />
+        </label>
+      </div>
+
+      <div className="mi-parts-header">
+        <h2 className="mi-section-title">البنود</h2>
+        <button className="btn btn-secondary" onClick={addItem}>+ إضافة صنف</button>
+      </div>
+      <div className="mi-parts-table-wrap">
+        <table className="mi-parts-table">
+          <thead><tr><th>اسم الصنف</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>ملاحظات</th><th></th></tr></thead>
+          <tbody>
+            {items.map(item => (
+              <tr key={item.id}>
+                <td>
+                  <input type="text" placeholder="اسم الصنف" value={item.name}
+                    className={'mi-td-input' + errCls(submitAttempted && !!itemsErrMap[item.id]?.nameErr)}
+                    onChange={e => updateItem(item.id, 'name', e.target.value)} />
+                  {showItemErr(item.id, 'nameErr')}
+                </td>
+                <td>
+                  <input type="number" min={1} value={item.qty}
+                    className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!itemsErrMap[item.id]?.qtyErr)}
+                    onChange={e => updateItem(item.id, 'qty', Math.max(1, Number(e.target.value)))} />
+                  {showItemErr(item.id, 'qtyErr')}
+                </td>
+                <td><input type="number" min={0} value={item.unitPrice} className="mi-td-input mi-td-num" onChange={e => updateItem(item.id, 'unitPrice', Math.max(0, Number(e.target.value)))} /></td>
+                <td><input type="text" placeholder="ملاحظة..." value={item.notes} className="mi-td-input" onChange={e => updateItem(item.id, 'notes', e.target.value)} /></td>
+                <td className="mi-td-center"><button className="btn btn-danger-sm" disabled={items.length === 1} onClick={() => removeItem(item.id)}>حذف</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mi-total-row">الإجمالي: <strong>{fmt(formTotal)} ₪</strong></div>
+    </>
+  )
 
   /* ════════════════════════════════════════
      JSX
@@ -219,69 +320,30 @@ export default function DirectSales() {
       </div>
 
       {/* ════ Form ════ */}
-      {showForm && (
-        <div className={`mi-card mi-form-card${editingInvoice ? ' mi-form-card-edit' : ''}`}>
-          <h2 className="mi-section-title">{editingInvoice ? `تعديل الفاتورة — ${editingInvoice.customerName}` : 'فاتورة بيع جديدة'}</h2>
-          <div className="mi-form-grid">
-            <label className="mi-field">
-              <span>اسم الزبون <span className="mi-required">*</span></span>
-              <input type="text" value={form.customerName} onKeyDown={blockDigits}
-                onChange={e => setField('customerName', e.target.value)} placeholder="اسم الزبون"
-                className={errCls(submitAttempted && !!nameErr)} />
-              {showErr(nameErr)}
-            </label>
-            <label className="mi-field">
-              <span>رقم الهاتف</span>
-              <input type="text" value={form.phone} onChange={e => setField('phone', e.target.value)} placeholder="اتركه فارغاً إذا غير معروف" />
-            </label>
-            <label className="mi-field">
-              <span>التاريخ</span>
-              <input type="date" value={form.saleDate} max={today()} onChange={e => setField('saleDate', e.target.value)} />
-            </label>
-            <label className="mi-field">
-              <span>الكفالة</span>
-              <input type="text" value={form.warranty} onChange={e => setField('warranty', e.target.value)} placeholder="مثال: 3 أشهر" />
-            </label>
-            <label className="mi-field mi-field-full">
-              <span>ملاحظات عامة</span>
-              <textarea rows={3} value={form.generalNotes} onChange={e => setField('generalNotes', e.target.value)} placeholder="أي ملاحظات إضافية..." />
-            </label>
-          </div>
-
-          <div className="mi-parts-header">
-            <h2 className="mi-section-title">البنود</h2>
-            <button className="btn btn-secondary" onClick={addItem}>+ إضافة صنف</button>
-          </div>
-          <div className="mi-parts-table-wrap">
-            <table className="mi-parts-table">
-              <thead><tr><th>اسم الصنف</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>ملاحظات</th><th></th></tr></thead>
-              <tbody>
-                {items.map(item => (
-                  <tr key={item.id}>
-                    <td>
-                      <input type="text" placeholder="اسم الصنف" value={item.name}
-                        className={'mi-td-input' + errCls(submitAttempted && !!itemsErrMap[item.id]?.nameErr)}
-                        onChange={e => updateItem(item.id, 'name', e.target.value)} />
-                      {showItemErr(item.id, 'nameErr')}
-                    </td>
-                    <td>
-                      <input type="number" min={1} value={item.qty}
-                        className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!itemsErrMap[item.id]?.qtyErr)}
-                        onChange={e => updateItem(item.id, 'qty', Math.max(1, Number(e.target.value)))} />
-                      {showItemErr(item.id, 'qtyErr')}
-                    </td>
-                    <td><input type="number" min={0} value={item.unitPrice} className="mi-td-input mi-td-num" onChange={e => updateItem(item.id, 'unitPrice', Math.max(0, Number(e.target.value)))} /></td>
-                    <td><input type="text" placeholder="ملاحظة..." value={item.notes} className="mi-td-input" onChange={e => updateItem(item.id, 'notes', e.target.value)} /></td>
-                    <td className="mi-td-center"><button className="btn btn-danger-sm" disabled={items.length === 1} onClick={() => removeItem(item.id)}>حذف</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mi-total-row">الإجمالي: <strong>{fmt(formTotal)} ₪</strong></div>
+      {showForm && !editingInvoice && (
+        <div className="mi-card mi-form-card">
+          <h2 className="mi-section-title">فاتورة بيع جديدة</h2>
+          {formBody}
           <div className="mi-form-actions">
-            <button className="btn btn-primary" onClick={handleSave}>{editingInvoice ? 'حفظ التعديلات' : 'حفظ الفاتورة'}</button>
+            <button className="btn btn-primary" onClick={handleSave}>حفظ الفاتورة</button>
             <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Edit Modal ════ */}
+      {showForm && editingInvoice && (
+        <div className="mi-modal-overlay" onClick={clearForm}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تعديل — {editingInvoice.customerName}</h3>
+              <button className="mi-modal-close" onClick={clearForm}>✕</button>
+            </div>
+            <div className="mi-modal-body">{formBody}</div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" onClick={handleSave}>حفظ التعديلات</button>
+              <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
+            </div>
           </div>
         </div>
       )}
@@ -317,7 +379,7 @@ export default function DirectSales() {
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsInvoice(inv) }}>
                   <td>{inv.customerName}</td>
-                  <td>{inv.phone && inv.phone !== '0000' ? <span className="mi-phone-highlight">{inv.phone}</span> : <span style={{ color: '#aaa' }}>غير معروف</span>}</td>
+                  <td>{inv.phone && inv.phone !== '0000' ? <span className="mi-phone-highlight">{inv.phone}</span> : <span className="mi-badge-gray">غير معروف</span>}</td>
                   <td>{inv.saleDate}</td>
                   <td className="mi-amount">{fmt(inv.total)} ₪</td>
                   <td className="pd-paid">{fmt(inv.amountPaid)} ₪</td>
@@ -325,11 +387,11 @@ export default function DirectSales() {
                   <td><span className={STATUS_CLS[inv.status]}>{STATUS_LABELS[inv.status]}</span></td>
                   <td>
                     <div className="mi-actions">
-                      <button className="btn btn-sm-outline" onClick={() => setDetailsInvoice(inv)}>تفاصيل</button>
                       <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEdit(inv)}>تعديل</button>
                       {inv.amountRemaining > 0 && (
                         <button className="btn btn-sm-green" onClick={() => openPay(inv)}>إضافة دفعة</button>
                       )}
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteInvoice(inv)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -353,9 +415,9 @@ export default function DirectSales() {
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{detailsInvoice.customerName}</strong></div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">رقم الهاتف</span>
-                  <span className={detailsInvoice.phone && detailsInvoice.phone !== '0000' ? 'mi-phone-highlight' : ''}>
-                    {detailsInvoice.phone && detailsInvoice.phone !== '0000' ? detailsInvoice.phone : 'غير معروف'}
-                  </span>
+                  {detailsInvoice.phone && detailsInvoice.phone !== '0000'
+                    ? <span className="mi-phone-highlight">{detailsInvoice.phone}</span>
+                    : <span className="mi-badge-gray">غير معروف</span>}
                 </div>
                 <div className="mi-detail-item"><span className="mi-detail-label">التاريخ</span><span>{detailsInvoice.saleDate}</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">الكفالة</span><span>{detailsInvoice.warranty || '—'}</span></div>
@@ -386,7 +448,7 @@ export default function DirectSales() {
               <LinkedOpsSection phone={detailsInvoice.phone} id={detailsInvoice.id} />
             </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-secondary" onClick={() => { console.log('=== طباعة فاتورة بيع مباشر ===', detailsInvoice) }}>طباعة</button>
+              <button className="btn btn-secondary" onClick={() => handlePrint(detailsInvoice)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsInvoice(null)}>إغلاق</button>
             </div>
           </div>
@@ -423,7 +485,7 @@ export default function DirectSales() {
                 <div key={row.id} className="pay-row">
                   <div className="pay-row-main">
                     <select className="pay-select" value={row.method} onChange={e => updatePaymentRow(row.id, { method: e.target.value as PayMethod })}>
-                      {(['cash', 'check', 'visa'] as PayMethod[]).map(val => (
+                      {(['cash', 'check', 'visa'] as Exclude<PayMethod, 'debt'>[]).map(val => (
                         <option key={val} value={val}>{PAY_LABELS[val]}</option>
                       ))}
                     </select>
@@ -464,6 +526,19 @@ export default function DirectSales() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delete Confirm ════ */}
+      {deleteInvoice && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف فاتورة الزبون "${deleteInvoice.customerName}"؟`}
+          onConfirm={async () => {
+            try { await dbService.directSale.delete(deleteInvoice.id); await reload(); setDeleteInvoice(null) }
+            catch (err) { showError('تعذّر حذف الفاتورة', err) }
+          }}
+          onCancel={() => setDeleteInvoice(null)}
+        />
       )}
     </div>
   )
