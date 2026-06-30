@@ -2,16 +2,21 @@
    Home / Dashboard
 ════════════════════════════════════════ */
 
-const stats = [
-  { label: 'إجمالي الوارد هذا الشهر',  value: '28,500 ₪', cls: 'incoming'   },
-  { label: 'إجمالي الصادر هذا الشهر',  value: '12,320 ₪', cls: 'outgoing'   },
-  { label: 'الرصيد الحالي',             value: '16,180 ₪', cls: 'balance'    },
-  { label: 'سيارات قيد الصيانة',        value: '3',         cls: 'cars-orange'},
-  { label: 'عدد الديون المعلقة',        value: '2',         cls: 'debt-red'   },
-  { label: 'إجمالي الديون المعلقة',     value: '1,350 ₪',  cls: 'debt-red'   },
-  { label: 'فواتير البيع اليوم',        value: '2',         cls: 'incoming'   },
-  { label: 'فواتير الشراء اليوم',       value: '1',         cls: 'outgoing'   },
-]
+import { useEffect, useState } from 'react'
+import { useGarage } from '../store/GarageContext'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
+import type { MonthlyReport, LedgerSummary } from '../db/types'
+
+const today = () => new Date().toISOString().slice(0, 10)
+const fmt   = (n: number) => n.toLocaleString('ar-EG')
+
+/* تاريخ قبل n يوماً بصيغة YYYY-MM-DD */
+const daysAgo = (n: number) => {
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return d.toISOString().slice(0, 10)
+}
 
 type OpRow = {
   date: string
@@ -19,21 +24,86 @@ type OpRow = {
   typeCls: string
   desc: string
   amount: number
-  status: string
-  statusCls: string
 }
 
-const WEEKLY_OPS: OpRow[] = [
-  { date: '2026-06-23', type: 'صيانة سيارة', typeCls: 'mi-badge-orange',    desc: 'أحمد محمد — تويوتا كامري',    amount:  1500, status: 'مدفوع',    statusCls: 'mi-badge-green'  },
-  { date: '2026-06-23', type: 'شراء مورد',   typeCls: 'mi-badge-purple',    desc: 'شركة قطع غيار النور',          amount: -900,  status: 'دين جزئي', statusCls: 'mi-badge-yellow' },
-  { date: '2026-06-24', type: 'بيع مباشر',   typeCls: 'mi-badge-blue',      desc: 'محمد علي — زيت محرك وفلاتر', amount:  450,  status: 'مدفوع',    statusCls: 'mi-badge-green'  },
-  { date: '2026-06-25', type: 'مصروف يومي',  typeCls: 'mi-badge-gray',      desc: 'فاتورة كهرباء الكراج',        amount: -120,  status: 'مدفوع',    statusCls: 'mi-badge-green'  },
-  { date: '2026-06-26', type: 'صيانة سيارة', typeCls: 'mi-badge-orange',    desc: 'خالد العمري — هوندا سيفيك', amount:  800,  status: 'دين كامل', statusCls: 'mi-badge-red'    },
-  { date: '2026-06-27', type: 'راتب موظف',   typeCls: 'mi-badge-blue',      desc: 'سامي الأحمد',                 amount: -600,  status: 'مدفوع',    statusCls: 'mi-badge-green'  },
-  { date: '2026-06-27', type: 'بيع مباشر',   typeCls: 'mi-badge-blue',      desc: 'سامي الخالد — بطارية سيارة', amount:  350,  status: 'دين كامل', statusCls: 'mi-badge-red'    },
-]
+type Period = 'day' | 'week' | 'month'
 
 export default function Home() {
+  const { maintenanceCars, directSales, expenses, salaries, employees, debts, salesInvoices, purchaseInvoices } = useGarage()
+  const [period, setPeriod] = useState<Period>('week')
+
+  /* ── إحصائيات الشهر الحالي + رصيد الصندوق من قاعدة البيانات ── */
+  const [monthly, setMonthly] = useState<MonthlyReport | null>(null)
+  const [summary, setSummary] = useState<LedgerSummary | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const now = new Date()
+    Promise.all([
+      dbService.report.monthly(now.getMonth() + 1, now.getFullYear()),
+      dbService.ledger.getSummary(),
+    ])
+      .then(([m, s]) => { if (active) { setMonthly(m); setSummary(s) } })
+      .catch(err => showError('تعذّر تحميل إحصائيات لوحة التحكم', err))
+    return () => { active = false }
+  }, [])
+
+  /* ── بطاقة مصاريف اليوم ── */
+  const todayStr = today()
+  const todayExpenses = expenses
+    .filter(e => e.date === todayStr)
+    .reduce((sum, e) => sum + e.amount, 0)
+
+  /* ── حساب البطاقات من البيانات الفعلية ── */
+  const carsInProgress = maintenanceCars.filter(c => c.status === 'in_progress').length
+  const pendingDebtCount = debts.length
+  const pendingDebtTotal = debts.reduce((s, d) => s + d.amountRemaining, 0)
+  const salesToday    = salesInvoices.filter(inv => inv.date === todayStr).length
+  const purchasesToday = purchaseInvoices.filter(inv => inv.date === todayStr).length
+
+  const stats = [
+    { label: 'إجمالي الوارد هذا الشهر',  value: `${fmt(monthly?.total_in ?? 0)} ₪`,  cls: 'incoming'    },
+    { label: 'إجمالي الصادر هذا الشهر',  value: `${fmt(monthly?.total_out ?? 0)} ₪`, cls: 'outgoing'    },
+    { label: 'الرصيد الحالي',             value: `${fmt(summary?.balance ?? 0)} ₪`,   cls: 'balance'     },
+    { label: 'سيارات قيد الصيانة',        value: fmt(carsInProgress),                  cls: 'cars-orange' },
+    { label: 'عدد الديون المعلقة',        value: fmt(pendingDebtCount),                cls: 'debt-red'    },
+    { label: 'إجمالي الديون المعلقة',     value: `${fmt(pendingDebtTotal)} ₪`,        cls: 'debt-red'    },
+    { label: 'فواتير البيع اليوم',        value: fmt(salesToday),                      cls: 'incoming'    },
+    { label: 'فواتير الشراء اليوم',       value: fmt(purchasesToday),                  cls: 'outgoing'    },
+  ]
+
+  /* ── تجميع العمليات من الـ Context ── */
+  const empName = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
+
+  const ops: OpRow[] = [
+    ...maintenanceCars.map(c => ({
+      date: c.dateReceived, type: 'صيانة', typeCls: 'mi-badge-orange',
+      desc: c.customerName, amount: c.total,
+    })),
+    ...directSales.map(s => ({
+      date: s.saleDate, type: 'بيع مباشر', typeCls: 'mi-badge-blue',
+      desc: s.customerName, amount: s.total,
+    })),
+    ...expenses.map(e => ({
+      date: e.date, type: 'مصروف', typeCls: 'mi-badge-gray',
+      desc: e.description, amount: -e.amount,
+    })),
+    ...salaries.map(s => ({
+      date: s.date, type: 'راتب', typeCls: 'mi-badge-blue',
+      desc: empName(s.employeeId), amount: -s.amount,
+    })),
+  ]
+
+  /* ── فلترة حسب الفترة المختارة ── */
+  const cutoff: Record<Period, string> = {
+    day:   todayStr,
+    week:  daysAgo(6),
+    month: daysAgo(29),
+  }
+  const filteredOps = ops
+    .filter(o => o.date >= cutoff[period] && o.date <= todayStr)
+    .sort((a, b) => b.date.localeCompare(a.date))
+
   return (
     <div>
       <div className="page-header">
@@ -48,34 +118,47 @@ export default function Home() {
             <span className={`stat-value ${cls}`}>{value}</span>
           </div>
         ))}
+        <div className="stat-card">
+          <span className="stat-label">مصاريف اليوم</span>
+          <span className="stat-value outgoing">{fmt(todayExpenses)} ₪</span>
+        </div>
       </div>
 
-      {/* ── Weekly ops table ── */}
+      {/* ── Latest ops table ── */}
       <div className="mi-card" style={{ marginTop: '1.75rem' }}>
-        <h2 className="mi-section-title">آخر عمليات الأسبوع</h2>
+        <h2 className="mi-section-title">آخر العمليات</h2>
+
+        <div className="pd-type-tabs">
+          {([['day', 'اليوم'], ['week', 'الأسبوع'], ['month', 'الشهر']] as const).map(([val, label]) => (
+            <button key={val} className={`pd-tab${period === val ? ' pd-tab-active' : ''}`}
+              onClick={() => setPeriod(val)}>{label}</button>
+          ))}
+        </div>
+
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
               <tr>
                 <th>التاريخ</th>
                 <th>نوع العملية</th>
-                <th>الوصف</th>
+                <th>الاسم</th>
                 <th>المبلغ ₪</th>
-                <th>الحالة</th>
               </tr>
             </thead>
             <tbody>
-              {WEEKLY_OPS.map((op, i) => (
+              {filteredOps.map((op, i) => (
                 <tr key={i} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                   <td>{op.date}</td>
                   <td><span className={op.typeCls}>{op.type}</span></td>
                   <td>{op.desc}</td>
                   <td className={op.amount >= 0 ? 'cl-amount-in' : 'cl-amount-out'}>
-                    {op.amount >= 0 ? '+' : '−'}{Math.abs(op.amount).toLocaleString('ar-EG')} ₪
+                    {op.amount >= 0 ? '+' : '−'}{fmt(Math.abs(op.amount))} ₪
                   </td>
-                  <td><span className={op.statusCls}>{op.status}</span></td>
                 </tr>
               ))}
+              {filteredOps.length === 0 && (
+                <tr><td colSpan={4} style={{ textAlign: 'center' }}>لا توجد عمليات في هذه الفترة</td></tr>
+              )}
             </tbody>
           </table>
         </div>

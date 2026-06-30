@@ -326,3 +326,86 @@ export interface TopCustomer {
   visit_count: number
   total_spent: number
 }
+
+// ── Supplier directory (دليل الموردين المتكرّرين) ──────────────────────────────
+
+export interface SupplierDirectoryRow {
+  id: number
+  name: string
+  phone: string | null
+  notes: string | null
+  created_at: string
+}
+
+export interface SupplierDirectoryInput {
+  name: string
+  phone?: string
+  notes?: string
+}
+
+// ── Warranties (الكفالات) ──────────────────────────────────────────────────────
+
+export type WarrantySource = 'maintenance' | 'direct_sale'
+export type WarrantyPeriodUnit = 'week' | 'month' | 'year'
+
+export interface WarrantyRow {
+  id: number
+  source: WarrantySource
+  source_id: number
+  customer_name: string
+  customer_phone: string | null
+  car_plate: string | null
+  item_name: string
+  start_date: string
+  period_value: number
+  period_unit: WarrantyPeriodUnit
+  notes: string | null
+  created_at: string
+}
+
+export interface WarrantyInput {
+  source: WarrantySource
+  source_id: number
+  customer_name: string
+  customer_phone?: string
+  car_plate?: string
+  item_name: string
+  start_date: string
+  period_value: number
+  period_unit: WarrantyPeriodUnit
+  notes?: string
+}
+
+// ── Aggregate sale-invoices view (صيانة + بيع مباشر) ────────────────────────────
+
+export type SaleInvoiceKind = 'maintenance' | 'direct_sale'
+
+export interface SaleInvoiceRow {
+  id: number
+  date: string
+  type: SaleInvoiceKind
+  customer_name: string
+  customer_phone: string | null
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  car_plate: string
+  car_type: string
+  details: string
+}
+
+// ── Aggregate purchase-invoices view (موردون + مصاريف + رواتب) ──────────────────
+
+export type PurchaseInvoiceKind = 'supplier' | 'expense' | 'salary'
+
+export interface PurchaseInvoiceRow {
+  id: number
+  date: string
+  type: PurchaseInvoiceKind
+  description: string
+  phone: string | null
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  details: string
+}
