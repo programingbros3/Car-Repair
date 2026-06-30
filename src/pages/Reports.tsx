@@ -1,148 +1,57 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
+import type {
+  DailyReport, MonthlyReport, DebtReport, LedgerRow,
+} from '../db/types'
 
 /* ════════════════════════════════════════
    Types
 ════════════════════════════════════════ */
-type Period = 'daily' | 'monthly' | 'yearly'
-type Tab    = Period | 'debts'
+type Tab = 'daily' | 'monthly' | 'yearly' | 'debts'
 
-type OpType = 'incoming' | 'outgoing'
-type OpSource = 'maintenance' | 'direct_sale' | 'supplier' | 'expense' | 'salary'
-
-type Operation = {
-  id: number
-  date: string
-  type: OpType
-  source: OpSource
-  amount: number
-  notes: string
-}
-
-/* A full report bundle for one period */
-type PeriodReport = {
-  totalIncoming:    number
-  totalOutgoing:    number
-  maintenanceCount: number
-  directSaleCount:  number
-  supplierTotal:    number
-  expenseTotal:     number
-  salaryTotal:      number
-  operations:       Operation[]
-}
-
-type CustomerDebt = {
-  id: number
-  customerName: string
-  carPlate: string
-  source: 'maintenance' | 'direct_sale'
-  total: number
-  paid: number
-}
-
-type SupplierDebt = {
-  id: number
-  supplierName: string
-  phone: string
-  total: number
-  paid: number
+type YearlyReport = {
+  year: number
+  total_in: number
+  total_out: number
+  net: number
+  months: { month: number; total_in: number; total_out: number; net: number }[]
 }
 
 /* ════════════════════════════════════════
-   Labels
+   Labels & helpers
 ════════════════════════════════════════ */
-const TYPE_LABELS: Record<OpType, string> = {
-  incoming: 'وارد',
-  outgoing: 'صادر',
+const REF_LABELS: Record<string, string> = {
+  maintenance_payment: 'صيانة',
+  maintenance_release: 'صيانة',
+  direct_sale_payment: 'بيع مباشر',
+  debt_customer:       'تحصيل دين',
+  supplier_payment:    'مورد',
+  supplier_debt:       'مورد',
+  daily_expense:       'مصروف',
+  salary:              'راتب',
 }
+const refLabel = (t: string) => REF_LABELS[t] ?? t
 
-const SOURCE_LABELS: Record<OpSource, string> = {
-  maintenance: 'صيانة',
-  direct_sale: 'بيع مباشر',
-  supplier:    'مورد',
-  expense:     'مصروف',
-  salary:      'راتب',
-}
-
-const SOURCE_LABELS_DEBT: Record<CustomerDebt['source'], string> = {
-  maintenance: 'صيانة',
-  direct_sale: 'بيع مباشر',
-}
-
-/* ════════════════════════════════════════
-   Hardcoded data (temporary)
-════════════════════════════════════════ */
-const REPORTS: Record<Period, PeriodReport> = {
-  daily: {
-    totalIncoming:    2300,
-    totalOutgoing:    720,
-    maintenanceCount: 1,
-    directSaleCount:  1,
-    supplierTotal:    0,
-    expenseTotal:     120,
-    salaryTotal:      600,
-    operations: [
-      { id: 1, date: '2026-06-28', type: 'incoming', source: 'maintenance', amount: 1850, notes: 'صيانة تويوتا كامري — أحمد محمد' },
-      { id: 2, date: '2026-06-28', type: 'incoming', source: 'direct_sale', amount: 450,  notes: 'بيع زيت محرك وفلاتر' },
-      { id: 3, date: '2026-06-28', type: 'outgoing', source: 'expense',     amount: 120,  notes: 'فاتورة كهرباء الكراج' },
-      { id: 4, date: '2026-06-28', type: 'outgoing', source: 'salary',      amount: 600,  notes: 'راتب الموظف سامي' },
-    ],
-  },
-  monthly: {
-    totalIncoming:    48200,
-    totalOutgoing:    31550,
-    maintenanceCount: 26,
-    directSaleCount:  14,
-    supplierTotal:    18900,
-    expenseTotal:     4250,
-    salaryTotal:      8400,
-    operations: [
-      { id: 1, date: '2026-06-02', type: 'incoming', source: 'maintenance', amount: 12500, notes: 'إجمالي فواتير الصيانة — الأسبوع الأول' },
-      { id: 2, date: '2026-06-09', type: 'incoming', source: 'direct_sale', amount: 6200,  notes: 'إجمالي البيع المباشر — الأسبوع الثاني' },
-      { id: 3, date: '2026-06-12', type: 'outgoing', source: 'supplier',    amount: 18900, notes: 'مشتريات قطع غيار من الموردين' },
-      { id: 4, date: '2026-06-20', type: 'outgoing', source: 'salary',      amount: 8400,  notes: 'رواتب الموظفين' },
-      { id: 5, date: '2026-06-25', type: 'outgoing', source: 'expense',     amount: 4250,  notes: 'مصاريف تشغيلية متنوعة' },
-    ],
-  },
-  yearly: {
-    totalIncoming:    562000,
-    totalOutgoing:    389400,
-    maintenanceCount: 312,
-    directSaleCount:  168,
-    supplierTotal:    214600,
-    expenseTotal:     51800,
-    salaryTotal:      100800,
-    operations: [
-      { id: 1, date: '2026-03-31', type: 'incoming', source: 'maintenance', amount: 168000, notes: 'إجمالي الصيانة — الربع الأول' },
-      { id: 2, date: '2026-06-30', type: 'incoming', source: 'direct_sale', amount: 92000,  notes: 'إجمالي البيع المباشر — النصف الأول' },
-      { id: 3, date: '2026-06-30', type: 'outgoing', source: 'supplier',    amount: 214600, notes: 'إجمالي مشتريات الموردين' },
-      { id: 4, date: '2026-12-31', type: 'outgoing', source: 'salary',      amount: 100800, notes: 'إجمالي الرواتب السنوية' },
-      { id: 5, date: '2026-12-31', type: 'outgoing', source: 'expense',     amount: 51800,  notes: 'إجمالي المصاريف التشغيلية' },
-    ],
-  },
-}
-
-const CUSTOMER_DEBTS: CustomerDebt[] = [
-  { id: 1, customerName: 'أحمد محمد',   carPlate: 'أ ب ج 123', source: 'maintenance', total: 1850, paid: 1000 },
-  { id: 2, customerName: 'خالد العمري', carPlate: 'د هـ و 456', source: 'maintenance', total: 800,  paid: 0    },
-  { id: 3, customerName: 'سعيد الحربي', carPlate: '—',          source: 'direct_sale', total: 450,  paid: 200  },
-  { id: 4, customerName: 'ماجد القحطاني', carPlate: 'ز ح ط 789', source: 'maintenance', total: 2400, paid: 1500 },
+const MONTH_NAMES = [
+  'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
 ]
 
-const SUPPLIER_DEBTS: SupplierDebt[] = [
-  { id: 1, supplierName: 'شركة قطع الغيار المتحدة', phone: '0551112233', total: 18900, paid: 12000 },
-  { id: 2, supplierName: 'مؤسسة الزيوت الحديثة',     phone: '0554445566', total: 6200,  paid: 6200  },
-  { id: 3, supplierName: 'معرض الإطارات الذهبية',    phone: '0557778899', total: 9400,  paid: 3000  },
-]
-
-/* ════════════════════════════════════════
-   Helpers
-════════════════════════════════════════ */
-const today      = () => new Date().toISOString().slice(0, 10)
-const thisMonth  = () => new Date().toISOString().slice(0, 7)
-const thisYear   = () => new Date().getFullYear()
-const fmt        = (n: number) => n.toLocaleString('ar-EG')
+const today     = () => new Date().toISOString().slice(0, 10)
+const thisMonth = () => new Date().toISOString().slice(0, 7)
+const thisYear  = () => new Date().getFullYear()
+const fmt       = (n: number) => n.toLocaleString('ar-EG')
 
 const YEARS = Array.from({ length: 6 }, (_, i) => thisYear() - i)
+
+const PERIOD_LABELS: Record<Tab, string> = {
+  daily:   'يومي',
+  monthly: 'شهري',
+  yearly:  'سنوي',
+  debts:   'تقرير الديون',
+}
 
 /* ════════════════════════════════════════
    Component
@@ -155,20 +64,149 @@ export default function Reports() {
   const [month, setMonth] = useState(thisMonth())
   const [year, setYear]   = useState(thisYear())
 
-  const period: Period = tab === 'debts' ? 'daily' : tab
-  const report = REPORTS[period]
+  /* fetched reports */
+  const [daily, setDaily]     = useState<DailyReport | null>(null)
+  const [monthly, setMonthly] = useState<MonthlyReport | null>(null)
+  const [yearly, setYearly]   = useState<YearlyReport | null>(null)
+  const [debts, setDebts]     = useState<DebtReport | null>(null)
+  const [loading, setLoading] = useState(false)
 
-  const netProfit = report.totalIncoming - report.totalOutgoing
+  /* ── جلب التقرير المناسب عند تغيّر التبويب أو الفترة ── */
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    const run = async () => {
+      if (tab === 'daily') {
+        setDaily(await dbService.report.daily(day))
+      } else if (tab === 'monthly') {
+        const [y, m] = month.split('-').map(Number)
+        setMonthly(await dbService.report.monthly(m, y))
+      } else if (tab === 'yearly') {
+        const reports = await Promise.all(
+          Array.from({ length: 12 }, (_, i) => dbService.report.monthly(i + 1, year)),
+        )
+        const agg: YearlyReport = {
+          year,
+          total_in:  reports.reduce((s, r) => s + r.total_in, 0),
+          total_out: reports.reduce((s, r) => s + r.total_out, 0),
+          net:       reports.reduce((s, r) => s + r.net, 0),
+          months: reports.map((r, i) => ({
+            month: i + 1, total_in: r.total_in, total_out: r.total_out, net: r.net,
+          })),
+        }
+        setYearly(agg)
+      } else {
+        setDebts(await dbService.report.debts())
+      }
+    }
+    run()
+      .catch(err => { if (active) showError('تعذّر تحميل التقرير', err) })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [tab, day, month, year])
 
-  /* ── Debt totals ── */
-  const customerDebtTotal = useMemo(
-    () => CUSTOMER_DEBTS.reduce((s, d) => s + (d.total - d.paid), 0),
-    [],
-  )
-  const supplierDebtTotal = useMemo(
-    () => SUPPLIER_DEBTS.reduce((s, d) => s + (d.total - d.paid), 0),
-    [],
-  )
+  /* ── Print report ── */
+  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج · الفترة: ${PERIOD_LABELS[tab]}</div>`
+
+  const handlePrint = () => {
+    if (tab === 'debts') {
+      if (!debts) return
+      const custRows = debts.customer_debts.map(d => `
+        <tr>
+          <td>${d.customer_name}</td>
+          <td>${d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}</td>
+          <td>${fmt(d.total_amount)} ₪</td>
+          <td class="amount-in">${fmt(d.amount_paid)} ₪</td>
+          <td class="amount-out">${fmt(d.amount_remaining)} ₪</td>
+        </tr>`).join('')
+      const supRows = debts.supplier_debts.map(d => `
+        <tr>
+          <td>${d.supplier_name}</td>
+          <td>${d.supplier_phone ?? '—'}</td>
+          <td>${fmt(d.total_amount)} ₪</td>
+          <td class="amount-in">${fmt(d.amount_paid)} ₪</td>
+          <td class="amount-out">${fmt(d.amount_remaining)} ₪</td>
+        </tr>`).join('')
+      const body = `
+        <h3 style="margin:16px 0 4px;color:#1E2A38;">ديون الزبائن</h3>
+        <table>
+          <thead><tr><th>اسم الزبون</th><th>المصدر</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+          <tbody>${custRows}</tbody>
+        </table>
+        <div style="margin-top:8px;font-weight:700;">إجمالي ديون الزبائن: ${fmt(debts.total_customer_debt)} ₪</div>
+        <h3 style="margin:24px 0 4px;color:#1E2A38;">ديون الموردين</h3>
+        <table>
+          <thead><tr><th>اسم المورد</th><th>رقم الهاتف</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+          <tbody>${supRows}</tbody>
+        </table>
+        <div style="margin-top:8px;font-weight:700;">إجمالي ديون الموردين: ${fmt(debts.total_supplier_debt)} ₪</div>
+        ${periodFooter}`
+      printPdf('تقرير الديون', body)
+      return
+    }
+
+    const totalIn  = tab === 'daily' ? daily?.total_in  : tab === 'monthly' ? monthly?.total_in  : yearly?.total_in
+    const totalOut = tab === 'daily' ? daily?.total_out : tab === 'monthly' ? monthly?.total_out : yearly?.total_out
+    const net      = tab === 'daily' ? daily?.net       : tab === 'monthly' ? monthly?.net       : yearly?.net
+    if (totalIn === undefined || totalOut === undefined || net === undefined) return
+    const profitColor = net >= 0 ? '#2563eb' : '#E74C3C'
+
+    let breakdown = ''
+    if (tab === 'daily' && daily) {
+      breakdown = `
+        <div class="detail-item"><label>دخل الصيانة</label><span class="amount-in">${fmt(daily.maintenance_income)} ₪</span></div>
+        <div class="detail-item"><label>دخل البيع المباشر</label><span class="amount-in">${fmt(daily.direct_sale_income)} ₪</span></div>
+        <div class="detail-item"><label>تحصيل الديون</label><span class="amount-in">${fmt(daily.debt_collected)} ₪</span></div>
+        <div class="detail-item"><label>مشتريات الموردين</label><span class="amount-out">${fmt(daily.supplier_expenses)} ₪</span></div>
+        <div class="detail-item"><label>المصاريف</label><span class="amount-out">${fmt(daily.daily_expenses)} ₪</span></div>
+        <div class="detail-item"><label>الرواتب</label><span class="amount-out">${fmt(daily.salaries)} ₪</span></div>`
+    }
+
+    let rowsHtml = ''
+    if (tab === 'daily' && daily) {
+      rowsHtml = daily.entries.map(e => `
+        <tr>
+          <td>${e.transaction_date}</td>
+          <td>${e.amount_in > 0 ? 'وارد' : 'صادر'}</td>
+          <td>${refLabel(e.reference_type)}</td>
+          <td class="${e.amount_in > 0 ? 'amount-in' : 'amount-out'}">${e.amount_in > 0 ? '+' : '−'}${fmt(e.amount_in > 0 ? e.amount_in : e.amount_out)} ₪</td>
+          <td>${e.notes ?? '—'}</td>
+        </tr>`).join('')
+    } else if (tab === 'monthly' && monthly) {
+      rowsHtml = monthly.days.map(d => `
+        <tr><td>${d.date}</td><td class="amount-in">${fmt(d.total_in)} ₪</td><td class="amount-out">${fmt(d.total_out)} ₪</td><td>${fmt(d.net)} ₪</td></tr>`).join('')
+    } else if (tab === 'yearly' && yearly) {
+      rowsHtml = yearly.months.map(m => `
+        <tr><td>${MONTH_NAMES[m.month - 1]}</td><td class="amount-in">${fmt(m.total_in)} ₪</td><td class="amount-out">${fmt(m.total_out)} ₪</td><td>${fmt(m.net)} ₪</td></tr>`).join('')
+    }
+
+    const tableHead = tab === 'daily'
+      ? '<tr><th>التاريخ</th><th>النوع</th><th>المصدر</th><th>المبلغ</th><th>ملاحظات</th></tr>'
+      : '<tr><th>الفترة</th><th>الوارد</th><th>الصادر</th><th>الصافي</th></tr>'
+
+    const body = `
+      <div class="detail-grid">
+        <div class="detail-item"><label>إجمالي الوارد</label><span class="amount-in">${fmt(totalIn)} ₪</span></div>
+        <div class="detail-item"><label>إجمالي الصادر</label><span class="amount-out">${fmt(totalOut)} ₪</span></div>
+        <div class="detail-item"><label>صافي الربح</label><span style="color:${profitColor};font-weight:700">${fmt(net)} ₪</span></div>
+        ${breakdown}
+      </div>
+      <h3 style="margin:16px 0 4px;color:#1E2A38;">ملخص العمليات في الفترة</h3>
+      <table>
+        <thead>${tableHead}</thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      ${periodFooter}`
+    printPdf(`تقرير ${PERIOD_LABELS[tab]}`, body)
+  }
+
+  /* القيم المعروضة في بطاقات الإحصائيات للفترة الحالية */
+  const periodTotals = useMemo(() => {
+    if (tab === 'daily')   return daily   ? { in: daily.total_in,   out: daily.total_out,   net: daily.net }   : null
+    if (tab === 'monthly') return monthly ? { in: monthly.total_in, out: monthly.total_out, net: monthly.net } : null
+    if (tab === 'yearly')  return yearly  ? { in: yearly.total_in,  out: yearly.total_out,  net: yearly.net }  : null
+    return null
+  }, [tab, daily, monthly, yearly])
 
   /* ════════════════════════════════════════
      JSX
@@ -176,8 +214,9 @@ export default function Reports() {
   return (
     <div>
       {/* ── Page header ── */}
-      <div className="page-header">
+      <div className="page-header mi-page-header">
         <h1 className="page-title">التقارير</h1>
+        <button className="btn btn-secondary" onClick={handlePrint}>🖨️ طباعة التقرير</button>
       </div>
 
       {/* ── Main tabs ── */}
@@ -240,76 +279,118 @@ export default function Reports() {
           <div className="stats-grid">
             <div className="stat-card">
               <span className="stat-label">إجمالي الوارد</span>
-              <span className="stat-value incoming">{fmt(report.totalIncoming)} ₪</span>
+              <span className="stat-value incoming">{fmt(periodTotals?.in ?? 0)} ₪</span>
             </div>
             <div className="stat-card">
               <span className="stat-label">إجمالي الصادر</span>
-              <span className="stat-value outgoing">{fmt(report.totalOutgoing)} ₪</span>
+              <span className="stat-value outgoing">{fmt(periodTotals?.out ?? 0)} ₪</span>
             </div>
             <div className="stat-card">
               <span className="stat-label">صافي الربح</span>
-              <span className={`stat-value ${netProfit >= 0 ? 'balance' : 'outgoing'}`}>
-                {fmt(netProfit)} ₪
+              <span className={`stat-value ${(periodTotals?.net ?? 0) >= 0 ? 'balance' : 'outgoing'}`}>
+                {fmt(periodTotals?.net ?? 0)} ₪
               </span>
             </div>
-            <div className="stat-card">
-              <span className="stat-label">عدد فواتير الصيانة</span>
-              <span className="stat-value cars">{fmt(report.maintenanceCount)}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">عدد فواتير البيع</span>
-              <span className="stat-value cars">{fmt(report.directSaleCount)}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">إجمالي مشتريات الموردين</span>
-              <span className="stat-value outgoing">{fmt(report.supplierTotal)} ₪</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">إجمالي المصاريف</span>
-              <span className="stat-value outgoing">{fmt(report.expenseTotal)} ₪</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">إجمالي الرواتب</span>
-              <span className="stat-value outgoing">{fmt(report.salaryTotal)} ₪</span>
-            </div>
+
+            {tab === 'daily' && daily && (
+              <>
+                <div className="stat-card">
+                  <span className="stat-label">دخل الصيانة</span>
+                  <span className="stat-value incoming">{fmt(daily.maintenance_income)} ₪</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">دخل البيع المباشر</span>
+                  <span className="stat-value incoming">{fmt(daily.direct_sale_income)} ₪</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">تحصيل الديون</span>
+                  <span className="stat-value incoming">{fmt(daily.debt_collected)} ₪</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">إجمالي مشتريات الموردين</span>
+                  <span className="stat-value outgoing">{fmt(daily.supplier_expenses)} ₪</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">إجمالي المصاريف</span>
+                  <span className="stat-value outgoing">{fmt(daily.daily_expenses)} ₪</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-label">إجمالي الرواتب</span>
+                  <span className="stat-value outgoing">{fmt(daily.salaries)} ₪</span>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* ── Operations summary table ── */}
+          {/* ── Operations / breakdown table ── */}
           <div className="mi-card" style={{ marginTop: '1.5rem' }}>
-            <h2 className="mi-section-title">ملخص العمليات في الفترة</h2>
+            <h2 className="mi-section-title">
+              {tab === 'daily' ? 'ملخص العمليات في الفترة' : 'تفصيل الفترة'}
+            </h2>
             <div className="mi-table-wrap">
-              <table className="mi-table">
-                <thead>
-                  <tr>
-                    <th>التاريخ</th>
-                    <th>النوع</th>
-                    <th>المصدر</th>
-                    <th>المبلغ</th>
-                    <th>ملاحظات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report.operations.length === 0 ? (
+              {tab === 'daily' ? (
+                <table className="mi-table">
+                  <thead>
                     <tr>
-                      <td colSpan={5} className="mi-empty-row">لا توجد عمليات في هذه الفترة</td>
+                      <th>التاريخ</th><th>النوع</th><th>المصدر</th><th>المبلغ</th><th>ملاحظات</th>
                     </tr>
-                  ) : report.operations.map((op, i) => (
-                    <tr key={op.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
-                      <td>{op.date}</td>
-                      <td>
-                        <span className={op.type === 'incoming' ? 'cl-badge-in' : 'cl-badge-out'}>
-                          {TYPE_LABELS[op.type]}
-                        </span>
-                      </td>
-                      <td>{SOURCE_LABELS[op.source]}</td>
-                      <td className={op.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'}>
-                        {op.type === 'incoming' ? '+' : '−'}{fmt(op.amount)} ₪
-                      </td>
-                      <td>{op.notes || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                    ) : !daily || daily.entries.length === 0 ? (
+                      <tr><td colSpan={5} className="mi-empty-row">لا توجد عمليات في هذه الفترة</td></tr>
+                    ) : daily.entries.map((e: LedgerRow, i) => (
+                      <tr key={e.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                        <td>{e.transaction_date}</td>
+                        <td>
+                          <span className={e.amount_in > 0 ? 'cl-badge-in' : 'cl-badge-out'}>
+                            {e.amount_in > 0 ? 'وارد' : 'صادر'}
+                          </span>
+                        </td>
+                        <td>{refLabel(e.reference_type)}</td>
+                        <td className={e.amount_in > 0 ? 'cl-amount-in' : 'cl-amount-out'}>
+                          {e.amount_in > 0 ? '+' : '−'}{fmt(e.amount_in > 0 ? e.amount_in : e.amount_out)} ₪
+                        </td>
+                        <td>{e.notes || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="mi-table">
+                  <thead>
+                    <tr><th>الفترة</th><th>الوارد ₪</th><th>الصادر ₪</th><th>الصافي ₪</th></tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={4} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                    ) : tab === 'monthly' ? (
+                      !monthly || monthly.days.length === 0 ? (
+                        <tr><td colSpan={4} className="mi-empty-row">لا توجد عمليات في هذا الشهر</td></tr>
+                      ) : monthly.days.map((d, i) => (
+                        <tr key={d.date} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                          <td>{d.date}</td>
+                          <td className="cl-amount-in">{fmt(d.total_in)} ₪</td>
+                          <td className="cl-amount-out">{fmt(d.total_out)} ₪</td>
+                          <td className="mi-amount">{fmt(d.net)} ₪</td>
+                        </tr>
+                      ))
+                    ) : (
+                      !yearly ? (
+                        <tr><td colSpan={4} className="mi-empty-row">لا توجد بيانات لهذه السنة</td></tr>
+                      ) : yearly.months.map((m, i) => (
+                        <tr key={m.month} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                          <td>{MONTH_NAMES[m.month - 1]}</td>
+                          <td className="cl-amount-in">{fmt(m.total_in)} ₪</td>
+                          <td className="cl-amount-out">{fmt(m.total_out)} ₪</td>
+                          <td className="mi-amount">{fmt(m.net)} ₪</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </>
@@ -324,11 +405,11 @@ export default function Reports() {
           <div className="stats-grid">
             <div className="stat-card">
               <span className="stat-label">إجمالي ديون الزبائن</span>
-              <span className="stat-value outgoing">{fmt(customerDebtTotal)} ₪</span>
+              <span className="stat-value outgoing">{fmt(debts?.total_customer_debt ?? 0)} ₪</span>
             </div>
             <div className="stat-card">
               <span className="stat-label">إجمالي ديون الموردين</span>
-              <span className="stat-value outgoing">{fmt(supplierDebtTotal)} ₪</span>
+              <span className="stat-value outgoing">{fmt(debts?.total_supplier_debt ?? 0)} ₪</span>
             </div>
           </div>
 
@@ -340,7 +421,6 @@ export default function Reports() {
                 <thead>
                   <tr>
                     <th>اسم الزبون</th>
-                    <th>نمرة السيارة</th>
                     <th>المصدر</th>
                     <th>الإجمالي</th>
                     <th>المدفوع</th>
@@ -348,29 +428,28 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {CUSTOMER_DEBTS.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="mi-empty-row">لا توجد ديون على الزبائن</td>
-                    </tr>
-                  ) : CUSTOMER_DEBTS.map((d, i) => (
-                    <tr key={d.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
-                      <td>{d.customerName}</td>
-                      <td>{d.carPlate === '—' ? '—' : <span className="mi-plate">{d.carPlate}</span>}</td>
+                  {loading ? (
+                    <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                  ) : !debts || debts.customer_debts.length === 0 ? (
+                    <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون على الزبائن</td></tr>
+                  ) : debts.customer_debts.map((d, i) => (
+                    <tr key={`${d.invoice_type}-${d.invoice_id}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                      <td>{d.customer_name}</td>
                       <td>
-                        <span className={d.source === 'maintenance' ? 'mi-badge' : 'mi-badge-blue'}>
-                          {SOURCE_LABELS_DEBT[d.source]}
+                        <span className={d.invoice_type === 'maintenance' ? 'mi-badge-orange' : 'mi-badge-blue'}>
+                          {d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}
                         </span>
                       </td>
-                      <td className="mi-amount">{fmt(d.total)} ₪</td>
-                      <td className="pd-paid">{fmt(d.paid)} ₪</td>
-                      <td className="pd-remaining">{fmt(d.total - d.paid)} ₪</td>
+                      <td className="mi-amount">{fmt(d.total_amount)} ₪</td>
+                      <td className="pd-paid">{fmt(d.amount_paid)} ₪</td>
+                      <td className="pd-remaining">{fmt(d.amount_remaining)} ₪</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="mi-total-row">
-              إجمالي ديون الزبائن: <strong>{fmt(customerDebtTotal)} ₪</strong>
+              إجمالي ديون الزبائن: <strong>{fmt(debts?.total_customer_debt ?? 0)} ₪</strong>
             </div>
           </div>
 
@@ -389,24 +468,24 @@ export default function Reports() {
                   </tr>
                 </thead>
                 <tbody>
-                  {SUPPLIER_DEBTS.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="mi-empty-row">لا توجد ديون للموردين</td>
-                    </tr>
-                  ) : SUPPLIER_DEBTS.map((d, i) => (
-                    <tr key={d.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
-                      <td>{d.supplierName}</td>
-                      <td>{d.phone}</td>
-                      <td className="mi-amount">{fmt(d.total)} ₪</td>
-                      <td className="pd-paid">{fmt(d.paid)} ₪</td>
-                      <td className="pd-remaining">{fmt(d.total - d.paid)} ₪</td>
+                  {loading ? (
+                    <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                  ) : !debts || debts.supplier_debts.length === 0 ? (
+                    <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون للموردين</td></tr>
+                  ) : debts.supplier_debts.map((d, i) => (
+                    <tr key={d.invoice_id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                      <td>{d.supplier_name}</td>
+                      <td>{d.supplier_phone ?? '—'}</td>
+                      <td className="mi-amount">{fmt(d.total_amount)} ₪</td>
+                      <td className="pd-paid">{fmt(d.amount_paid)} ₪</td>
+                      <td className="pd-remaining">{fmt(d.amount_remaining)} ₪</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="mi-total-row">
-              إجمالي ديون الموردين: <strong>{fmt(supplierDebtTotal)} ₪</strong>
+              إجمالي ديون الموردين: <strong>{fmt(debts?.total_supplier_debt ?? 0)} ₪</strong>
             </div>
           </div>
         </>

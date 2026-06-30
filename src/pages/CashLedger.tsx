@@ -1,54 +1,62 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { printPdf } from '../utils/printPdf'
+import { dbService } from '../services/db'
+import { showError } from '../utils/notify'
+import type { LedgerRow, LedgerSummary } from '../db/types'
 
 /* ════════════════════════════════════════
    Types
 ════════════════════════════════════════ */
-type TxType   = 'incoming' | 'outgoing'
-type TxSource = 'maintenance' | 'direct_sale' | 'supplier' | 'expense' | 'salary'
+type TxType = 'incoming' | 'outgoing'
 
-type Transaction = {
+type DisplayRow = {
   id: number
   date: string
   type: TxType
-  source: TxSource
+  sourceLabel: string
   amount: number
+  balanceAfter: number
   notes: string
 }
-
-type TxWithBalance = Transaction & { balanceAfter: number }
-
-/* ════════════════════════════════════════
-   Initial data
-════════════════════════════════════════ */
-const INITIAL_TX: Transaction[] = [
-  { id: 1, date: '2026-06-22', type: 'incoming', source: 'maintenance', amount: 1500, notes: 'صيانة تويوتا كامري — أحمد محمد' },
-  { id: 2, date: '2026-06-23', type: 'outgoing', source: 'supplier',    amount: 900,  notes: 'دفعة لمورد قطع الغيار' },
-  { id: 3, date: '2026-06-24', type: 'incoming', source: 'direct_sale', amount: 450,  notes: 'بيع زيت محرك وفلاتر' },
-  { id: 4, date: '2026-06-25', type: 'outgoing', source: 'expense',     amount: 120,  notes: 'فاتورة كهرباء الكراج' },
-  { id: 5, date: '2026-06-26', type: 'incoming', source: 'maintenance', amount: 800,  notes: 'صيانة هوندا سيفيك — خالد العمري' },
-  { id: 6, date: '2026-06-27', type: 'outgoing', source: 'salary',      amount: 600,  notes: 'راتب الموظف سامي' },
-]
 
 /* ════════════════════════════════════════
    Labels
 ════════════════════════════════════════ */
 const TYPE_LABELS: Record<TxType, string> = { incoming: 'وارد', outgoing: 'صادر' }
 
-const SOURCE_LABELS: Record<TxSource, string> = {
-  maintenance: 'صيانة',
-  direct_sale: 'بيع مباشر',
-  supplier:    'مورد',
-  expense:     'مصروف',
-  salary:      'راتب',
+/** يحوّل reference_type (من src/db/ledger REF) إلى تسمية عربية للمصدر */
+const REF_LABELS: Record<string, string> = {
+  maintenance_payment: 'صيانة',
+  maintenance_release: 'صيانة',
+  direct_sale_payment: 'بيع مباشر',
+  debt_customer:       'تحصيل دين',
+  supplier_payment:    'مورد',
+  supplier_debt:       'مورد',
+  daily_expense:       'مصروف',
+  salary:              'راتب',
 }
+const refLabel = (t: string) => REF_LABELS[t] ?? t
 
 const today = () => new Date().toISOString().slice(0, 10)
+const fmt   = (n: number) => n.toLocaleString('ar-EG')
+
+const toDisplay = (r: LedgerRow): DisplayRow => ({
+  id: r.id,
+  date: r.transaction_date,
+  type: r.amount_in > 0 ? 'incoming' : 'outgoing',
+  sourceLabel: refLabel(r.reference_type),
+  amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
+  balanceAfter: r.balance_after,
+  notes: r.notes ?? '',
+})
 
 /* ════════════════════════════════════════
    Component
 ════════════════════════════════════════ */
 export default function CashLedger() {
-  const [transactions] = useState<Transaction[]>(INITIAL_TX)
+  const [rows, setRows]       = useState<DisplayRow[]>([])
+  const [summary, setSummary] = useState<LedgerSummary>({ total_in: 0, total_out: 0, balance: 0 })
+  const [loading, setLoading] = useState(true)
 
   /* filters */
   const [filterFrom, setFilterFrom] = useState('')
@@ -56,41 +64,53 @@ export default function CashLedger() {
   const [filterType, setFilterType] = useState<'all' | TxType>('all')
 
   /* details modal */
-  const [detailsTx, setDetailsTx] = useState<TxWithBalance | null>(null)
+  const [detailsTx, setDetailsTx] = useState<DisplayRow | null>(null)
 
-  /* ── Running balance ── */
-  const withBalance = useMemo<TxWithBalance[]>(() => {
-    let balance = 0
-    return transactions.map(tx => {
-      balance += tx.type === 'incoming' ? tx.amount : -tx.amount
-      return { ...tx, balanceAfter: balance }
-    })
-  }, [transactions])
+  /* ── تحميل كل حركات الصندوق + الملخّص من قاعدة البيانات ── */
+  useEffect(() => {
+    let active = true
+    Promise.all([
+      dbService.ledger.getByDateRange('0000-01-01', '9999-12-31'),
+      dbService.ledger.getSummary(),
+    ])
+      .then(([entries, sum]) => {
+        if (!active) return
+        setRows(entries.map(toDisplay))
+        setSummary(sum)
+      })
+      .catch(err => showError('تعذّر تحميل حركات الصندوق', err))
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [])
 
-  /* ── Totals ── */
-  const totalIncoming = useMemo(
-    () => transactions.filter(t => t.type === 'incoming').reduce((s, t) => s + t.amount, 0),
-    [transactions],
-  )
-  const totalOutgoing = useMemo(
-    () => transactions.filter(t => t.type === 'outgoing').reduce((s, t) => s + t.amount, 0),
-    [transactions],
-  )
-  const currentBalance = totalIncoming - totalOutgoing
-
-  /* ── Filtered rows ── */
+  /* ── Filtered rows (الأحدث أولاً) ── */
   const filteredRows = useMemo(() => {
-    let result = withBalance
+    let result = rows
     if (filterFrom)           result = result.filter(t => t.date >= filterFrom)
     if (filterTo)             result = result.filter(t => t.date <= filterTo)
     if (filterType !== 'all') result = result.filter(t => t.type === filterType)
     return [...result].reverse()
-  }, [withBalance, filterFrom, filterTo, filterType])
+  }, [rows, filterFrom, filterTo, filterType])
 
   const hasFilters   = !!filterFrom || !!filterTo || filterType !== 'all'
   const clearFilters = () => { setFilterFrom(''); setFilterTo(''); setFilterType('all') }
 
-  const fmt = (n: number) => n.toLocaleString('ar-EG')
+  /* ── Print receipt (shared printPdf) ── */
+  const handlePrint = (tx: DisplayRow) => {
+    const sign      = tx.type === 'incoming' ? '+' : '−'
+    const amountCls = tx.type === 'incoming' ? 'amount-in' : 'amount-out'
+    const body = `
+      <div class="detail-grid">
+        <div class="detail-item"><label>رقم العملية</label><span>${tx.id}</span></div>
+        <div class="detail-item"><label>التاريخ</label><span>${tx.date}</span></div>
+        <div class="detail-item"><label>النوع</label><span class="${amountCls}">${TYPE_LABELS[tx.type]}</span></div>
+        <div class="detail-item"><label>المصدر</label><span>${tx.sourceLabel}</span></div>
+        <div class="detail-item"><label>المبلغ</label><span class="${amountCls}">${sign}${fmt(tx.amount)} ₪</span></div>
+        <div class="detail-item"><label>الرصيد بعد العملية</label><span>${fmt(tx.balanceAfter)} ₪</span></div>
+        ${tx.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${tx.notes}</span></div>` : ''}
+      </div>`
+    printPdf('إيصال عملية صندوق', body)
+  }
 
   /* ════════════════════════════════════════
      JSX
@@ -105,15 +125,15 @@ export default function CashLedger() {
       <div className="stats-grid">
         <div className="stat-card">
           <span className="stat-label">إجمالي الوارد</span>
-          <span className="stat-value incoming">{fmt(totalIncoming)} ₪</span>
+          <span className="stat-value incoming">{fmt(summary.total_in)} ₪</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">إجمالي الصادر</span>
-          <span className="stat-value outgoing">{fmt(totalOutgoing)} ₪</span>
+          <span className="stat-value outgoing">{fmt(summary.total_out)} ₪</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">الرصيد الحالي</span>
-          <span className="stat-value balance">{fmt(currentBalance)} ₪</span>
+          <span className="stat-value balance">{fmt(summary.balance)} ₪</span>
         </div>
       </div>
 
@@ -168,7 +188,9 @@ export default function CashLedger() {
               </tr>
             </thead>
             <tbody>
-              {filteredRows.length === 0 ? (
+              {loading ? (
+                <tr><td colSpan={6} className="mi-empty-row">جارٍ تحميل الحركات...</td></tr>
+              ) : filteredRows.length === 0 ? (
                 <tr><td colSpan={6} className="mi-empty-row">لا توجد عمليات تطابق الفلتر</td></tr>
               ) : filteredRows.map((tx, i) => (
                 <tr key={tx.id}
@@ -181,7 +203,7 @@ export default function CashLedger() {
                       {TYPE_LABELS[tx.type]}
                     </span>
                   </td>
-                  <td>{SOURCE_LABELS[tx.source]}</td>
+                  <td>{tx.sourceLabel}</td>
                   <td className={tx.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'}>
                     {tx.type === 'incoming' ? '+' : '−'}{fmt(tx.amount)} ₪
                   </td>
@@ -217,7 +239,7 @@ export default function CashLedger() {
                 </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">المصدر</span>
-                  <span>{SOURCE_LABELS[detailsTx.source]}</span>
+                  <span>{detailsTx.sourceLabel}</span>
                 </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">المبلغ</span>
@@ -239,7 +261,7 @@ export default function CashLedger() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => { console.log('=== طباعة عملية ===', detailsTx) }}>طباعة</button>
+                onClick={() => handlePrint(detailsTx)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsTx(null)}>إغلاق</button>
             </div>
           </div>
