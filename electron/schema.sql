@@ -36,11 +36,13 @@ CREATE TABLE IF NOT EXISTS direct_sale_invoices (
 CREATE TABLE IF NOT EXISTS invoice_items (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_id      INTEGER NOT NULL,
-    invoice_type    TEXT    NOT NULL,  
+    invoice_type    TEXT    NOT NULL,
     item_name       TEXT    NOT NULL,
     quantity        INTEGER NOT NULL DEFAULT 1,
     unit_price      REAL    NOT NULL DEFAULT 0,
-    customer_owned  INTEGER NOT NULL DEFAULT 0,  
+    customer_owned  INTEGER NOT NULL DEFAULT 0,
+    part_type       TEXT    NOT NULL DEFAULT 'part',  -- 'part' | 'service' (للصيانة)
+    warranty        TEXT,                              -- كفالة القطعة/الخدمة (للصيانة)
     notes           TEXT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -104,6 +106,15 @@ CREATE TABLE IF NOT EXISTS debt_payment_visa (
     FOREIGN KEY (payment_id) REFERENCES debt_payments(id) ON DELETE CASCADE
 );
 
+
+-- قائمة الموردين (دليل الموردين المتكرّرين)
+CREATE TABLE IF NOT EXISTS suppliers (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    phone      TEXT,
+    notes      TEXT,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
 
 CREATE TABLE IF NOT EXISTS supplier_invoices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,6 +235,22 @@ CREATE TABLE IF NOT EXISTS cash_ledger (
     amount_in      REAL    NOT NULL DEFAULT 0,
     amount_out     REAL    NOT NULL DEFAULT 0,
     balance_after  REAL    NOT NULL DEFAULT 0,
+    notes          TEXT,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+-- الكفالات (مصدرها صيانة أو بيع مباشر)
+CREATE TABLE IF NOT EXISTS warranties (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source         TEXT    NOT NULL,   -- 'maintenance' | 'direct_sale'
+    source_id      INTEGER NOT NULL,
+    customer_name  TEXT    NOT NULL,
+    customer_phone TEXT,
+    car_plate      TEXT,               -- فارغ لـ direct_sale
+    item_name      TEXT    NOT NULL,
+    start_date     TEXT    NOT NULL,   -- YYYY-MM-DD
+    period_value   INTEGER NOT NULL DEFAULT 1,
+    period_unit    TEXT    NOT NULL DEFAULT 'month',  -- 'week' | 'month' | 'year'
     notes          TEXT,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
