@@ -11,8 +11,8 @@ const navItems = [
   { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
   { to: '/suppliers',          icon: '🏪', label: 'الموردون'          },
   { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
+  { to: '/warranties',         icon: '🛡️', label: 'الكفالات'           },
   { to: '/reports',            icon: '📊', label: 'التقارير'           },
-  { to: '/unknown-phones',     icon: '❓', label: 'أرقام غير معروفة'  },
 ]
 
 function getArabicDate(): string {
