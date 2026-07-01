@@ -1,5 +1,6 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
+import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import type {
   MaintenanceInvoiceInput,
   MaintenanceInvoiceRow,
@@ -107,14 +108,16 @@ export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
   const amount_remaining = total_amount - amount_paid
 
   const run = db.transaction(() => {
+    const invoice_number = nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO maintenance_invoices
-        (customer_name, customer_phone, car_plate, car_type, car_color,
+        (invoice_number, customer_name, customer_phone, car_plate, car_type, car_color,
          date_received, warranty, notes, total_amount, amount_paid, amount_remaining)
       VALUES
-        (@customer_name, @customer_phone, @car_plate, @car_type, @car_color,
+        (@invoice_number, @customer_name, @customer_phone, @car_plate, @car_type, @car_color,
          @date_received, @warranty, @notes, @total_amount, @amount_paid, @amount_remaining)
     `).run({
+      invoice_number,
       customer_name: input.customer_name,
       customer_phone: input.customer_phone ?? null,
       car_plate: input.car_plate.toUpperCase(),

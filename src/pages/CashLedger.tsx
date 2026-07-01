@@ -3,6 +3,7 @@ import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { LedgerRow, CashAuditRow } from '../db/types'
+import type { UpcomingCheque, UpcomingChequeSource } from '../store/GarageContext'
 
 /* ════════════════════════════════════════
    Types
@@ -38,6 +39,24 @@ const refLabel = (t: string) => REF_LABELS[t] ?? t
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const fmt      = (n: number) => Math.abs(n).toLocaleString('en-US')
+
+/* ════════════════════════════════════════
+   Upcoming cheques
+════════════════════════════════════════ */
+const CHEQUE_SOURCE_LABELS: Record<UpcomingChequeSource, string> = {
+  maintenance:   'صيانة',
+  direct_sale:   'بيع مباشر',
+  supplier:      'مورد',
+  supplier_debt: 'دين مورد',
+}
+const CHEQUE_SOURCE_CLS: Record<UpcomingChequeSource, string> = {
+  maintenance:   'mi-badge-orange',
+  direct_sale:   'mi-badge-blue',
+  supplier:      'mi-badge-purple',
+  supplier_debt: 'mi-badge-purple',
+}
+const chequeDaysCls = (days: number) =>
+  days <= 3 ? 'mi-badge-red' : days <= 7 ? 'mi-badge-yellow' : 'mi-badge-green'
 
 const toDisplay = (r: LedgerRow): DisplayRow => ({
   id: r.id,
@@ -75,6 +94,19 @@ export default function CashLedger() {
 
   /* ── Details modal ── */
   const [detailsTx, setDetailsTx] = useState<DisplayRow | null>(null)
+
+  /* ── Upcoming cheques ── */
+  const [chequeDays, setChequeDays]       = useState<7 | 14 | 30>(14)
+  const [cheques, setCheques]             = useState<UpcomingCheque[]>([])
+  const [chequesLoading, setChequesLoading] = useState(true)
+
+  useEffect(() => {
+    setChequesLoading(true)
+    dbService.cheques.getUpcoming(chequeDays)
+      .then(setCheques)
+      .catch(err => showError('تعذّر تحميل الشيكات المستحقة قريباً', err))
+      .finally(() => setChequesLoading(false))
+  }, [chequeDays])
 
   /* ─── Load audit records ─── */
   const loadAudits = useCallback(() => {
@@ -386,6 +418,57 @@ export default function CashLedger() {
           </table>
         </div>
         <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>
+      </div>
+
+      {/* ════ الشيكات المستحقة قريباً ════ */}
+      <div className="mi-card">
+        <div className="mi-filters pd-filter-bar" style={{ justifyContent: 'space-between' }}>
+          <h2 className="mi-section-title" style={{ marginBottom: 0 }}>الشيكات المستحقة قريباً</h2>
+          <div className="pd-type-tabs">
+            {([[7, '7 أيام'], [14, '14 يوم'], [30, '30 يوم']] as const).map(([val, label]) => (
+              <button
+                key={val}
+                className={`pd-tab${chequeDays === val ? ' pd-tab-active' : ''}`}
+                onClick={() => setChequeDays(val)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mi-table-wrap">
+          <table className="mi-table">
+            <thead>
+              <tr>
+                <th>الطرف</th>
+                <th>المصدر</th>
+                <th>رقم الشيك</th>
+                <th>البنك</th>
+                <th>المبلغ</th>
+                <th>تاريخ الاستحقاق</th>
+                <th>الأيام المتبقية</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chequesLoading ? (
+                <tr><td colSpan={7} className="mi-empty-row">جارٍ تحميل الشيكات...</td></tr>
+              ) : cheques.length === 0 ? (
+                <tr><td colSpan={7} className="mi-empty-row">لا توجد شيكات مستحقة خلال هذه الفترة</td></tr>
+              ) : cheques.map((c, i) => (
+                <tr key={`${c.source}-${c.chequeNumber}-${i}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                  <td>{c.partyName}</td>
+                  <td><span className={CHEQUE_SOURCE_CLS[c.source]}>{CHEQUE_SOURCE_LABELS[c.source]}</span></td>
+                  <td>{c.chequeNumber}</td>
+                  <td>{c.bankName}</td>
+                  <td className="mi-amount">{fmt(c.amount)} ₪</td>
+                  <td>{c.cashDate}</td>
+                  <td><span className={chequeDaysCls(c.daysRemaining)}>{c.daysRemaining} يوم</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* ════ سجل الإحصاءات اليومية ════ */}

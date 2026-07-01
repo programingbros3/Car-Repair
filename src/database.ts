@@ -36,6 +36,9 @@ export function initDB(): void {
     `ALTER TABLE salary_payments ADD COLUMN days_worked REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE salary_payments ADD COLUMN bonus REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE salary_payments ADD COLUMN deduction REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE maintenance_invoices ADD COLUMN invoice_number TEXT`,
+    `ALTER TABLE direct_sale_invoices ADD COLUMN invoice_number TEXT`,
+    `ALTER TABLE supplier_invoices ADD COLUMN invoice_number TEXT`,
   ]
   for (const sql of migrations) {
     try { db.exec(sql) }
@@ -45,7 +48,80 @@ export function initDB(): void {
     }
   }
 
+  backfillInvoiceNumbers(db)
+
   console.log('✅ قاعدة البيانات جاهزة:', dbPath)
+}
+
+/**
+ * يملأ invoice_number للسجلات الموجودة مسبقاً (قبل إضافة العمود) بصيغة
+ * {prefix}-{سنة تاريخ الفاتورة}-{تسلسل 4 خانات يُعاد للصفر كل سنة}.
+ * لا يفعل شيئاً إن كانت كل السجلات مرقّمة أصلاً (WHERE invoice_number IS NULL
+ * فارغة) — آمن لإعادة التشغيل في كل إطلاق، بنفس فلسفة migrations أعلاه.
+ *
+ * فواتير الصيانة والبيع المباشر تُرقَّم معاً بتسلسل واحد ("INV") لأنهما تُعرضان
+ * مجتمعتين كفاتورة بيع واحدة في SalesInvoices.tsx؛ لو رُقِّم كل جدول على حدة
+ * بنفس البادئة لأمكن ظهور نفس الرقم على فاتورتين مختلفتين. فواتير الموردين
+ * ("PUR") مستقلة تماماً. الترتيب الزمني الأساسي created_at ASC (وقت الإدخال
+ * الفعلي)، والسنة المستخدمة في كل رقم هي سنة تاريخ الفاتورة نفسه (date_received
+ * / sale_date / purchase_date) لا سنة created_at.
+ */
+function backfillInvoiceNumbers(db: BetterSqlite3): void {
+  backfillGroup(db, 'INV', [
+    { table: 'maintenance_invoices', dateCol: 'date_received' },
+    { table: 'direct_sale_invoices', dateCol: 'sale_date' },
+  ])
+  backfillGroup(db, 'PUR', [
+    { table: 'supplier_invoices', dateCol: 'purchase_date' },
+  ])
+}
+
+function backfillGroup(
+  db: BetterSqlite3,
+  prefix: string,
+  sources: { table: string; dateCol: string }[],
+): void {
+  type PendingRow = { table: string; id: number; created_at: string; year: string }
+  const pending: PendingRow[] = []
+
+  for (const src of sources) {
+    const rows = db.prepare(
+      `SELECT id, created_at, ${src.dateCol} AS invoice_date FROM ${src.table} WHERE invoice_number IS NULL`
+    ).all() as { id: number; created_at: string; invoice_date: string | null }[]
+    for (const row of rows) {
+      const year = (row.invoice_date || row.created_at || '').slice(0, 4) || String(new Date().getFullYear())
+      pending.push({ table: src.table, id: row.id, created_at: row.created_at, year })
+    }
+  }
+  if (pending.length === 0) return
+
+  // ترتيب زمني صرف حسب وقت الإدخال الفعلي، عبر كل الجداول المُجمَّعة معاً
+  pending.sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  // seed العدّادات من أي أرقام مُسنَدة مسبقاً (نسخ backfill جزئي سابق) لتفادي التكرار
+  const counters = new Map<string, number>()
+  const numberPattern = new RegExp(`^${prefix}-(\\d{4})-(\\d{4})$`)
+  for (const src of sources) {
+    const existing = db.prepare(
+      `SELECT invoice_number FROM ${src.table} WHERE invoice_number IS NOT NULL`
+    ).all() as { invoice_number: string }[]
+    for (const { invoice_number } of existing) {
+      const m = invoice_number.match(numberPattern)
+      if (!m) continue
+      counters.set(m[1], Math.max(counters.get(m[1]) ?? 0, Number(m[2])))
+    }
+  }
+
+  const updateStmts = new Map(sources.map(s => [s.table, db.prepare(`UPDATE ${s.table} SET invoice_number = ? WHERE id = ?`)]))
+
+  const run = db.transaction(() => {
+    for (const row of pending) {
+      const next = (counters.get(row.year) ?? 0) + 1
+      counters.set(row.year, next)
+      updateStmts.get(row.table)!.run(`${prefix}-${row.year}-${String(next).padStart(4, '0')}`, row.id)
+    }
+  })
+  run()
 }
 
 export function getDB(): BetterSqlite3 {

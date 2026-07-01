@@ -43,6 +43,8 @@ import type {
   CashAuditRow, CashAuditInput,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow,
+  UpcomingChequeRow,
+  DebtAgingRow,
 } from '../db/types'
 
 import {
@@ -57,6 +59,7 @@ import {
   supplierDirectoryToDbInput, dbRowToSupplierDirectory,
   warrantyToDbInput, dbRowToWarranty,
   dbRowToSaleInvoice, dbRowToPurchaseInvoice,
+  dbRowToUpcomingCheque,
 } from '../utils/dbMapper'
 
 /* ════════════════════════════════════════
@@ -281,12 +284,21 @@ export const dbService = {
       ),
   },
 
+  /* ─────────────── الشيكات المستحقة قريباً (قراءة فقط) ─────────────── */
+  cheques: {
+    getUpcoming: (daysAhead = 14) =>
+      invoke<UpcomingChequeRow[]>('cheques:getUpcoming', daysAhead).then(rows =>
+        rows.map(dbRowToUpcomingCheque),
+      ),
+  },
+
   /* ─────────────── التقارير (قراءة فقط، أنواع DB) ─────────────── */
   report: {
     daily: (date: string) => invoke<DailyReport>('report:daily', date),
     monthly: (month: number, year: number) => invoke<MonthlyReport>('report:monthly', month, year),
     debts: () => invoke<DebtReport>('report:debts'),
     topCustomers: (limit = 10) => invoke<TopCustomer[]>('report:topCustomers', limit),
+    debtsAging: () => invoke<DebtAgingRow[]>('report:debtsAging'),
   },
 
   /* ─────────────── النسخ الاحتياطي ─────────────── */

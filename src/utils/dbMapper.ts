@@ -27,6 +27,7 @@ import type {
   PaymentRow, PayMethod,
   Supplier, WarrantyRecord,
   SaleInvoice, PurchaseInvoice,
+  UpcomingCheque,
 } from '../store/GarageContext'
 
 import type {
@@ -43,6 +44,7 @@ import type {
   SupplierDirectoryInput, SupplierDirectoryRow,
   WarrantyInput, WarrantyRow,
   SaleInvoiceRow, PurchaseInvoiceRow,
+  UpcomingChequeRow,
 } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -224,6 +226,7 @@ export function carToUpdateInput(car: CarRecord): MaintenanceUpdateInput {
 export function dbRowToCarRecord(row: MaintenanceInvoiceRow, items: InvoiceItemRow[] = []): CarRecord {
   return {
     id: row.id,
+    invoiceNumber: row.invoice_number,
     customerName: row.customer_name,
     phone: phoneToUi(row.customer_phone),
     carPlate: row.car_plate,
@@ -264,6 +267,7 @@ export function dbRowToSaleRecord(
 ): SaleRecord {
   return {
     id: row.id,
+    invoiceNumber: row.invoice_number,
     customerName: row.customer_name,
     phone: phoneToUi(row.customer_phone),
     saleDate: row.sale_date,
@@ -324,6 +328,7 @@ export function dbRowToSupplierRecord(
 ): SupplierRecord {
   return {
     id: row.id,
+    invoiceNumber: row.invoice_number,
     supplierName: row.supplier_name,
     phone: phoneToUi(row.supplier_phone),
     purchaseDate: row.purchase_date,
@@ -499,6 +504,7 @@ export function dbRowToWarranty(r: WarrantyRow): WarrantyRecord {
 export function dbRowToSaleInvoice(r: SaleInvoiceRow): SaleInvoice {
   return {
     id: r.id,
+    invoiceNumber: r.invoice_number,
     date: r.date,
     type: r.type,
     customerName: r.customer_name,
@@ -521,6 +527,7 @@ export function dbRowToSaleInvoice(r: SaleInvoiceRow): SaleInvoice {
 export function dbRowToPurchaseInvoice(r: PurchaseInvoiceRow): PurchaseInvoice {
   return {
     id: r.id,
+    invoiceNumber: r.invoice_number,
     date: r.date,
     type: r.type,
     description: r.description,
@@ -531,6 +538,22 @@ export function dbRowToPurchaseInvoice(r: PurchaseInvoiceRow): PurchaseInvoice {
     status: saleStatus(r.total_amount, r.amount_paid),
     details: r.details,
     payments: [],
+  }
+}
+
+/* ════════════════════════════════════════
+   الشيكات المستحقة قريباً  UpcomingChequeRow → UpcomingCheque
+   عرض قراءة فقط بالكامل؛ لا اتجاه كتابة.
+════════════════════════════════════════ */
+export function dbRowToUpcomingCheque(r: UpcomingChequeRow): UpcomingCheque {
+  return {
+    source: r.source,
+    partyName: r.party_name,
+    chequeNumber: r.cheque_number,
+    bankName: r.bank_name,
+    amount: r.amount,
+    cashDate: r.cash_date,
+    daysRemaining: r.days_remaining,
   }
 }
 

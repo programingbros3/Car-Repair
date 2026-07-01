@@ -69,6 +69,7 @@ function printSupplierInvoice(
     </tr>`).join('')
   const body = `
     <div class="detail-grid">
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${sup.invoiceNumber || '—'}</span></div>
       <div class="detail-item"><label>اسم المورد</label><span>${sup.supplierName}</span></div>
       <div class="detail-item"><label>رقم الهاتف</label><span>${sup.phone && sup.phone !== '0000' ? sup.phone : 'غير معروف'}</span></div>
       <div class="detail-item"><label>تاريخ الشراء</label><span>${sup.purchaseDate}</span></div>
@@ -88,7 +89,7 @@ function printSupplierInvoice(
       <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
       <tbody>${payRows}</tbody>
     </table>` : ''}`
-  printPdf('فاتورة مورد', body)
+  printPdf(`فاتورة مورد ${sup.invoiceNumber || ''}`.trim(), body)
 }
 
 /* ════════════════════════════════════════
@@ -165,11 +166,11 @@ export default function Suppliers() {
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => supplierInvoices.map((sup, i) => ({ _idx: i, supplierName: normalizeAr(sup.supplierName) })),
+    () => supplierInvoices.map((sup, i) => ({ _idx: i, supplierName: normalizeAr(sup.supplierName), invoiceNumber: normalizeAr(sup.invoiceNumber ?? '') })),
     [supplierInvoices],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, { keys: ['supplierName'], threshold: 0.4, ignoreLocation: true }),
+    () => new Fuse(fuseItems, { keys: ['supplierName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 
@@ -706,6 +707,7 @@ export default function Suppliers() {
           <table className="mi-table">
             <thead>
               <tr>
+                <th>رقم الفاتورة</th>
                 <th>اسم المورد</th>
                 <th>رقم الهاتف</th>
                 <th>تاريخ الشراء</th>
@@ -718,10 +720,11 @@ export default function Suppliers() {
             </thead>
             <tbody>
               {filteredSuppliers.length === 0 ? (
-                <tr><td colSpan={8} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
               ) : filteredSuppliers.map((sup, i) => (
                 <tr key={sup.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsSup(sup)}>
+                  <td>{sup.invoiceNumber || '—'}</td>
                   <td>{sup.supplierName}</td>
                   <td>
                     {sup.phone && sup.phone !== '0000'
@@ -762,6 +765,10 @@ export default function Suppliers() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-detail-grid">
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">رقم الفاتورة</span>
+                  <strong>{detailsSup.invoiceNumber || '—'}</strong>
+                </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">اسم المورد</span>
                   <strong>{detailsSup.supplierName}</strong>

@@ -65,6 +65,7 @@ export interface MaintenanceInvoiceInput {
 
 export interface MaintenanceInvoiceRow {
   id: number
+  invoice_number: string
   customer_name: string
   customer_phone: string | null
   car_plate: string
@@ -113,6 +114,7 @@ export interface DirectSaleInput {
 
 export interface DirectSaleRow {
   id: number
+  invoice_number: string
   customer_name: string
   customer_phone: string | null
   sale_date: string
@@ -181,6 +183,7 @@ export interface SupplierInvoiceInput {
 
 export interface SupplierInvoiceRow {
   id: number
+  invoice_number: string
   supplier_name: string
   supplier_phone: string | null
   purchase_date: string
@@ -346,6 +349,24 @@ export interface TopCustomer {
   total_spent: number
 }
 
+// ── أعمار الديون (debts aging) — قراءة فقط، تصنيف حسب تاريخ الفاتورة الأصلي ────
+
+export type DebtAgingKind = 'maintenance' | 'direct_sale' | 'supplier'
+export type DebtAgingBucket = '0-30' | '31-60' | '61-90' | '90+'
+
+export interface DebtAgingRow {
+  kind: DebtAgingKind
+  invoice_id: number
+  party_name: string
+  party_phone: string | null
+  invoice_date: string
+  total_amount: number
+  amount_paid: number
+  amount_remaining: number
+  days_old: number
+  bucket: DebtAgingBucket
+}
+
 // ── Supplier directory (دليل الموردين المتكرّرين) ──────────────────────────────
 
 export interface SupplierDirectoryRow {
@@ -401,6 +422,7 @@ export type SaleInvoiceKind = 'maintenance' | 'direct_sale'
 
 export interface SaleInvoiceRow {
   id: number
+  invoice_number: string
   date: string
   type: SaleInvoiceKind
   customer_name: string
@@ -437,6 +459,7 @@ export type PurchaseInvoiceKind = 'supplier' | 'expense' | 'salary'
 
 export interface PurchaseInvoiceRow {
   id: number
+  invoice_number: string | null
   date: string
   type: PurchaseInvoiceKind
   description: string
@@ -466,6 +489,20 @@ export interface AutoBackupRunResult {
   success: boolean
   filePath?: string
   error?: string
+}
+
+// ── الشيكات المستحقة قريباً (cheques) — قراءة فقط، من جداول الشيكات الأربعة الموجودة ──
+
+export type UpcomingChequeKind = 'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'
+
+export interface UpcomingChequeRow {
+  source: UpcomingChequeKind
+  party_name: string
+  cheque_number: string
+  bank_name: string
+  amount: number
+  cash_date: string
+  days_remaining: number
 }
 
 // ── الأمان (auth) — كلمة السر، القفل عند تجاوز المحاولات، القفل التلقائي، سجل النشاط ──

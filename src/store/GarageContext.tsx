@@ -23,7 +23,7 @@ export type CarItem = {
   warranty: string; partType: 'part' | 'service'; notes: string
 }
 export type CarRecord = {
-  id: number; customerName: string; phone: string; carPlate: string
+  id: number; invoiceNumber?: string; customerName: string; phone: string; carPlate: string
   carType: string; carColor: string; dateReceived: string
   status: 'in_progress' | 'delivered'; deliveredDate?: string
   notes: string; total: number; amountPaid?: number; amountRemaining?: number; items: CarItem[]
@@ -35,7 +35,7 @@ export type SaleItem = {
 }
 export type SaleStatus = 'paid' | 'partial_debt' | 'full_debt'
 export type SaleRecord = {
-  id: number; customerName: string; phone: string; saleDate: string
+  id: number; invoiceNumber?: string; customerName: string; phone: string; saleDate: string
   warranty: string; notes: string; total: number
   amountPaid: number; amountRemaining: number; status: SaleStatus
   items: SaleItem[]; payments: PaymentRow[]
@@ -45,7 +45,7 @@ export type SaleRecord = {
 export type SaleInvoiceType   = 'maintenance' | 'direct_sale'
 export type SaleInvoiceStatus = 'paid' | 'partial_debt' | 'full_debt'
 export type SaleInvoice = {
-  id: number; date: string; type: SaleInvoiceType; customerName: string
+  id: number; invoiceNumber: string; date: string; type: SaleInvoiceType; customerName: string
   phone: string; total: number; paid: number; remaining: number
   status: SaleInvoiceStatus; carPlate: string; carType: string; details: string
   payments: PaymentRow[]
@@ -55,7 +55,7 @@ export type SaleInvoice = {
 export type PurchaseType   = 'supplier' | 'expense' | 'salary'
 export type PurchaseStatus = 'paid' | 'partial_debt' | 'full_debt'
 export type PurchaseInvoice = {
-  id: number; date: string; type: PurchaseType; description: string
+  id: number; invoiceNumber: string | null; date: string; type: PurchaseType; description: string
   phone: string; total: number; paid: number; remaining: number
   status: PurchaseStatus; details: string; payments: PaymentRow[]
 }
@@ -67,7 +67,7 @@ export type SupplierItem = {
   name: string; quantity: number; unitPrice: number; notes: string
 }
 export type SupplierRecord = {
-  id: number; supplierName: string; phone: string; purchaseDate: string
+  id: number; invoiceNumber?: string; supplierName: string; phone: string; purchaseDate: string
   notes: string; total: number; amountPaid: number; amountRemaining: number
   items: SupplierItem[]; payments: PaymentRow[]
 }
@@ -109,6 +109,18 @@ export type WarrantyRecord = {
   periodValue: number       // مثال: 3
   periodUnit: WarrantyPeriodUnit  // 'month'
   notes: string
+}
+
+/* ── Upcoming Cheques (الشيكات المستحقة قريباً) — قراءة فقط ── */
+export type UpcomingChequeSource = 'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'
+export type UpcomingCheque = {
+  source: UpcomingChequeSource
+  partyName: string
+  chequeNumber: string
+  bankName: string
+  amount: number
+  cashDate: string
+  daysRemaining: number
 }
 
 /* ── Cross-screen linked operation ── */

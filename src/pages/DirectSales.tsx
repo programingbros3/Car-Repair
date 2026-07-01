@@ -134,8 +134,8 @@ export default function DirectSales() {
   }, [showForm, editingInvoice, form, items])
 
   /* Fuse */
-  const fuseItems = useMemo(() => invoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName) })), [invoices])
-  const fuse      = useMemo(() => new Fuse(fuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }), [fuseItems])
+  const fuseItems = useMemo(() => invoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName), invoiceNumber: normalizeAr(inv.invoiceNumber ?? '') })), [invoices])
+  const fuse      = useMemo(() => new Fuse(fuseItems, { keys: ['customerName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }), [fuseItems])
 
   const filteredInvoices = useMemo(() => {
     const q = search.trim()
@@ -296,6 +296,7 @@ export default function DirectSales() {
         </tr>`).join('')
       const body = `
         <div class="detail-grid">
+          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
           <div class="detail-item"><label>اسم الزبون</label><span>${full.customerName}</span></div>
           <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? full.phone : 'غير معروف'}</span></div>
           <div class="detail-item"><label>التاريخ</label><span>${full.saleDate}</span></div>
@@ -318,7 +319,7 @@ export default function DirectSales() {
           <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
           <tbody>${payRows}</tbody>
         </table>` : ''}`
-      printPdf('فاتورة بيع مباشر', body)
+      printPdf(`فاتورة بيع مباشر ${full.invoiceNumber || ''}`.trim(), body)
     } catch (err) {
       showError('تعذّر طباعة الفاتورة', err)
     }
@@ -526,14 +527,15 @@ export default function DirectSales() {
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
-              <tr><th>اسم الزبون</th><th>رقم الهاتف</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
+              <tr><th>رقم الفاتورة</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
               {filteredInvoices.length === 0 ? (
-                <tr><td colSpan={8} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
               ) : filteredInvoices.map((inv, i) => (
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsInvoice(inv) }}>
+                  <td>{inv.invoiceNumber || '—'}</td>
                   <td>{inv.customerName}</td>
                   <td>{inv.phone && inv.phone !== '0000' ? <span className="mi-phone-highlight">{inv.phone}</span> : <span className="mi-badge-gray">غير معروف</span>}</td>
                   <td>{inv.saleDate}</td>
@@ -568,6 +570,7 @@ export default function DirectSales() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-detail-grid">
+                <div className="mi-detail-item"><span className="mi-detail-label">رقم الفاتورة</span><strong>{detailsInvoice.invoiceNumber || '—'}</strong></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{detailsInvoice.customerName}</strong></div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">رقم الهاتف</span>

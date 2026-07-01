@@ -1,5 +1,6 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
+import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import type {
   DirectSaleInput,
   DirectSaleRow,
@@ -77,14 +78,16 @@ export function addDirectSaleInvoice(input: DirectSaleInput): number {
   const amount_remaining = total_amount - amount_paid
 
   const run = db.transaction(() => {
+    const invoice_number = nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO direct_sale_invoices
-        (customer_name, customer_phone, sale_date, warranty, notes,
+        (invoice_number, customer_name, customer_phone, sale_date, warranty, notes,
          total_amount, amount_paid, amount_remaining)
       VALUES
-        (@customer_name, @customer_phone, @sale_date, @warranty, @notes,
+        (@invoice_number, @customer_name, @customer_phone, @sale_date, @warranty, @notes,
          @total_amount, @amount_paid, @amount_remaining)
     `).run({
+      invoice_number,
       customer_name: input.customer_name,
       customer_phone: input.customer_phone ?? null,
       sale_date: input.sale_date,

@@ -9,6 +9,8 @@ import type {
   LedgerRow,
   PendingDebt,
   SupplierPendingDebt,
+  DebtAgingRow,
+  DebtAgingBucket,
 } from './types'
 
 // ─── Day 5: Daily report ──────────────────────────────────────────────────────
@@ -153,6 +155,50 @@ export function getDebtReport(): DebtReport {
 }
 
 // ─── Day 5: Top customers by total spending ───────────────────────────────────
+
+// ── أعمار الديون: تصنيف كل الديون المعلقة (زبائن + موردين) حسب عمرها ───────────
+
+function agingBucket(daysOld: number): DebtAgingBucket {
+  if (daysOld <= 30) return '0-30'
+  if (daysOld <= 60) return '31-60'
+  if (daysOld <= 90) return '61-90'
+  return '90+'
+}
+
+export function getDebtsAging(): DebtAgingRow[] {
+  const db = getDB()
+
+  const rows = db.prepare(`
+    SELECT 'maintenance' AS kind, id AS invoice_id,
+           customer_name AS party_name, customer_phone AS party_phone,
+           date_received AS invoice_date, total_amount, amount_paid, amount_remaining,
+           CAST(julianday(date('now','localtime')) - julianday(date_received) AS INTEGER) AS days_old
+      FROM maintenance_invoices
+     WHERE amount_remaining > 0
+
+    UNION ALL
+
+    SELECT 'direct_sale' AS kind, id AS invoice_id,
+           customer_name AS party_name, customer_phone AS party_phone,
+           sale_date AS invoice_date, total_amount, amount_paid, amount_remaining,
+           CAST(julianday(date('now','localtime')) - julianday(sale_date) AS INTEGER) AS days_old
+      FROM direct_sale_invoices
+     WHERE amount_remaining > 0
+
+    UNION ALL
+
+    SELECT 'supplier' AS kind, id AS invoice_id,
+           supplier_name AS party_name, supplier_phone AS party_phone,
+           purchase_date AS invoice_date, total_amount, amount_paid, amount_remaining,
+           CAST(julianday(date('now','localtime')) - julianday(purchase_date) AS INTEGER) AS days_old
+      FROM supplier_invoices
+     WHERE amount_remaining > 0
+
+    ORDER BY days_old DESC
+  `).all() as Omit<DebtAgingRow, 'bucket'>[]
+
+  return rows.map(r => ({ ...r, bucket: agingBucket(r.days_old) }))
+}
 
 export function getTopCustomers(limit = 10): TopCustomer[] {
   const db = getDB()

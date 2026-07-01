@@ -1,5 +1,6 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
+import { nextInvoiceNumber, PURCHASE_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import type {
   SupplierInvoiceInput,
   SupplierInvoiceRow,
@@ -86,14 +87,16 @@ export function addSupplierInvoice(input: SupplierInvoiceInput): number {
   const amount_remaining = total_amount - amount_paid
 
   const run = db.transaction(() => {
+    const invoice_number = nextInvoiceNumber('PUR', PURCHASE_INVOICE_NUMBER_TABLES)
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO supplier_invoices
-        (supplier_name, supplier_phone, purchase_date, notes,
+        (invoice_number, supplier_name, supplier_phone, purchase_date, notes,
          total_amount, amount_paid, amount_remaining)
       VALUES
-        (@supplier_name, @supplier_phone, @purchase_date, @notes,
+        (@invoice_number, @supplier_name, @supplier_phone, @purchase_date, @notes,
          @total_amount, @amount_paid, @amount_remaining)
     `).run({
+      invoice_number,
       supplier_name: input.supplier_name,
       supplier_phone: input.supplier_phone ?? null,
       purchase_date: input.purchase_date,

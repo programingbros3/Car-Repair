@@ -34,7 +34,7 @@ const blankRow = (): PaymentRow => ({
 function printInvoice(inv: PurchaseInvoice): void {
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.id}</span></div>
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber || `#${inv.id}`}</span></div>
       <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
       <div class="detail-item"><label>النوع</label><span>${TYPE_LABELS[inv.type]}</span></div>
       <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>

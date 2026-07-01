@@ -34,7 +34,7 @@ const blankRow = (): PaymentRow => ({
 function printInvoice(inv: SaleInvoice): void {
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.id}</span></div>
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber}</span></div>
       <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
       <div class="detail-item"><label>نوع الفاتورة</label><span>${TYPE_LABELS[inv.type]}</span></div>
       <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
@@ -133,11 +133,11 @@ export default function SalesInvoices() {
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => salesInvoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName) })),
+    () => salesInvoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName), invoiceNumber: normalizeAr(inv.invoiceNumber) })),
     [salesInvoices],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }),
+    () => new Fuse(fuseItems, { keys: ['customerName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 
@@ -320,6 +320,7 @@ export default function SalesInvoices() {
           <table className="mi-table">
             <thead>
               <tr>
+                <th>رقم الفاتورة</th>
                 <th>التاريخ</th>
                 <th>نوع الفاتورة</th>
                 <th>اسم الزبون</th>
@@ -333,10 +334,11 @@ export default function SalesInvoices() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
+                <tr><td colSpan={10} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
               ) : filtered.map((inv, i) => (
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsInv(inv)}>
+                  <td>{inv.invoiceNumber}</td>
                   <td>{inv.date}</td>
                   <td><span className={TYPE_CLS[inv.type]}>{TYPE_LABELS[inv.type]}</span></td>
                   <td>{inv.customerName}</td>
@@ -371,11 +373,15 @@ export default function SalesInvoices() {
         <div className="mi-modal-overlay" onClick={() => setDetailsInv(null)}>
           <div className="mi-modal" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>تفاصيل الفاتورة #{detailsInv.id}</h3>
+              <h3>تفاصيل الفاتورة {detailsInv.invoiceNumber}</h3>
               <button className="mi-modal-close" onClick={() => setDetailsInv(null)}>✕</button>
             </div>
             <div className="mi-modal-body">
               <div className="mi-detail-grid">
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">رقم الفاتورة</span>
+                  <strong>{detailsInv.invoiceNumber}</strong>
+                </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">التاريخ</span>
                   <span>{detailsInv.date}</span>

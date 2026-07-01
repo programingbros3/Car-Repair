@@ -54,8 +54,10 @@
 │   │   ├── expenses.ts      — دوال المصاريف، الموظفين (مع daily_wage)، الرواتب (مع اليومية)
 │   │   ├── ledger.ts        — دوال الصندوق والسجل المالي
 │   │   ├── payments.ts      — دوال الدفعات وتحصيل الديون
-│   │   ├── reports.ts       — دوال التقارير (يومي/شهري/ديون/أفضل زبائن)
+│   │   ├── reports.ts       — دوال التقارير (يومي/شهري/ديون/أعمار ديون/أفضل زبائن)
 │   │   ├── suppliers.ts     — دوال CRUD للموردين وفواتيرهم
+│   │   ├── cheques.ts       — الشيكات المستحقة قريباً (قراءة فقط)
+│   │   ├── invoiceNumber.ts — nextInvoiceNumber(): توليد رقم الفاتورة المنسّق (INV/PUR) عند الإضافة
 │   │   └── warranties.ts    — دوال CRUD للكفالات (إضافة/تعديل/حذف يدوي)
 │   │
 │   ├── services/
@@ -90,7 +92,7 @@
 │       ├── Suppliers.tsx        — الموردون: فواتير الشراء CRUD + دفعات + موردون دليل
 │       ├── Employees.tsx        — الموظفون والرواتب: CRUD + اليومية + حساب الراتب تلقائياً
 │       ├── Warranties.tsx       — الكفالات: عرض نشطة/منتهية + تعديل/حذف + نوع العملية (لا إضافة يدوية)
-│       ├── Reports.tsx          — التقارير: يومي/شهري/سنوي/ديون/أفضل زبائن + تصدير CSV
+│       ├── Reports.tsx          — التقارير: يومي/شهري/سنوي/ديون/أعمار ديون/أفضل زبائن + تصدير CSV
 │       └── Settings.tsx         — الإعدادات: نسخ احتياطي (يدوي + تلقائي دوري) + الأمان (تغيير كلمة السر، القفل التلقائي، سجل النشاط)
 │
 ├── public/
@@ -119,6 +121,7 @@
 | العمود | النوع | الوصف |
 |---|---|---|
 | id | INTEGER PK AUTOINCREMENT | |
+| invoice_number | TEXT | رقم فاتورة منسّق للزبون بصيغة `INV-{سنة}-{تسلسل 4 خانات}` — أُضيف عبر migration، راجع "ترقيم الفواتير" أدناه |
 | customer_name | TEXT NOT NULL | اسم الزبون |
 | customer_phone | TEXT | رقم الهاتف (NULL = غير معروف) |
 | car_plate | TEXT NOT NULL | نمرة السيارة |
@@ -138,6 +141,7 @@
 | العمود | النوع | الوصف |
 |---|---|---|
 | id | INTEGER PK AUTOINCREMENT | |
+| invoice_number | TEXT | نفس تسلسل `INV-{سنة}-{تسلسل}` المشترك مع `maintenance_invoices` — راجع "ترقيم الفواتير" أدناه |
 | customer_name | TEXT NOT NULL | |
 | customer_phone | TEXT | |
 | sale_date | TEXT NOT NULL | تاريخ البيع |
@@ -200,6 +204,7 @@
 | العمود | النوع | الوصف |
 |---|---|---|
 | id | INTEGER PK AUTOINCREMENT | |
+| invoice_number | TEXT | رقم فاتورة منسّق بصيغة `PUR-{سنة}-{تسلسل 4 خانات}` — تسلسل مستقل تماماً عن `INV-*`، راجع "ترقيم الفواتير" أدناه |
 | supplier_name | TEXT NOT NULL | |
 | supplier_phone | TEXT | |
 | purchase_date | TEXT NOT NULL | |
@@ -253,7 +258,23 @@
 | notes | TEXT | |
 | created_at | TEXT | |
 
-**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
+**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
+
+#### ترقيم الفواتير (`invoice_number`) — منذ 2026-07-02
+
+قبل هذا التحديث لم يكن للفاتورة أي معرّف يُعرض للزبون سوى `id` الداخلي في قاعدة البيانات (تسلسل واحد مشترك بين كل الجداول لا يبدأ من 1 لكل نوع ولا يُعاد للصفر كل سنة). الآن كل فاتورة صيانة/بيع مباشر/مورد تحمل بالإضافة إلى `id` (الذي **لم يتغيّر ولم يُحذف** ويبقى المفتاح الداخلي الوحيد لكل العلاقات) عمود `invoice_number` نصّي منسّق يُعرض للزبون في الجداول والمودالات والإيصالات المطبوعة.
+
+**قرار التصميم — تسلسل واحد مشترك بين الصيانة والبيع المباشر:**
+فواتير الصيانة (`maintenance_invoices`) والبيع المباشر (`direct_sale_invoices`) تستخدمان بادئة **`INV`** بتسلسل **واحد مشترك** بينهما (وليس عدّاداً منفصلاً لكل جدول)، لأنهما تُعرضان أصلاً مجتمعتين كفاتورة بيع واحدة للزبون في `SalesInvoices.tsx`. لو استُخدم عدّاد منفصل لكل جدول بنفس البادئة لأمكن ظهور نفس الرقم (مثلاً `INV-2026-0001`) على فاتورتين مختلفتين تماماً (واحدة صيانة وواحدة بيع مباشر)، وهو ما يُفقد الرقم صفة "معرّف فريد يعرفه الزبون". فواتير الموردين (`supplier_invoices`) تستخدم بادئة **`PUR`** بتسلسل **مستقل تماماً** عن `INV-*` (لا علاقة تجارية بين المورد والزبون تستدعي توحيدهما).
+
+**الصيغة:** `{PREFIX}-{سنة}-{تسلسل 4 خانات معاد للصفر كل سنة}`، مثال: `INV-2026-0001`، `PUR-2026-0007`.
+
+**التوليد عند الإضافة (`src/db/invoiceNumber.ts → nextInvoiceNumber(prefix, tables, year)`):**
+تُستدعى من داخل نفس `db.transaction()` الذي يضمّ `INSERT` الفاتورة في `addMaintenanceInvoice`/`addDirectSaleInvoice` (`src/db/maintenance.ts`/`direct-sale.ts`، بادئة `INV`، الجدولان معاً) و`addSupplierInvoice` (`src/db/suppliers.ts`، بادئة `PUR`، جدول واحد). تبحث عن أعلى تسلسل مستخدم لنفس **السنة الحالية** (`new Date().getFullYear()` وقت الإضافة، **وليس** تاريخ الفاتورة الذي يُدخله المستخدم يدوياً وقد يكون بأثر رجعي) عبر كل الجداول المُمرَّرة معاً ثم تزيده بـ 1؛ إن لم يوجد أي رقم لهذه السنة بعد يبدأ التسلسل من `0001`. لا حاجة لقفل صريح: better-sqlite3 متزامن على اتصال واحد ضمن عملية Node.js وحيدة الخيط، فلا يمكن لعملية إضافة أخرى أن تتداخل بين قراءة أعلى رقم وإدراج الفاتورة طالما كلاهما يحدث داخل نفس `db.transaction()`.
+
+**تعبئة السجلات القديمة (`src/database.ts → backfillInvoiceNumbers()`):** تُستدعى مرة واحدة بعد حلقة الـ migrations في `initDB()`. لكل مجموعة (`INV` = صيانة+بيع مباشر، `PUR` = موردون) تجلب كل الصفوف التي `invoice_number IS NULL` بعمودي `id`/`created_at` من كل جدول في المجموعة، ثم **تُرتَّب كلها معاً** (وليس كل جدول على حدة) ترتيباً زمنياً صرفاً حسب `created_at ASC` (وقت الإدخال الفعلي)، وتُرقَّم تصاعدياً ضمن مجموعة كل سنة — والسنة المستخدمة في كل رقم هي سنة **تاريخ الفاتورة نفسه** (`date_received`/`sale_date`/`purchase_date`) لا سنة `created_at`. تُهيّئ العدّادات أولاً من أي أرقام مُسنَدة مسبقاً (`WHERE invoice_number IS NOT NULL`) لتبقى آمنة عند التشغيل الجزئي/المتكرر — إن لم يبقَ أي صف بلا رقم تُصبح no-op فورية (نفس فلسفة باقي الـ migrations). تم التحقق يدوياً من الخوارزمية بمحاكاة قاعدة بيانات تجريبية تحوي بيانات موزّعة على سنتين مختلفتين قبل الدمج: الترقيم جاء متسلسلاً زمنياً بشكل صحيح، معاد الصفر لكل سنة، بلا أي تكرار بين الجدولين، ومطابق بعد التشغيل مرتين متتاليتين (idempotent).
+
+**العرض:** `invoice_number` يظهر بدل الاعتماد على `id` الداخلي في: جداول `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`SalesInvoices.tsx`/`Suppliers.tsx` (عمود "رقم الفاتورة")، مودالات التفاصيل في نفس الصفحات، ورأس كل إيصال مطبوع (`printPdf` — العنوان + أول سطر في `detail-grid`). أُضيف أيضاً كحقل بحث في كل نسخة `Fuse.js` بهذه الصفحات (بجانب اسم الزبون/المورد). فواتير الشراء المجمّعة (`PurchaseInvoices.tsx`) تعرض `invoice_number` للموردين فقط (المصاريف والرواتب ليس لها رقم فاتورة، تبقى `#{id}` كما كانت).
 
 #### `cash_ledger` — سجل الصندوق الرئيسي
 | العمود | النوع | الوصف |
@@ -452,6 +473,7 @@ React Page
 | `report:monthly` | تقرير شهر: GROUP BY يوم |
 | `report:debts` | كل ديون الزبائن والموردين |
 | `report:topCustomers` | أفضل الزبائن حسب الإنفاق (UNION maintenance+direct_sale, GROUP BY customer) |
+| `report:debtsAging` | كل الديون المعلقة (UNION maintenance+direct_sale+supplier) مصنّفة حسب عمرها منذ تاريخ الفاتورة — منذ 2026-07-02 |
 
 #### فواتير البيع والشراء (عرض مجمّع)
 | القناة | الوصف |
@@ -485,6 +507,16 @@ React Page
 |---|---|
 | `payments:getByInvoice` | { invoiceId, invoiceType } → دفعات فاتورة |
 | `supplierPayments:getByInvoice` | دفعات فاتورة مورد |
+
+#### الشيكات المستحقة قريباً (`cheques:getUpcoming`) — منذ 2026-07-02
+
+| القناة | المدخلات | الخرج | الوصف |
+|---|---|---|---|
+| `cheques:getUpcoming` | daysAhead? (افتراضي 14) | `UpcomingChequeRow[]` | UNION من الشيكات (عادية + دين، عملاء + موردين) حيث `cash_date` بين اليوم و(اليوم + daysAhead)، مرتّبة تصاعدياً حسب `cash_date` |
+
+**قراءة فقط بالكامل** — لا تعديل على بنية أي جدول من جداول الشيكات الأربعة الموجودة أصلاً (`payment_cheque`, `debt_payment_cheque`, `supplier_payment_cheque`, `supplier_debt_cheque`)؛ الميزة تعتمد فقط على حقل `cash_date` الموجود فيها مسبقاً.
+
+**المنطق (`src/db/cheques.ts` → `getUpcomingCheques(daysAhead)`):** UNION ALL لست جمل SELECT (شيكات دفعات الصيانة + شيكات دفعات البيع المباشر + شيكات تحصيل ديون العملاء مصنّفة حسب `invoice_type` إلى maintenance/direct_sale + شيكات دفعات الموردين + شيكات سداد ديون الموردين)، مع `JOIN` على جدول الفاتورة المصدر لجلب اسم الطرف (`party_name`: اسم الزبون أو المورد). كل صف يحمل `source` من أربع قيم: `'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'`. `days_remaining` يُحسب داخل SQL بفارق تقويمي صرف بين تاريخين (`julianday(cash_date) - julianday(date('now','localtime'))`، وليس `julianday('now','localtime')` مباشرة) لتفادي انحراف النتيجة حسب ساعة اليوم الحالية — بنفس فلسفة `daysRemaining()` في `warranty.ts`.
 
 #### النسخ الاحتياطي
 | القناة | الوصف |
@@ -558,8 +590,13 @@ React Page
 
 ### دوال الـ Backend الرئيسية (src/db/)
 
+#### `src/db/invoiceNumber.ts` — منذ 2026-07-02
+- `nextInvoiceNumber(prefix, tables, year?)` — الرقم التسلسلي التالي `{prefix}-{year}-{تسلسل 4 خانات}`؛ تبحث عن أعلى تسلسل مستخدم لنفس السنة عبر كل الجداول المُمرَّرة معاً (وليس كل جدول على حدة). يجب استدعاؤها من داخل نفس `db.transaction()` الذي يحتوي `INSERT` الفاتورة.
+- `SALES_INVOICE_NUMBER_TABLES` = `['maintenance_invoices', 'direct_sale_invoices']` — تسلسل `INV` مشترك بينهما (راجع "ترقيم الفواتير" أعلاه لسبب القرار)
+- `PURCHASE_INVOICE_NUMBER_TABLES` = `['supplier_invoices']` — تسلسل `PUR` مستقل
+
 #### `src/db/maintenance.ts`
-- `addMaintenanceInvoice(db, input)` — INSERT + insertItems (يكتب warranty وpart_type في DB) + insertPayments
+- `addMaintenanceInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر `nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)` داخل نفس transaction) + insertItems (يكتب warranty وpart_type في DB) + insertPayments
 - `updateMaintenanceInvoice(db, car)` — UPDATE فاتورة + يحذف البنود القديمة ويُعيد إدراجها
 - `deliverMaintenance(db, id, payments, date)` — UPDATE status='delivered' + date_released + دفعات + Ledger
 - `deleteMaintenanceInvoice(db, id)` — DELETE + بنودها + دفعاتها
@@ -569,7 +606,7 @@ React Page
 **ملاحظة:** دالة `addMaintenanceItem` (وقناة `maintenance:addItem` المقابلة) لإضافة بند واحد لفاتورة موجودة دون تعديلها بالكامل — أُزيلتا لعدم استخدامهما (نموذج التعديل الكامل في `MaintenanceInvoices.tsx` يغطي نفس الحاجة).
 
 #### `src/db/direct-sale.ts`
-- `addDirectSaleInvoice(db, input)` — INSERT + invoice_items + payments + Ledger
+- `addDirectSaleInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر نفس تسلسل `INV` المشترك مع الصيانة) + invoice_items + payments + Ledger
 - `updateDirectSaleItems(db, invoiceId, items)` — يحذف بنود 'direct_sale' للفاتورة ويُعيد إدراجها + يُحدّث total_amount وamount_remaining
 - `getDirectSaleInvoices(db, filters)` — SELECT مع فلاتر
 - `getDirectSaleInvoice(db, id)` — SELECT + items + payments
@@ -589,6 +626,7 @@ React Page
 - `getMonthlyReport(db, month, year)` — GROUP BY transaction_date للشهر
 - `getDebtReport(db)` — كل ديون الزبائن + كل ديون الموردين
 - `getTopCustomers(db, limit)` — UNION maintenance+direct_sale, GROUP BY customer, ORDER BY total_spent DESC
+- `getDebtsAging(db)` — منذ 2026-07-02: UNION من maintenance_invoices + direct_sale_invoices + supplier_invoices (WHERE amount_remaining > 0) في صف واحد موحّد لكل دين، مع `days_old` محسوب بـ `julianday(date('now','localtime')) - julianday(invoice_date)` وتصنيف `bucket` عبر دالة داخلية `agingBucket()` إلى أربع شرائح: `'0-30' | '31-60' | '61-90' | '90+'`. دالة مستقلة عن `getDebtReport` (التي تُبقي الزبائن/الموردين في مصفوفتين منفصلتين لتبويب "تقرير الديون" الحالي) لأن الشكل الموحّد المطلوب هنا (جدول واحد لكل الديون بغضّ النظر عن نوعها) لا يتقاطع معها بسهولة.
 
 #### `src/db/suppliers.ts`
 - `addSupplierInvoice`, `updateSupplierInvoice`, `deleteSupplierInvoice`
@@ -635,6 +673,8 @@ React Page
    - الضغط على صف → مودال التفاصيل مع زر طباعة إيصال
 
 4. **سجل الإحصاءات اليومية:** جدول `daily_cash_audits` مع badge الحالة (مطابق/زيادة/نقص) وزر طباعة
+
+5. **الشيكات المستحقة قريباً** (منذ 2026-07-02، أسفل "سجل العمليات" مباشرة): بطاقة `mi-card` قراءة فقط، مصدرها `cheques:getUpcoming(daysAhead)`. فلتر أعلى الجدول بنمط `pd-type-tabs`/`pd-tab` (نفس تبويبات النوع في `PendingDebts.tsx`) لاختيار المدى: 7/14/30 يوماً (افتراضي 14). الجدول: الطرف | المصدر (badge: `mi-badge-orange` صيانة / `mi-badge-blue` بيع مباشر / `mi-badge-purple` مورد أو دين مورد) | رقم الشيك | البنك | المبلغ | تاريخ الاستحقاق | الأيام المتبقية (badge بنفس أصناف الكفالات: `mi-badge-red` عند ≤3 أيام، `mi-badge-yellow` عند ≤7 أيام، `mi-badge-green` غير ذلك — لا كلاسات CSS جديدة). لا إجراءات تعديل/حذف على هذه الشاشة؛ أي تعديل على شيك يتم من صفحته الأصلية (الصيانة/البيع المباشر/الموردين).
 
 ---
 
@@ -931,7 +971,7 @@ export function daysRemaining(endDate: string): number
 ### التقارير — `src/pages/Reports.tsx`
 **المسار:** `/reports`
 
-**5 تبويبات:**
+**6 تبويبات:**
 
 1. **يومي:** اختيار تاريخ → تقرير `report:daily`
    - بطاقات: إجمالي وارد/صادر/صافي + دخل صيانة/بيع مباشر/تحصيل ديون/مشتريات موردين/مصاريف/رواتب
@@ -949,13 +989,19 @@ export function daysRemaining(endDate: string): number
    - بطاقتان: إجمالي ديون الزبائن + إجمالي ديون الموردين
    - جدولان: ديون الزبائن (مصدر+مبالغ) + ديون الموردين
 
-5. **أفضل الزبائن:** `report:topCustomers(20)` — تبويب جديد
+5. **أفضل الزبائن:** `report:topCustomers(20)`
    - جدول: # | اسم الزبون | رقم الهاتف | عدد الفواتير | إجمالي الإنفاق
    - يجمع من maintenance_invoices + direct_sale_invoices مُرتَّباً تنازلياً حسب total_spent
 
-**الطباعة:** زر "طباعة التقرير" يُنشئ HTML مناسب حسب التبويب الحالي ويستدعي `printPdf()` (يشمل تبويب أفضل الزبائن)
+6. **أعمار الديون** (منذ 2026-07-02): `report:debtsAging` — تبويب جديد
+   - **4 بطاقات إحصاء** (`stats-grid`/`stat-card`، واحدة لكل شريحة عمرية: 0-30 / 31-60 / 61-90 / أكثر من 90 يوم) — كل بطاقة تعرض عدد الفواتير وإجمالي المتبقي في تلك الشريحة (محسوبة حياً من `debtsAging` عبر `.filter()`، بدون قناة IPC إضافية)
+   - **جدول واحد** لكل الديون المعلقة (زبائن صيانة + بيع مباشر + موردين معاً): الشريحة العمرية (badge: `mi-badge-green` 0-30 / `mi-badge-yellow` 31-60 / `mi-badge-orange` 61-90 / `mi-badge-red` 90+) | الطرف | النوع (badge: `mi-badge-orange` صيانة / `mi-badge-blue` بيع مباشر / `mi-badge-purple` مورد) | التاريخ | الإجمالي | المتبقي | عدد الأيام
+   - **ترتيب قابل للتبديل:** الضغط على رأس عمود "عدد الأيام" يبدّل بين تنازلي (▼، الأقدم أولاً، الافتراضي) وتصاعدي (▲) — فرز محلي (`useMemo` على `debtsAging` + `agingSort` state) دون إعادة استدعاء IPC
+   - لا إجراءات تعديل/حذف في هذا التبويب؛ التعديل/السداد يتم من صفحاته الأصلية (الصيانة/البيع المباشر/الموردين/الديون المعلقة) كما في تبويب "تقرير الديون"
 
-**تصدير CSV:** زر "⬇ تصدير CSV" يظهر في التبويبات (يومي/شهري/سنوي/ديون) دون تبويب أفضل الزبائن؛ يستدعي `exportToCsv()` من `src/utils/exportCsv.ts`
+**الطباعة:** زر "طباعة التقرير" يُنشئ HTML مناسب حسب التبويب الحالي ويستدعي `printPdf()` (يشمل تبويبي أفضل الزبائن وأعمار الديون)
+
+**تصدير CSV:** زر "⬇ تصدير CSV" يظهر في كل التبويبات ما عدا "أفضل الزبائن" (الشرط البرمجي `tab !== 'top_customers'`، لذا ظهر تلقائياً لتبويب "أعمار الديون" الجديد دون أي تعديل على شرط الإظهار)؛ يستدعي `exportToCsv()` من `src/utils/exportCsv.ts`
 
 ---
 
@@ -1282,6 +1328,8 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **قفل مؤقت متصاعد عند تجاوز محاولات كلمة السر** (5 محاولات → 30 ثانية ← دقيقة ← 5 دقائق، يصمد أمام إعادة التشغيل)
 - [x] **سجل نشاط** (`activity_log`) لكل عمليات التعديل/الحذف الحساسة — قراءة فقط في الإعدادات
 - [x] **ضمان atomic كامل لكل عمليات الكتابة المركّبة:** لفّ `maintenance:add/update` و`directSale:add/update` بـ transaction خارجي واحد يضمّ كتابة الفاتورة ومزامنة الكفالات معاً (بقية عمليات الكتابة المركّبة كانت ملفوفة بالفعل)
+- [x] **تقرير/تنبيه الشيكات المستحقة قريباً:** قناة `cheques:getUpcoming` (قراءة فقط بالكامل) + قسم جديد في `CashLedger.tsx` مع فلتر مدى 7/14/30 يوماً وتلوين حسب الإلحاح — بدون أي تعديل على بنية جداول الشيكات الأربعة الموجودة
+- [x] **تبويب "أعمار الديون" في Reports.tsx:** قناة `report:debtsAging` (قراءة فقط) تصنّف كل الديون المعلقة (زبائن + موردين) إلى 4 شرائح عمرية حسب تاريخ الفاتورة الأصلي، مع بطاقات إحصاء لكل شريحة، جدول موحّد قابل للفرز حسب عدد الأيام، وطباعة/تصدير CSV بنفس نمط بقية تبويبات Reports.tsx
 
 ### غير مكتمل / قيود معروفة
 
@@ -1389,7 +1437,7 @@ const dbPath = app.getPath('userData') + '/garage.db'
 
 ---
 
-*آخر تحديث: 2026-07-01*
+*آخر تحديث: 2026-07-02*
 *الإصدار الموثَّق: يشمل كل التعديلات حتى تاريخ كتابة هذا الملف*
 
 **تحديث 2026-07-01:** حُذفت صفحة "لوحة التحكم" (`src/pages/Home.tsx`) بالكامل — كانت شاشة تكرر إحصائيات موجودة أصلاً في CashLedger.tsx وReports.tsx وWarranties.tsx دون أن تضيف قيمة مستقلة. المسار الافتراضي `/` أصبح يُعيد التوجيه (`<Navigate>`) إلى `/cash-ledger`، وانخفض عدد روابط Sidebar من 13 إلى 12. الدوال `calcEndDate` و`daysRemaining` في `src/utils/warranty.ts` لم تُحذف لأنها لا تزال مستخدمة في `Warranties.tsx`.
@@ -1410,3 +1458,16 @@ const dbPath = app.getPath('userData') + '/garage.db'
 6. **تشفير قاعدة البيانات بالكامل (SQLCipher) أُجِّل عمداً** لمرحلة مستقلة لاحقة — راجع "غير مكتمل / قيود معروفة" أعلاه للتفاصيل والسبب.
 
 راجع التفاصيل الكاملة ضمن قسم "الأمان (`electron/auth.ts`)" في الـ Backend، وقسم "الأمان وكلمة السر" آخر الملف.
+
+**تحديث 2026-07-02 — تقرير/تنبيه الشيكات المستحقة قريباً:** ميزة قراءة فقط بالكامل، بدون أي تعديل على بنية أي جدول موجود ولا على أي قناة IPC أو سلوك سابق:
+1. **قناة IPC جديدة `cheques:getUpcoming(daysAhead?)`** (`electron/ipc-handlers.ts`) تستدعي `getUpcomingCheques(daysAhead)` من ملف جديد `src/db/cheques.ts` — UNION ALL لست جمل SELECT عبر جداول الشيكات الأربعة الموجودة أصلاً (`payment_cheque`, `debt_payment_cheque`, `supplier_payment_cheque`, `supplier_debt_cheque`) بالاعتماد فقط على حقل `cash_date` الموجود فيها، بدون أي `ALTER TABLE` أو migration.
+2. **أنواع جديدة:** `UpcomingChequeRow`/`UpcomingChequeKind` (DB، snake_case) في `src/db/types.ts`، و`UpcomingCheque`/`UpcomingChequeSource` (واجهة، camelCase) في `src/store/GarageContext.tsx` — مع دالة تحويل `dbRowToUpcomingCheque` جديدة في `dbMapper.ts` ودالة خدمة `dbService.cheques.getUpcoming` جديدة في `src/services/db.ts` (بنفس نمط `dbRowToSaleInvoice`/`dbRowToPurchaseInvoice` للعروض المجمّعة القراءة-فقط).
+3. **قسم جديد "الشيكات المستحقة قريباً"** في `src/pages/CashLedger.tsx` أسفل "سجل العمليات" مباشرة — فلتر مدى 7/14/30 يوماً بنفس تبويبات `pd-type-tabs`/`pd-tab` المستخدمة أصلاً في `PendingDebts.tsx`، وتلوين عمود "الأيام المتبقية" بنفس أصناف badge الموجودة (`mi-badge-red` ≤3 أيام، `mi-badge-yellow` ≤7 أيام، `mi-badge-green` غير ذلك) — لم تُضَف أي أصناف CSS جديدة في `App.css`/`index.css`.
+4. لا إجراءات تعديل/حذف في هذا القسم؛ التعديل على أي شيك يبقى من صفحته الأصلية (الصيانة/البيع المباشر/الموردين) كما كان.
+
+**تحديث 2026-07-02 (٢) — تبويب "أعمار الديون" في Reports.tsx:** ميزة قراءة فقط بالكامل، بدون أي تعديل على قنوات أو صفحات موجودة (بما فيها تبويب "تقرير الديون" الحالي، الذي بقي كما هو تماماً):
+1. **قناة IPC جديدة `report:debtsAging`** (`electron/ipc-handlers.ts`) تستدعي `getDebtsAging()` الجديدة في `src/db/reports.ts` — UNION ALL موحّد لثلاث جمل SELECT (maintenance_invoices + direct_sale_invoices + supplier_invoices، كلها WHERE amount_remaining > 0) في صف واحد لكل دين بدل مصفوفتين منفصلتين (خلافاً لـ `getDebtReport` الموجودة، التي بقيت بلا أي تعديل). `days_old` محسوب بفارق تقويمي صرف (`julianday(date('now','localtime')) - julianday(invoice_date)`، بنفس فلسفة `cheques.ts`/`warranty.ts`)، ثم يُصنَّف عبر دالة داخلية `agingBucket()` إلى 4 شرائح: `'0-30' | '31-60' | '61-90' | '90+'`.
+2. **أنواع جديدة في `src/db/types.ts`:** `DebtAgingRow`, `DebtAgingKind`, `DebtAgingBucket` — قراءة فقط، بلا نظير UI/دالة تحويل في `dbMapper.ts`/`GarageContext.tsx` (بنفس فلسفة `DebtReport`/`TopCustomer` الموجودتين، اللتين لا نظير UI لهما أيضاً)؛ الصفحة تستهلك النوع DB مباشرة.
+3. **`dbService.report.debtsAging()`** جديدة في `src/services/db.ts` (بجانب `daily`/`monthly`/`debts`/`topCustomers` في نفس الكائن `report`).
+4. **تبويب سادس "أعمار الديون"** في `src/pages/Reports.tsx` (`Tab` أصبح يشمل `'debts_aging'`) — 4 بطاقات `stat-card` لكل شريحة (عدد + إجمالي المتبقي، محسوبة محلياً بـ `.filter()` من نفس المصفوفة المحمّلة، بدون طلبات IPC إضافية)، وجدول واحد موحّد بعمود "الشريحة العمرية" (badge: أخضر/أصفر/برتقالي/أحمر لكل شريحة على الترتيب) وعمود "النوع" (badge: `mi-badge-orange`/`mi-badge-blue`/`mi-badge-purple`). الترتيب حسب "عدد الأيام" قابل للتبديل تصاعدي/تنازلي بالضغط على رأس العمود (تنازلي هو الافتراضي — الأقدم أولاً)، ويتم بالكامل في الواجهة (`useMemo` + state محلي `agingSort`) دون إعادة الجلب من القناة.
+5. **طباعة وتصدير CSV** لهذا التبويب أُضيفا بنفس نمط بقية التبويبات (`printPdf()`/`exportToCsv()`) — زر تصدير CSV ظهر تلقائياً دون أي تعديل على شرط إظهاره (`tab !== 'top_customers'`).

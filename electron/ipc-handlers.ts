@@ -33,7 +33,8 @@ import {
 } from '../src/db/expenses'
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
 import { getLedgerSummary, getLedgerByDateRange, recordLedgerEntry, REF } from '../src/db/ledger'
-import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers } from '../src/db/reports'
+import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers, getDebtsAging } from '../src/db/reports'
+import { getUpcomingCheques } from '../src/db/cheques'
 import {
   getAutoBackupSettings, updateAutoBackupSettings, getAutoBackupStatus,
   runAutoBackup, pickAutoBackupFolder,
@@ -306,16 +307,20 @@ export function registerIpcHandlers(db: DB): void {
   on('report:monthly', (month: number, year: number) => getMonthlyReport(month, year))
   on('report:debts', () => getDebtReport())
   on('report:topCustomers', (limit?: number) => getTopCustomers(limit ?? 10))
+  on('report:debtsAging', () => getDebtsAging())
+
+  /* ─────────────── الشيكات المستحقة قريباً (قراءة فقط) ─────────────── */
+  on('cheques:getUpcoming', (daysAhead?: number) => getUpcomingCheques(daysAhead ?? 14))
 
   /* ─────────────── فواتير البيع (عرض مجمّع: صيانة + بيع مباشر) ─────────────── */
   on('salesInvoice:getAll', () =>
     db.prepare(`
-      SELECT id, date_received AS date, 'maintenance' AS type, customer_name, customer_phone,
+      SELECT id, invoice_number, date_received AS date, 'maintenance' AS type, customer_name, customer_phone,
              total_amount, amount_paid, amount_remaining,
              car_plate, COALESCE(car_type,'') AS car_type, COALESCE(notes,'') AS details
         FROM maintenance_invoices
       UNION ALL
-      SELECT id, sale_date AS date, 'direct_sale' AS type, customer_name, customer_phone,
+      SELECT id, invoice_number, sale_date AS date, 'direct_sale' AS type, customer_name, customer_phone,
              total_amount, amount_paid, amount_remaining,
              '' AS car_plate, '' AS car_type, COALESCE(notes,'') AS details
         FROM direct_sale_invoices
@@ -325,17 +330,17 @@ export function registerIpcHandlers(db: DB): void {
   /* ─────────────── فواتير الشراء (عرض مجمّع: موردون + مصاريف + رواتب) ─────────────── */
   on('purchaseInvoice:getAll', () =>
     db.prepare(`
-      SELECT id, purchase_date AS date, 'supplier' AS type, supplier_name AS description,
+      SELECT id, invoice_number, purchase_date AS date, 'supplier' AS type, supplier_name AS description,
              supplier_phone AS phone, total_amount, amount_paid, amount_remaining,
              COALESCE(notes,'') AS details
         FROM supplier_invoices
       UNION ALL
-      SELECT id, expense_date AS date, 'expense' AS type, description,
+      SELECT id, NULL AS invoice_number, expense_date AS date, 'expense' AS type, description,
              NULL AS phone, amount AS total_amount, amount AS amount_paid, 0 AS amount_remaining,
              COALESCE(notes,'') AS details
         FROM daily_expenses
       UNION ALL
-      SELECT sp.id, sp.payment_date AS date, 'salary' AS type, ('راتب ' || e.name) AS description,
+      SELECT sp.id, NULL AS invoice_number, sp.payment_date AS date, 'salary' AS type, ('راتب ' || e.name) AS description,
              NULL AS phone, sp.amount AS total_amount, sp.amount AS amount_paid, 0 AS amount_remaining,
              COALESCE(sp.notes,'') AS details
         FROM salary_payments sp LEFT JOIN employees e ON e.id = sp.employee_id

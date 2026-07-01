@@ -74,7 +74,7 @@ const validatePhone   = (v: string) => v.trim() ? '' : 'رقم الهاتف مط
 const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 
 function applySectionFilters(
-  cars: CarRecord[], fuse: Fuse<{ _idx: number; customerName: string }>,
+  cars: CarRecord[], fuse: Fuse<{ _idx: number; customerName: string; invoiceNumber: string }>,
   search: string, phone: string, plate: string,
   from: string, to: string, amtMin: string, amtMax: string,
 ): CarRecord[] {
@@ -158,10 +158,10 @@ export default function MaintenanceInvoices() {
   const inProgressCars = useMemo(() => cars.filter(c => c.status === 'in_progress'), [cars])
   const deliveredCars  = useMemo(() => cars.filter(c => c.status === 'delivered'),   [cars])
 
-  const ipFuseItems = useMemo(() => inProgressCars.map((c, i) => ({ _idx: i, customerName: normalizeAr(c.customerName) })), [inProgressCars])
-  const ipFuse      = useMemo(() => new Fuse(ipFuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }), [ipFuseItems])
-  const dlFuseItems = useMemo(() => deliveredCars.map((c, i) => ({ _idx: i, customerName: normalizeAr(c.customerName) })), [deliveredCars])
-  const dlFuse      = useMemo(() => new Fuse(dlFuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }), [dlFuseItems])
+  const ipFuseItems = useMemo(() => inProgressCars.map((c, i) => ({ _idx: i, customerName: normalizeAr(c.customerName), invoiceNumber: normalizeAr(c.invoiceNumber ?? '') })), [inProgressCars])
+  const ipFuse      = useMemo(() => new Fuse(ipFuseItems, { keys: ['customerName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }), [ipFuseItems])
+  const dlFuseItems = useMemo(() => deliveredCars.map((c, i) => ({ _idx: i, customerName: normalizeAr(c.customerName), invoiceNumber: normalizeAr(c.invoiceNumber ?? '') })), [deliveredCars])
+  const dlFuse      = useMemo(() => new Fuse(dlFuseItems, { keys: ['customerName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }), [dlFuseItems])
 
   const filteredInProgress = useMemo(() => applySectionFilters(inProgressCars, ipFuse, ipSearch, ipPhone, ipPlate, ipFrom, ipTo, ipAmtMin, ipAmtMax), [inProgressCars, ipFuse, ipSearch, ipPhone, ipPlate, ipFrom, ipTo, ipAmtMin, ipAmtMax])
   const filteredDelivered  = useMemo(() => applySectionFilters(deliveredCars,  dlFuse, dlSearch, dlPhone, dlPlate, dlFrom, dlTo, dlAmtMin, dlAmtMax), [deliveredCars,  dlFuse, dlSearch, dlPhone, dlPlate, dlFrom, dlTo, dlAmtMin, dlAmtMax])
@@ -319,6 +319,7 @@ export default function MaintenanceInvoices() {
         </tr>`).join('')
       const body = `
         <div class="detail-grid">
+          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
           <div class="detail-item"><label>اسم الزبون</label><span>${full.customerName}</span></div>
           <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? full.phone : 'غير معروف'}</span></div>
           <div class="detail-item"><label>نمرة السيارة</label><span>${full.carPlate}</span></div>
@@ -343,7 +344,7 @@ export default function MaintenanceInvoices() {
           <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
           <tbody>${payRows}</tbody>
         </table>` : ''}`
-      printPdf('فاتورة صيانة', body)
+      printPdf(`فاتورة صيانة ${full.invoiceNumber || ''}`.trim(), body)
     } catch (err) {
       showError('تعذّر طباعة الفاتورة', err)
     }
@@ -519,16 +520,17 @@ export default function MaintenanceInvoices() {
           <table className="mi-table">
             <thead>
               <tr>
-                <th>اسم الزبون</th><th>نمرة السيارة</th><th>النوع</th><th>اللون</th>
+                <th>رقم الفاتورة</th><th>اسم الزبون</th><th>نمرة السيارة</th><th>النوع</th><th>اللون</th>
                 <th>تاريخ الاستلام</th><th>أيام في الكراج</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {filteredInProgress.length === 0 ? (
-                <tr><td colSpan={9} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
+                <tr><td colSpan={10} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
               ) : filteredInProgress.map((car, i) => (
                 <tr key={car.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsCar(car) }}>
+                  <td>{car.invoiceNumber || '—'}</td>
                   <td>{car.customerName}</td>
                   <td><span className="mi-plate">{car.carPlate}</span></td>
                   <td>{car.carType}</td>
@@ -562,16 +564,17 @@ export default function MaintenanceInvoices() {
           <table className="mi-table">
             <thead>
               <tr>
-                <th>اسم الزبون</th><th>نمرة السيارة</th><th>النوع</th><th>اللون</th>
+                <th>رقم الفاتورة</th><th>اسم الزبون</th><th>نمرة السيارة</th><th>النوع</th><th>اللون</th>
                 <th>تاريخ الاستلام</th><th>تاريخ التسليم</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {filteredDelivered.length === 0 ? (
-                <tr><td colSpan={9} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
+                <tr><td colSpan={10} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
               ) : filteredDelivered.map((car, i) => (
                 <tr key={car.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsCar(car) }}>
+                  <td>{car.invoiceNumber || '—'}</td>
                   <td>{car.customerName}</td>
                   <td><span className="mi-plate">{car.carPlate}</span></td>
                   <td>{car.carType}</td>
@@ -603,6 +606,7 @@ export default function MaintenanceInvoices() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-detail-grid">
+                <div className="mi-detail-item"><span className="mi-detail-label">رقم الفاتورة</span><strong>{detailsCar.invoiceNumber || '—'}</strong></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{detailsCar.customerName}</strong></div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">رقم الهاتف</span>

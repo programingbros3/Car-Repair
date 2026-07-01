@@ -5,12 +5,13 @@ import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type {
   DailyReport, MonthlyReport, DebtReport, LedgerRow, TopCustomer,
+  DebtAgingRow, DebtAgingBucket,
 } from '../db/types'
 
 /* ════════════════════════════════════════
    Types
 ════════════════════════════════════════ */
-type Tab = 'daily' | 'monthly' | 'yearly' | 'debts' | 'top_customers'
+type Tab = 'daily' | 'monthly' | 'yearly' | 'debts' | 'top_customers' | 'debts_aging'
 
 type YearlyReport = {
   year: number
@@ -53,6 +54,35 @@ const PERIOD_LABELS: Record<Tab, string> = {
   yearly:        'سنوي',
   debts:         'تقرير الديون',
   top_customers: 'أفضل الزبائن',
+  debts_aging:   'أعمار الديون',
+}
+
+const AGING_BUCKETS: DebtAgingBucket[] = ['0-30', '31-60', '61-90', '90+']
+
+const AGING_BUCKET_LABELS: Record<DebtAgingBucket, string> = {
+  '0-30':  '0-30 يوم',
+  '31-60': '31-60 يوم',
+  '61-90': '61-90 يوم',
+  '90+':   'أكثر من 90 يوم',
+}
+
+const AGING_BUCKET_CLS: Record<DebtAgingBucket, string> = {
+  '0-30':  'mi-badge-green',
+  '31-60': 'mi-badge-yellow',
+  '61-90': 'mi-badge-orange',
+  '90+':   'mi-badge-red',
+}
+
+const AGING_KIND_LABELS: Record<DebtAgingRow['kind'], string> = {
+  maintenance: 'صيانة',
+  direct_sale: 'بيع مباشر',
+  supplier:    'مورد',
+}
+
+const AGING_KIND_CLS: Record<DebtAgingRow['kind'], string> = {
+  maintenance: 'mi-badge-orange',
+  direct_sale: 'mi-badge-blue',
+  supplier:    'mi-badge-purple',
 }
 
 /* ════════════════════════════════════════
@@ -72,6 +102,8 @@ export default function Reports() {
   const [yearly, setYearly]           = useState<YearlyReport | null>(null)
   const [debts, setDebts]             = useState<DebtReport | null>(null)
   const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([])
+  const [debtsAging, setDebtsAging]   = useState<DebtAgingRow[]>([])
+  const [agingSort, setAgingSort]     = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading]         = useState(false)
 
   /* ── جلب التقرير المناسب عند تغيّر التبويب أو الفترة ── */
@@ -100,6 +132,8 @@ export default function Reports() {
         setYearly(agg)
       } else if (tab === 'debts') {
         setDebts(await dbService.report.debts())
+      } else if (tab === 'debts_aging') {
+        setDebtsAging(await dbService.report.debtsAging())
       } else {
         setTopCustomers(await dbService.report.topCustomers(20))
       }
@@ -109,6 +143,13 @@ export default function Reports() {
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [tab, day, month, year])
+
+  /* ── ترتيب أعمار الديون حسب عدد الأيام ── */
+  const sortedAging = useMemo(() => {
+    const arr = [...debtsAging]
+    arr.sort((a, b) => agingSort === 'desc' ? b.days_old - a.days_old : a.days_old - b.days_old)
+    return arr
+  }, [debtsAging, agingSort])
 
   /* ── Print report ── */
   const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
@@ -131,6 +172,35 @@ export default function Reports() {
         </table>
         <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · أفضل ${topCustomers.length} زبون</div>`
       printPdf('تقرير أفضل الزبائن', body)
+      return
+    }
+
+    if (tab === 'debts_aging') {
+      if (!sortedAging.length) return
+      const rows = sortedAging.map(d => `
+        <tr>
+          <td><span class="${AGING_BUCKET_CLS[d.bucket]}">${AGING_BUCKET_LABELS[d.bucket]}</span></td>
+          <td>${d.party_name}</td>
+          <td>${AGING_KIND_LABELS[d.kind]}</td>
+          <td>${d.invoice_date}</td>
+          <td>${fmt(d.total_amount)} ₪</td>
+          <td class="amount-out">${fmt(d.amount_remaining)} ₪</td>
+          <td style="text-align:center;">${d.days_old}</td>
+        </tr>`).join('')
+      const totalsRow = AGING_BUCKETS.map(b => {
+        const inBucket = sortedAging.filter(d => d.bucket === b)
+        const total = inBucket.reduce((s, d) => s + d.amount_remaining, 0)
+        return `<div class="detail-item"><label>${AGING_BUCKET_LABELS[b]}</label><span>${inBucket.length} فاتورة · ${fmt(total)} ₪</span></div>`
+      }).join('')
+      const body = `
+        <div class="detail-grid">${totalsRow}</div>
+        <h3 style="margin:16px 0 4px;color:#1E2A38;">تفصيل الديون</h3>
+        <table>
+          <thead><tr><th>الشريحة العمرية</th><th>الطرف</th><th>النوع</th><th>التاريخ</th><th>الإجمالي</th><th>المتبقي</th><th>الأيام</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        ${periodFooter}`
+      printPdf('تقرير أعمار الديون', body)
       return
     }
 
@@ -254,6 +324,21 @@ export default function Reports() {
         ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
         yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net]),
       )
+    } else if (tab === 'debts_aging') {
+      if (!sortedAging.length) return
+      exportToCsv(
+        `أعمار-الديون-${today()}.csv`,
+        ['الطرف', 'النوع', 'التاريخ', 'الإجمالي', 'المتبقي', 'عدد الأيام', 'الشريحة العمرية'],
+        sortedAging.map(d => [
+          d.party_name,
+          AGING_KIND_LABELS[d.kind],
+          d.invoice_date,
+          d.total_amount,
+          d.amount_remaining,
+          d.days_old,
+          AGING_BUCKET_LABELS[d.bucket],
+        ]),
+      )
     } else if (tab === 'debts') {
       if (!debts) return
       exportToCsv(
@@ -312,6 +397,7 @@ export default function Reports() {
           ['monthly',       'شهري'],
           ['yearly',        'سنوي'],
           ['debts',         'تقرير الديون'],
+          ['debts_aging',   'أعمار الديون'],
           ['top_customers', 'أفضل الزبائن'],
         ] as [Tab, string][]).map(([val, label]) => (
           <button
@@ -327,7 +413,7 @@ export default function Reports() {
       {/* ════════════════════════════════════════
           Period reports (daily / monthly / yearly)
       ════════════════════════════════════════ */}
-      {tab !== 'debts' && tab !== 'top_customers' && (
+      {tab !== 'debts' && tab !== 'top_customers' && tab !== 'debts_aging' && (
         <>
           {/* ── Date filter ── */}
           <div className="mi-card">
@@ -522,6 +608,70 @@ export default function Reports() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* ════════════════════════════════════════
+          Debts aging report
+      ════════════════════════════════════════ */}
+      {tab === 'debts_aging' && (
+        <>
+          {/* ── Bucket stat cards ── */}
+          <div className="stats-grid">
+            {AGING_BUCKETS.map(bucket => {
+              const inBucket = debtsAging.filter(d => d.bucket === bucket)
+              const total = inBucket.reduce((s, d) => s + d.amount_remaining, 0)
+              return (
+                <div className="stat-card" key={bucket}>
+                  <span className="stat-label">{AGING_BUCKET_LABELS[bucket]}</span>
+                  <span className="stat-value outgoing">{inBucket.length} فاتورة · {fmt(total)} ₪</span>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── All aging debts table ── */}
+          <div className="mi-card" style={{ marginTop: '1.5rem' }}>
+            <h2 className="mi-section-title">تفصيل الديون حسب العمر</h2>
+            <div className="mi-table-wrap">
+              <table className="mi-table">
+                <thead>
+                  <tr>
+                    <th>الشريحة العمرية</th>
+                    <th>الطرف</th>
+                    <th>النوع</th>
+                    <th>التاريخ</th>
+                    <th>الإجمالي</th>
+                    <th>المتبقي</th>
+                    <th
+                      style={{ cursor: 'pointer', userSelect: 'none' }}
+                      onClick={() => setAgingSort(s => s === 'desc' ? 'asc' : 'desc')}
+                      title="اضغط للترتيب"
+                    >
+                      عدد الأيام {agingSort === 'desc' ? '▼' : '▲'}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={7} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                  ) : sortedAging.length === 0 ? (
+                    <tr><td colSpan={7} className="mi-empty-row">لا توجد ديون معلقة</td></tr>
+                  ) : sortedAging.map((d, i) => (
+                    <tr key={`${d.kind}-${d.invoice_id}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                      <td><span className={AGING_BUCKET_CLS[d.bucket]}>{AGING_BUCKET_LABELS[d.bucket]}</span></td>
+                      <td>{d.party_name}</td>
+                      <td><span className={AGING_KIND_CLS[d.kind]}>{AGING_KIND_LABELS[d.kind]}</span></td>
+                      <td>{d.invoice_date}</td>
+                      <td className="mi-amount">{fmt(d.total_amount)} ₪</td>
+                      <td className="pd-remaining">{fmt(d.amount_remaining)} ₪</td>
+                      <td style={{ textAlign: 'center' }}>{d.days_old}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       {tab === 'debts' && (
