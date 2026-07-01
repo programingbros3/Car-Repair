@@ -40,7 +40,6 @@ export default function PasswordInput({
   onKeyDown,
 }: PasswordInputProps) {
   const [showPassword, setShowPassword] = useState(false)
-  const [capsLockOn, setCapsLockOn] = useState(false)
 
   return (
     <div className={`pwd-wrapper${className ? ` ${className}` : ''}`}>
@@ -49,8 +48,7 @@ export default function PasswordInput({
           type={showPassword ? 'text' : 'password'}
           value={value}
           onChange={e => onChange(e.target.value)}
-          onKeyDown={e => { setCapsLockOn(e.getModifierState('CapsLock')); onKeyDown?.(e) }}
-          onKeyUp={e => setCapsLockOn(e.getModifierState('CapsLock'))}
+          onKeyDown={onKeyDown}
           placeholder={placeholder}
           autoFocus={autoFocus}
           className={`pwd-input${inputClassName ? ` ${inputClassName}` : ''}`}
@@ -66,9 +64,6 @@ export default function PasswordInput({
           {showPassword ? <EyeOffIcon /> : <EyeIcon />}
         </button>
       </div>
-      {capsLockOn && (
-        <span className="pwd-capslock-warning">⚠ مفتاح Caps Lock مفعّل</span>
-      )}
     </div>
   )
 }

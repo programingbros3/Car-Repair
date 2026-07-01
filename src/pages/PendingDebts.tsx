@@ -115,6 +115,7 @@ export default function PendingDebts() {
   /* modals */
   const [detailsDebt, setDetailsDebt] = useState<DebtRecord | null>(null)
   const [deleteDebt,  setDeleteDebt]  = useState<DebtRecord | null>(null)
+  const [warnDebt,    setWarnDebt]    = useState<DebtRecord | null>(null)
 
   /* edit modal */
   const [editDebt,      setEditDebt]      = useState<DebtRecord | null>(null)
@@ -172,7 +173,15 @@ export default function PendingDebts() {
   const payExceedsDebt   = thisPaymentTotal > (payDebt?.amountRemaining ?? 0)
 
   /* ── Edit flow ── */
-  const openEdit = (debt: DebtRecord) => { setEditDebt(debt); setEditForm(debtToForm(debt)); setEditSubmitted(false) }
+  const doOpenEdit = (debt: DebtRecord) => { setEditDebt(debt); setEditForm(debtToForm(debt)); setEditSubmitted(false) }
+
+  const openEdit = (debt: DebtRecord) => setWarnDebt(debt)
+
+  const confirmEditDebt = () => {
+    if (!warnDebt) return
+    doOpenEdit(warnDebt)
+    setWarnDebt(null)
+  }
 
   const editNameErr  = editForm && !editForm.customerName.trim() ? 'اسم الزبون مطلوب' : ''
   const editPhoneErr = editForm && !editForm.phone.trim() ? 'رقم الهاتف مطلوب' : ''
@@ -571,6 +580,16 @@ export default function PendingDebts() {
             } catch (err) { showError('تعذّر حذف الدين', err) }
           }}
           onCancel={() => setDeleteDebt(null)}
+        />
+      )}
+
+      {/* ════ Confirm before edit ════ */}
+      {warnDebt && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل دين الزبون "${warnDebt.customerName}"؟`}
+          onConfirm={confirmEditDebt}
+          onCancel={() => setWarnDebt(null)}
         />
       )}
     </div>

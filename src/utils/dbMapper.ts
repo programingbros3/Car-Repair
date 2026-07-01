@@ -11,9 +11,8 @@
      • التواريخ:     نفس الصيغة YYYY-MM-DD (بلا تحويل)
 
    ملاحظات دقّة:
-     • InvoiceItemRow في types.ts لا يحوي warranty / part_type (موجودان في
-       المخطّط لكن غير ممثَّلَين في النوع)، لذا تُستخدم قيم افتراضية عند القراءة.
-     • InvoiceItemInput الآن يحوي warranty / part_type، فتُكتبان في DB.
+     • InvoiceItemInput وInvoiceItemRow كلاهما يحويان warranty / part_type
+       (موجودان في المخطّط ومُمثَّلَين بالنوعين)، فتُقرآن وتُكتبان في DB.
      • CarRecord لا يحمل دفعات؛ SaleRecord/SupplierRecord/DebtRecord تحملها،
        لذا تُمرَّر صفوف الدفعات كوسيط منفصل في اتجاه القراءة.
      • suppliers (الدليل) و warranties لا نظير لهما في types.ts بعد، فأُسقِطا.
@@ -146,13 +145,12 @@ export function carItemToDbInput(item: CarItem): InvoiceItemInput {
 
 /** InvoiceItemRow (DB) → CarItem (واجهة) */
 export function dbRowToCarItem(r: InvoiceItemRow): CarItem {
-  const raw = r as any
   return {
     name: r.item_name,
     quantity: r.quantity,
     unitPrice: r.unit_price,
-    warranty: raw.warranty ?? '',
-    partType: raw.part_type === 'service' ? 'service' : 'part',
+    warranty: r.warranty ?? '',
+    partType: r.part_type === 'service' ? 'service' : 'part',
     notes: r.notes ?? '',
   }
 }

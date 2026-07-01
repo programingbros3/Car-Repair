@@ -1,16 +1,15 @@
 import { NavLink } from 'react-router-dom'
 
 const navItems = [
-  { to: '/',                   icon: '🏠', label: 'الرئيسية'           },
   { to: '/cash-ledger',        icon: '🏦', label: 'الصندوق الرئيسي'   },
   { to: '/sales-invoices',     icon: '🧾', label: 'فواتير البيع'       },
-  { to: '/purchase-invoices',  icon: '📥', label: 'فواتير الشراء'      },
-  { to: '/maintenance',        icon: '🔧', label: 'سيارات الصيانة'    },
   { to: '/direct-sales',       icon: '🛒', label: 'البيع المباشر'     },
-  { to: '/pending-debts',      icon: '💰', label: 'الديون المعلقة'    },
-  { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
+  { to: '/maintenance',        icon: '🔧', label: 'سيارات الصيانة'    },
+  { to: '/purchase-invoices',  icon: '📥', label: 'فواتير الشراء'      },
   { to: '/suppliers',          icon: '🏪', label: 'الموردون'          },
+  { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
   { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
+  { to: '/pending-debts',      icon: '💰', label: 'الديون المعلقة'    },
   { to: '/warranties',         icon: '🛡️', label: 'الكفالات'           },
   { to: '/reports',            icon: '📊', label: 'التقارير'           },
   { to: '/settings',           icon: '⚙', label: 'الإعدادات'          },

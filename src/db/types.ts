@@ -44,6 +44,8 @@ export interface InvoiceItemRow {
   unit_price: number
   customer_owned: number
   notes: string | null
+  warranty?: string | null
+  part_type?: string | null
 }
 
 // ── Maintenance ───────────────────────────────────────────────────────────────
@@ -443,4 +445,47 @@ export interface PurchaseInvoiceRow {
   amount_paid: number
   amount_remaining: number
   details: string
+}
+
+// ── النسخ الاحتياطي التلقائي (autoBackup) — منفصل تماماً عن backup:export/backup:import ──
+
+export interface AutoBackupSettings {
+  enabled: boolean
+  folder: string | null
+  keepCount: number
+}
+
+export interface AutoBackupStatus {
+  lastRunAt: string | null
+  lastStatus: 'success' | 'failed' | null
+  lastError: string | null
+  lastSuccessAt: string | null
+}
+
+export interface AutoBackupRunResult {
+  success: boolean
+  filePath?: string
+  error?: string
+}
+
+// ── الأمان (auth) — كلمة السر، القفل عند تجاوز المحاولات، القفل التلقائي، سجل النشاط ──
+
+export interface PasswordVerifyResult {
+  valid: boolean
+  lockedUntil: number | null
+  attemptsRemaining: number
+}
+
+export interface AutoLockSettings {
+  enabled: boolean
+  minutes: number
+}
+
+export interface ActivityLogRow {
+  id: number
+  action_type: string
+  entity_type: string
+  entity_id: number | null
+  details: string | null
+  created_at: string
 }

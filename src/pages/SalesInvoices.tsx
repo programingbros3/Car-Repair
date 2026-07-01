@@ -156,7 +156,7 @@ export default function SalesInvoices() {
     if (amtMin)                 result = result.filter(i => i.total >= Number(amtMin))
     if (amtMax)                 result = result.filter(i => i.total <= Number(amtMax))
     return result
-  }, [salesInvoices, search, phoneSearch, typeFilter, statusFilter, filterFrom, filterTo, amtMin, amtMax, fuse])
+  }, [salesInvoices, search, phoneSearch, plateSearch, typeFilter, statusFilter, filterFrom, filterTo, amtMin, amtMax, fuse])
 
   const hasFilters = !!search.trim() || !!phoneSearch || !!plateSearch || typeFilter !== 'all' || statusFilter !== 'all'
     || !!filterFrom || !!filterTo || !!amtMin || !!amtMax

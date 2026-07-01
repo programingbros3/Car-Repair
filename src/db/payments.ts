@@ -6,8 +6,8 @@ import type { InvoiceType, PaymentInput, PendingDebt, DebtFilters } from './type
 
 function invoiceMeta(type: InvoiceType) {
   return type === 'maintenance'
-    ? { table: 'maintenance_invoices', label: 'صيانة' }
-    : { table: 'direct_sale_invoices', label: 'بيع مباشر' }
+    ? { table: 'maintenance_invoices', label: 'صيانة', refType: REF.MAINTENANCE_PAYMENT }
+    : { table: 'direct_sale_invoices', label: 'بيع مباشر', refType: REF.DIRECT_SALE_PAYMENT }
 }
 
 // ─── Day 3: Add payment to an existing invoice (not debt repayment) ───────────
@@ -20,7 +20,7 @@ export function addPayment(
   paymentDate: string,
 ): void {
   const db = getDB()
-  const { table, label } = invoiceMeta(invoiceType)
+  const { table, label, refType } = invoiceMeta(invoiceType)
 
   const run = db.transaction(() => {
     for (const p of payments) {
@@ -53,7 +53,7 @@ export function addPayment(
 
       recordLedgerEntry({
         transaction_date: paymentDate,
-        reference_type: REF.MAINTENANCE_PAYMENT,
+        reference_type: refType,
         reference_id: payId,
         amount_in: p.amount,
         amount_out: 0,

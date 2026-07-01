@@ -139,39 +139,6 @@ export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
   return run()
 }
 
-// ─── Day 2: Add item to existing invoice ─────────────────────────────────────
-
-export function addMaintenanceItem(invoiceId: number, item: InvoiceItemInput): void {
-  const db = getDB()
-
-  const run = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO invoice_items
-        (invoice_id, invoice_type, item_name, quantity, unit_price, customer_owned, notes)
-      VALUES (?, 'maintenance', ?, ?, ?, ?, ?)
-    `).run(
-      invoiceId,
-      item.item_name,
-      item.quantity,
-      item.unit_price,
-      item.customer_owned ? 1 : 0,
-      item.notes ?? null,
-    )
-
-    // Only items billable to customer affect the total
-    if (!item.customer_owned) {
-      const added = item.quantity * item.unit_price
-      db.prepare(`
-        UPDATE maintenance_invoices
-        SET total_amount = total_amount + ?, amount_remaining = amount_remaining + ?
-        WHERE id = ?
-      `).run(added, added, invoiceId)
-    }
-  })
-
-  run()
-}
-
 // ─── Day 2: Update invoice metadata ──────────────────────────────────────────
 
 export function updateMaintenanceInvoice(

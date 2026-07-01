@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { initDB, getDB } from '../src/database'
 import { registerIpcHandlers } from './ipc-handlers'
+import { maybeRunAutoBackupOnStartup, runAutoBackupOnQuit } from './auto-backup'
+import { ensurePasswordSeeded } from './auth'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -28,15 +30,10 @@ let win: BrowserWindow | null
 
 function createWindow() {
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    icon: path.join(process.env.VITE_PUBLIC, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
-  })
-
-  // Test active push message to Renderer-process.
-  win.webContents.on('did-finish-load', () => {
-    win?.webContents.send('main-process-message', (new Date).toLocaleString())
   })
 
   if (VITE_DEV_SERVER_URL) {
@@ -67,6 +64,12 @@ app.on('activate', () => {
 
 app.whenReady().then(() => {
   initDB()
+  ensurePasswordSeeded(getDB())
   registerIpcHandlers(getDB())
+  maybeRunAutoBackupOnStartup(getDB())
   createWindow()
+})
+
+app.on('before-quit', () => {
+  runAutoBackupOnQuit(getDB())
 })

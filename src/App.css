@@ -916,12 +916,6 @@
 }
 
 /* ══════════════════════════════════════
-   Extra stat value colors
-══════════════════════════════════════ */
-.stat-card .stat-value.cars-orange { color: #F39C12; }
-.stat-card .stat-value.debt-red    { color: #E74C3C; }
-
-/* ══════════════════════════════════════
    Extra badges
 ══════════════════════════════════════ */
 .mi-badge-green {
@@ -977,16 +971,6 @@
   padding: 0.25rem 0.65rem;
   border-radius: 20px;
   white-space: nowrap;
-}
-
-/* ══════════════════════════════════════
-   Home page — weekly ops table
-══════════════════════════════════════ */
-.home-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
-  gap: 1.25rem;
-  margin-top: 1.5rem;
 }
 
 /* ══════════════════════════════════════
@@ -1088,13 +1072,3 @@
   transition: color 0.15s;
 }
 .pwd-toggle-btn:hover { color: #333; }
-
-.pwd-capslock-warning {
-  font-size: 0.78rem;
-  color: #92400E;
-  background: #FEF3C7;
-  padding: 0.25rem 0.6rem;
-  border-radius: 4px;
-  margin-top: 0.3rem;
-  font-weight: 500;
-}

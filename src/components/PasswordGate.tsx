@@ -1,23 +1,55 @@
-import { useState } from 'react'
-import { APP_PASSWORD } from '../utils/auth'
+import { useEffect, useState } from 'react'
+import { dbService } from '../services/db'
 import PasswordInput from './PasswordInput'
 
 /* ════════════════════════════════════════
    PasswordGate — shown before the whole app
+   ────────────────────────────────────────
+   التحقق يتم عبر IPC (dbService.auth.verifyPassword) — كلمة السر تُقارَن
+   كـ hash في الـ main process، وليس محلياً في الـ Renderer.
 ════════════════════════════════════════ */
 type PasswordGateProps = { onUnlock: () => void }
 
 export default function PasswordGate({ onUnlock }: PasswordGateProps) {
-  const [password, setPassword] = useState('')
-  const [error, setError]       = useState('')
+  const [password, setPassword]     = useState('')
+  const [error, setError]           = useState('')
+  const [checking, setChecking]     = useState(false)
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null)
+  const [remainingSec, setRemainingSec] = useState(0)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (!lockedUntil) return
+    const tick = () => {
+      const secs = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000))
+      setRemainingSec(secs)
+      if (secs <= 0) setLockedUntil(null)
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [lockedUntil])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (password === APP_PASSWORD) {
-      setError('')
-      onUnlock()
-    } else {
-      setError('كلمة السر غير صحيحة')
+    if (checking || lockedUntil) return
+    setChecking(true)
+    try {
+      const result = await dbService.auth.verifyPassword(password)
+      if (result.valid) {
+        setError('')
+        onUnlock()
+        return
+      }
+      if (result.lockedUntil) {
+        setLockedUntil(result.lockedUntil)
+        setError('')
+      } else {
+        setError('كلمة السر غير صحيحة')
+      }
+    } catch {
+      setError('تعذّر التحقق من كلمة السر')
+    } finally {
+      setChecking(false)
     }
   }
 
@@ -34,7 +66,12 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
           inputStyle={{ ...inputBase, ...(error ? inputErr : undefined) }}
         />
         {error && <span style={errorText}>{error}</span>}
-        <button type="submit" style={button}>دخول</button>
+        {lockedUntil && (
+          <span style={errorText}>تم تجاوز عدد المحاولات المسموح — حاول مرة أخرى بعد {remainingSec} ثانية</span>
+        )}
+        <button type="submit" style={button} disabled={checking || !!lockedUntil}>
+          {checking ? 'جارٍ التحقق…' : 'دخول'}
+        </button>
       </form>
     </div>
   )

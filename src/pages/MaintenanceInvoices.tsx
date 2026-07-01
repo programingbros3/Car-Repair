@@ -21,7 +21,9 @@ function parseWarrantyJson(raw: string): { value: number; unit: WarrantyPeriodUn
   try {
     const w = JSON.parse(raw)
     if (w.value && w.unit) return { value: Number(w.value), unit: w.unit as WarrantyPeriodUnit }
-  } catch {}
+  } catch {
+    // ignore malformed warranty JSON
+  }
   return null
 }
 
@@ -130,7 +132,7 @@ export default function MaintenanceInvoices() {
   const [showForm, setShowForm]               = useState(false)
   const [editingCar, setEditingCar]           = useState<CarRecord | null>(null)
   const [form, setForm]                       = useState(emptyForm)
-  const [parts, setParts]                     = useState<FormPart[]>([newFormPart()])
+  const [parts, setParts]                     = useState<FormPart[]>([])
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
   /* modals */
@@ -207,7 +209,7 @@ export default function MaintenanceInvoices() {
             return { id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
               unitPrice: item.unitPrice, warrantyValue: w ? String(w.value) : '1', warrantyUnit: w ? w.unit : '' as WarrantyPeriodUnit | '', notes: item.notes }
           })
-        : [newFormPart()]
+        : []
       setParts(ep); setSubmitAttempted(false); setShowForm(true)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
@@ -215,8 +217,12 @@ export default function MaintenanceInvoices() {
     }
   }
 
-  const openEdit = (car: CarRecord) => {
-    if (car.status === 'delivered') { setWarnCar(car) } else { doOpenEdit(car) }
+  const openEdit = (car: CarRecord) => setWarnCar(car)
+
+  const confirmEditCar = () => {
+    if (!warnCar) return
+    doOpenEdit(warnCar)
+    setWarnCar(null)
   }
 
   /* Validation */
@@ -256,7 +262,7 @@ export default function MaintenanceInvoices() {
 
   const clearForm = () => {
     localStorage.removeItem(DRAFT_KEY); setShowForm(false); setSubmitAttempted(false)
-    setForm(emptyForm()); setParts([newFormPart()]); setEditingCar(null)
+    setForm(emptyForm()); setParts([]); setEditingCar(null)
   }
 
   /* Delivery modal */
@@ -490,7 +496,7 @@ export default function MaintenanceInvoices() {
                     </td>
                     <td><input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input" onChange={e => updatePart(part.id, 'notes', e.target.value)} /></td>
                     <td className="mi-td-center">
-                      <button className="btn btn-danger-sm" disabled={parts.length === 1} onClick={() => removePart(part.id)}>حذف</button>
+                      <button className="btn btn-danger-sm" onClick={() => removePart(part.id)}>حذف</button>
                     </td>
                   </tr>
                 ))}
@@ -661,31 +667,18 @@ export default function MaintenanceInvoices() {
         </div>
       )}
 
-      {/* ════ Warning Modal (before editing delivered car) ════ */}
+      {/* ════ Confirm before edit ════ */}
       {warnCar && (
-        <div className="mi-modal-overlay" onClick={() => setWarnCar(null)}>
-          <div className="mi-modal mi-modal-sm" onClick={e => e.stopPropagation()}>
-            <div className="mi-modal-header">
-              <h3>تأكيد التعديل</h3>
-              <button className="mi-modal-close" onClick={() => setWarnCar(null)}>✕</button>
-            </div>
-            <div className="mi-modal-body">
-              <div style={{ background: '#FEF3C7', border: '1px solid #F59E0B', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', color: '#92400E', fontSize: '0.92rem' }}>
-                هذه الفاتورة مكتملة (تم التسليم)، هل أنت متأكد من التعديل؟
-              </div>
-              <div className="mi-detail-grid" style={{ marginBottom: 0 }}>
-                <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{warnCar.customerName}</strong></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span><span className="mi-plate">{warnCar.carPlate}</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(warnCar.total)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">تاريخ التسليم</span><span>{warnCar.deliveredDate}</span></div>
-              </div>
-            </div>
-            <div className="mi-modal-footer">
-              <button className="btn btn-primary" onClick={() => { setWarnCar(null); doOpenEdit(warnCar) }}>تأكيد التعديل</button>
-              <button className="btn btn-ghost" onClick={() => setWarnCar(null)}>إلغاء</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={
+            warnCar.status === 'delivered'
+              ? `هذه الفاتورة مكتملة (تم التسليم) للزبون "${warnCar.customerName}" - نمرة السيارة ${warnCar.carPlate} - الإجمالي ${fmt(warnCar.total)} ₪ - تاريخ التسليم ${warnCar.deliveredDate}. هل أنت متأكد من رغبتك في التعديل؟`
+              : `هل أنت متأكد من رغبتك في تعديل فاتورة الصيانة للزبون "${warnCar.customerName}"؟`
+          }
+          onConfirm={confirmEditCar}
+          onCancel={() => setWarnCar(null)}
+        />
       )}
 
       {/* ════ Delivery Modal ════ */}

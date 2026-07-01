@@ -135,6 +135,7 @@ export default function Suppliers() {
   const [supForm,      setSupForm]      = useState(emptySupForm)
   const [supSubmitted, setSupSubmitted] = useState(false)
   const [deleteSupplier, setDeleteSupplier] = useState<Supplier | null>(null)
+  const [warnSupplier,   setWarnSupplier]   = useState<Supplier | null>(null)
 
   /* invoice form */
   const [showForm, setShowForm]               = useState(false)
@@ -209,11 +210,19 @@ export default function Suppliers() {
   ════════════════════════════════════════ */
   const setSupField = (field: string, value: string) => setSupForm(prev => ({ ...prev, [field]: value }))
 
-  const openSupEdit = (sup: Supplier) => {
+  const doOpenSupEdit = (sup: Supplier) => {
     setEditingSup(sup)
     setSupForm({ name: sup.name, phone: sup.phone, notes: sup.notes })
     setSupSubmitted(false)
     setShowSupForm(true)
+  }
+
+  const openSupEdit = (sup: Supplier) => setWarnSupplier(sup)
+
+  const confirmSupEdit = () => {
+    if (!warnSupplier) return
+    doOpenSupEdit(warnSupplier)
+    setWarnSupplier(null)
   }
 
   const supNameErr  = supForm.name.trim() ? '' : 'اسم المورد مطلوب'
@@ -276,14 +285,16 @@ export default function Suppliers() {
     setShowForm(true)
   }
 
-  /* ── Edit button click: warn if paid (amountRemaining === 0) ── */
+  /* ── Edit button click ── */
   const handleEditClick = (sup: SupplierRecord, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (sup.amountRemaining === 0) {
-      setWarnSup(sup)
-    } else {
-      doOpenEdit(sup)
-    }
+    setWarnSup(sup)
+  }
+
+  const confirmEditSup = () => {
+    if (!warnSup) return
+    doOpenEdit(warnSup)
+    setWarnSup(null)
   }
 
   /* ── Validation ── */
@@ -826,39 +837,18 @@ export default function Suppliers() {
         </div>
       )}
 
-      {/* ════ Warning Modal (before editing paid invoice) ════ */}
+      {/* ════ Confirm before invoice edit ════ */}
       {warnSup && (
-        <div className="mi-modal-overlay" onClick={() => setWarnSup(null)}>
-          <div className="mi-modal" onClick={e => e.stopPropagation()}>
-            <div className="mi-modal-header mi-modal-warn-header">
-              <h3>⚠️ تعديل فاتورة مدفوعة</h3>
-              <button className="mi-modal-close" onClick={() => setWarnSup(null)}>✕</button>
-            </div>
-            <div className="mi-modal-body">
-              <div className="mi-warn-banner">
-                هذه الفاتورة مدفوعة بالكامل. هل أنت متأكد من رغبتك في التعديل؟
-              </div>
-              <div className="mi-detail-grid">
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">اسم المورد</span>
-                  <strong>{warnSup.supplierName}</strong>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">تاريخ الشراء</span>
-                  <span>{warnSup.purchaseDate}</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">الإجمالي</span>
-                  <span className="mi-amount">{fmt(warnSup.total)} ₪</span>
-                </div>
-              </div>
-            </div>
-            <div className="mi-modal-footer">
-              <button className="btn btn-danger" onClick={() => { doOpenEdit(warnSup); setWarnSup(null) }}>تأكيد التعديل</button>
-              <button className="btn btn-ghost" onClick={() => setWarnSup(null)}>إلغاء</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={
+            warnSup.amountRemaining === 0
+              ? `هذه الفاتورة مدفوعة بالكامل — المورد "${warnSup.supplierName}" - تاريخ الشراء ${warnSup.purchaseDate} - الإجمالي ${fmt(warnSup.total)} ₪. هل أنت متأكد من رغبتك في التعديل؟`
+              : `هل أنت متأكد من رغبتك في تعديل فاتورة المورد "${warnSup.supplierName}"؟`
+          }
+          onConfirm={confirmEditSup}
+          onCancel={() => setWarnSup(null)}
+        />
       )}
 
       {/* ════ Debt Payment Modal ════ */}
@@ -997,6 +987,16 @@ export default function Suppliers() {
             catch (err) { showError('تعذّر حذف فاتورة المورد', err) }
           }}
           onCancel={() => setDeleteSup(null)}
+        />
+      )}
+
+      {/* ════ Confirm before supplier edit ════ */}
+      {warnSupplier && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل بيانات المورد "${warnSupplier.name}"؟`}
+          onConfirm={confirmSupEdit}
+          onCancel={() => setWarnSupplier(null)}
         />
       )}
     </div>

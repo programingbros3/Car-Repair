@@ -59,7 +59,6 @@ export default function Warranties() {
   const { warranties, reload } = useGarage()
 
   /* form */
-  const [showForm, setShowForm]               = useState(false)
   const [editingWarranty, setEditingWarranty] = useState<WarrantyRecord | null>(null)
   const [form, setForm]                       = useState<FormState>(emptyForm)
   const [submitAttempted, setSubmitAttempted] = useState(false)
@@ -67,6 +66,7 @@ export default function Warranties() {
   /* modals */
   const [detailsWarranty, setDetailsWarranty] = useState<WarrantyRecord | null>(null)
   const [deleteWarranty,  setDeleteWarranty]  = useState<WarrantyRecord | null>(null)
+  const [warnWarranty,    setWarnWarranty]    = useState<WarrantyRecord | null>(null)
 
   /* filters */
   const [search,      setSearch]      = useState('')
@@ -114,14 +114,21 @@ export default function Warranties() {
   /* ── Form helpers ── */
   const setField = (f: keyof FormState, v: string) => setForm(prev => ({ ...prev, [f]: v }))
 
-  const openEdit = (w: WarrantyRecord) => {
+  const doOpenEdit = (w: WarrantyRecord) => {
     setEditingWarranty(w)
     setForm({
       customerName: w.customerName, phone: w.phone, carPlate: w.carPlate, itemName: w.itemName,
       startDate: w.startDate, periodValue: String(w.periodValue), periodUnit: w.periodUnit, notes: w.notes,
     })
     setSubmitAttempted(false)
-    setShowForm(true)
+  }
+
+  const openEdit = (w: WarrantyRecord) => setWarnWarranty(w)
+
+  const confirmEditWarranty = () => {
+    if (!warnWarranty) return
+    doOpenEdit(warnWarranty)
+    setWarnWarranty(null)
   }
 
   /* ── Validation ── */
@@ -132,20 +139,19 @@ export default function Warranties() {
 
   const handleSave = async () => {
     setSubmitAttempted(true)
-    if (hasErrors) return
+    if (hasErrors || !editingWarranty) return
     const periodValue = Math.max(1, Number(form.periodValue) || 1)
     const carPlate = form.carPlate.trim()
     const warrantyData: WarrantyRecord = {
-      id: editingWarranty?.id ?? 0,
-      source: editingWarranty?.source ?? (carPlate ? 'maintenance' : 'direct_sale'),
-      sourceId: editingWarranty?.sourceId ?? 0,
+      id: editingWarranty.id,
+      source: editingWarranty.source,
+      sourceId: editingWarranty.sourceId,
       customerName: form.customerName, phone: form.phone.trim(), carPlate,
       itemName: form.itemName, startDate: form.startDate, periodValue,
       periodUnit: form.periodUnit, notes: form.notes,
     }
     try {
-      if (editingWarranty) await dbService.warranty.update(warrantyData)
-      else                 await dbService.warranty.add(warrantyData)
+      await dbService.warranty.update(warrantyData)
       await reload()
       clearForm()
     } catch (err) {
@@ -154,7 +160,7 @@ export default function Warranties() {
   }
 
   const clearForm = () => {
-    setShowForm(false); setSubmitAttempted(false); setForm(emptyForm()); setEditingWarranty(null)
+    setSubmitAttempted(false); setForm(emptyForm()); setEditingWarranty(null)
   }
 
   const showErr = (msg: string) => submitAttempted && msg ? <span className="mi-err">{msg}</span> : null
@@ -241,27 +247,10 @@ export default function Warranties() {
     <div>
       <div className="page-header mi-page-header">
         <h1 className="page-title">الكفالات</h1>
-        {!showForm && (
-          <button className="btn btn-primary" onClick={() => { setEditingWarranty(null); setForm(emptyForm()); setSubmitAttempted(false); setShowForm(true) }}>
-            + إضافة كفالة
-          </button>
-        )}
       </div>
 
-      {/* ════ Add Form (inline) ════ */}
-      {showForm && !editingWarranty && (
-        <div className="mi-card mi-form-card">
-          <h2 className="mi-section-title">بيانات الكفالة</h2>
-          {formBody}
-          <div className="mi-form-actions">
-            <button className="btn btn-primary" onClick={handleSave}>حفظ الكفالة</button>
-            <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
-          </div>
-        </div>
-      )}
-
       {/* ════ Edit Modal ════ */}
-      {showForm && editingWarranty && (
+      {editingWarranty && (
         <div className="mi-modal-overlay" onClick={clearForm}>
           <div className="mi-modal" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
@@ -276,18 +265,6 @@ export default function Warranties() {
           </div>
         </div>
       )}
-
-      {/* ════ Stats ════ */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <span className="stat-label">الكفالات السارية</span>
-          <span className="stat-value incoming">{fmt(activeWarranties.length)}</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-label">الكفالات المنتهية</span>
-          <span className="stat-value outgoing">{fmt(expiredWarranties.length)}</span>
-        </div>
-      </div>
 
       {/* ════ Filters ════ */}
       <div className="mi-card">
@@ -465,6 +442,16 @@ export default function Warranties() {
             catch (err) { showError('تعذّر حذف الكفالة', err) }
           }}
           onCancel={() => setDeleteWarranty(null)}
+        />
+      )}
+
+      {/* ════ Confirm before edit ════ */}
+      {warnWarranty && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل كفالة "${warnWarranty.itemName}" للزبون "${warnWarranty.customerName}"؟`}
+          onConfirm={confirmEditWarranty}
+          onCancel={() => setWarnWarranty(null)}
         />
       )}
     </div>

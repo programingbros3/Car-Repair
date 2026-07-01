@@ -16,7 +16,7 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 
 import {
-  addMaintenanceInvoice, addMaintenanceItem, updateMaintenanceInvoice,
+  addMaintenanceInvoice, updateMaintenanceInvoice,
   releaseMaintenanceCar, getMaintenanceInvoices, getMaintenanceInvoice, getCarHistory,
 } from '../src/db/maintenance'
 import {
@@ -34,18 +34,25 @@ import {
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
 import { getLedgerSummary, getLedgerByDateRange, recordLedgerEntry, REF } from '../src/db/ledger'
 import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers } from '../src/db/reports'
+import {
+  getAutoBackupSettings, updateAutoBackupSettings, getAutoBackupStatus,
+  runAutoBackup, pickAutoBackupFolder,
+} from './auto-backup'
+import {
+  verifyPassword, changePassword, getLockoutStatus,
+  getAutoLockSettings, updateAutoLockSettings,
+  logActivity, getActivityLog,
+} from './auth'
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
   PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput,
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
   DailyExpenseInput, EmployeeInput, SalaryInput,
-  SupplierDirectoryInput, WarrantyInput,
+  SupplierDirectoryInput, WarrantyInput, AutoLockSettings,
 } from '../src/db/types'
 
 type DB = Database.Database
-
-const today = () => new Date().toISOString().slice(0, 10)
 
 /* ── مزامنة الكفالات مع جدول warranties عند حفظ الفواتير ── */
 function syncWarrantiesForMaintenance(db: DB, invoiceId: number): void {
@@ -128,21 +135,22 @@ export function registerIpcHandlers(db: DB): void {
   on('maintenance:getAll', (filters?: MaintenanceFilters) => getMaintenanceInvoices(filters ?? {}))
   on('maintenance:getOne', (id: number) => getMaintenanceInvoice(id))
   on('maintenance:history', (carPlate: string) => getCarHistory(carPlate))
-  on('maintenance:add', (input: MaintenanceInvoiceInput) => {
+  on('maintenance:add', (input: MaintenanceInvoiceInput) => db.transaction(() => {
     const id = addMaintenanceInvoice(input)
     syncWarrantiesForMaintenance(db, id)
     return id
-  })
+  })())
   on('maintenance:update', (id: number, updates: {
     customer_name?: string; customer_phone?: string; car_plate?: string
     car_type?: string; car_color?: string; date_received?: string
     warranty?: string; notes?: string; items?: InvoiceItemInput[]
   }) => {
-    updateMaintenanceInvoice(id, updates)
-    syncWarrantiesForMaintenance(db, id)
+    db.transaction(() => {
+      updateMaintenanceInvoice(id, updates)
+      syncWarrantiesForMaintenance(db, id)
+    })()
+    logActivity(db, 'update', 'maintenance_invoice', id, `تعديل فاتورة صيانة #${id}${updates.customer_name ? ` — ${updates.customer_name}` : ''}`)
   })
-  on('maintenance:addItem', (invoiceId: number, item: InvoiceItemInput) =>
-    addMaintenanceItem(invoiceId, item))
   on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[] }) =>
     releaseMaintenanceCar(input))
   on('maintenance:delete', (id: number) => {
@@ -157,25 +165,29 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM warranties WHERE source='maintenance' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM maintenance_invoices WHERE id=?`).run(id)
     })()
+    logActivity(db, 'delete', 'maintenance_invoice', id, `حذف فاتورة صيانة #${id}`)
     return { id }
   })
 
   /* ─────────────── البيع المباشر ─────────────── */
   on('directSale:getAll', (filters?: DirectSaleFilters) => getDirectSaleInvoices(filters ?? {}))
   on('directSale:getOne', (id: number) => getDirectSaleInvoice(id))
-  on('directSale:add', (input: DirectSaleInput) => {
+  on('directSale:add', (input: DirectSaleInput) => db.transaction(() => {
     const id = addDirectSaleInvoice(input)
     syncWarrantiesForDirectSale(db, id)
     return id
-  })
+  })())
   on('directSale:update', (id: number, input: DirectSaleInput) => {
-    db.prepare(
-      `UPDATE direct_sale_invoices SET customer_name=?, customer_phone=?, sale_date=?, warranty=?, notes=? WHERE id=?`,
-    ).run(
-      input.customer_name, input.customer_phone ?? null, input.sale_date,
-      input.warranty ?? null, input.notes ?? null, id,
-    )
-    syncWarrantiesForDirectSale(db, id)
+    db.transaction(() => {
+      db.prepare(
+        `UPDATE direct_sale_invoices SET customer_name=?, customer_phone=?, sale_date=?, warranty=?, notes=? WHERE id=?`,
+      ).run(
+        input.customer_name, input.customer_phone ?? null, input.sale_date,
+        input.warranty ?? null, input.notes ?? null, id,
+      )
+      syncWarrantiesForDirectSale(db, id)
+    })()
+    logActivity(db, 'update', 'direct_sale_invoice', id, `تعديل فاتورة بيع مباشر #${id} — ${input.customer_name}`)
   })
   on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[]) =>
     updateDirectSaleItems(invoiceId, items))
@@ -193,6 +205,7 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM warranties WHERE source='direct_sale' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM direct_sale_invoices WHERE id=?`).run(id)
     })()
+    logActivity(db, 'delete', 'direct_sale_invoice', id, `حذف فاتورة بيع مباشر #${id}`)
     return { id }
   })
 
@@ -204,6 +217,7 @@ export function registerIpcHandlers(db: DB): void {
     db.prepare(
       `UPDATE supplier_invoices SET supplier_name=?, supplier_phone=?, purchase_date=?, notes=? WHERE id=?`,
     ).run(input.supplier_name, input.supplier_phone ?? null, input.purchase_date, input.notes ?? null, id)
+    logActivity(db, 'update', 'supplier_invoice', id, `تعديل فاتورة مورد #${id} — ${input.supplier_name}`)
   })
   on('supplierInvoice:addPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
     addSupplierPayment(invoiceId, payments, date))
@@ -219,6 +233,7 @@ export function registerIpcHandlers(db: DB): void {
       clearLedgerForPayments(db, [REF.SUPPLIER_DEBT], debtIds)
       db.prepare(`DELETE FROM supplier_invoices WHERE id=?`).run(id) // FK cascade للعناصر والدفعات
     })()
+    logActivity(db, 'delete', 'supplier_invoice', id, `حذف فاتورة مورد #${id}`)
     return { id }
   })
 
@@ -236,21 +251,27 @@ export function registerIpcHandlers(db: DB): void {
         reference_id: id, amount_in: 0, amount_out: input.amount, notes: input.description,
       })
     })()
+    logActivity(db, 'update', 'daily_expense', id, `تعديل مصروف #${id} — ${input.description}`)
   })
   on('expense:delete', (id: number) => {
     db.transaction(() => {
       db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.DAILY_EXPENSE, id)
       db.prepare(`DELETE FROM daily_expenses WHERE id=?`).run(id)
     })()
+    logActivity(db, 'delete', 'daily_expense', id, `حذف مصروف #${id}`)
     return { id }
   })
 
   /* ─────────────── الموظفون ─────────────── */
   on('employee:getAll', () => getEmployees())
   on('employee:add', (input: EmployeeInput) => addEmployee(input))
-  on('employee:update', (id: number, input: EmployeeInput) => updateEmployee(id, input))
+  on('employee:update', (id: number, input: EmployeeInput) => {
+    updateEmployee(id, input)
+    logActivity(db, 'update', 'employee', id, `تعديل بيانات موظف #${id} — ${input.name}`)
+  })
   on('employee:delete', (id: number) => {
     db.prepare(`DELETE FROM employees WHERE id=?`).run(id)
+    logActivity(db, 'delete', 'employee', id, `حذف موظف #${id}`)
     return { id }
   })
 
@@ -258,12 +279,16 @@ export function registerIpcHandlers(db: DB): void {
   on('salary:getAll', () => getAllSalaries())
   on('salary:getByEmployee', (employeeId: number) => getSalaryHistory(employeeId))
   on('salary:add', (employeeId: number, input: SalaryInput) => addSalaryPayment(employeeId, input))
-  on('salary:update', (id: number, input: SalaryInput) => updateSalaryPayment(id, input))
+  on('salary:update', (id: number, input: SalaryInput) => {
+    updateSalaryPayment(id, input)
+    logActivity(db, 'update', 'salary_payment', id, `تعديل دفعة راتب #${id}`)
+  })
   on('salary:delete', (id: number) => {
     db.transaction(() => {
       db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.SALARY, id)
       db.prepare(`DELETE FROM salary_payments WHERE id=?`).run(id)
     })()
+    logActivity(db, 'delete', 'salary_payment', id, `حذف دفعة راتب #${id}`)
     return { id }
   })
 
@@ -329,9 +354,11 @@ export function registerIpcHandlers(db: DB): void {
     db.prepare(`UPDATE suppliers SET name=?, phone=?, notes=? WHERE id=?`).run(
       input.name, input.phone ?? null, input.notes ?? null, id,
     )
+    logActivity(db, 'update', 'supplier_directory', id, `تعديل مورد #${id} — ${input.name}`)
   })
   on('suppliers:delete', (id: number) => {
     db.prepare(`DELETE FROM suppliers WHERE id=?`).run(id)
+    logActivity(db, 'delete', 'supplier_directory', id, `حذف مورد #${id}`)
     return { id }
   })
 
@@ -354,18 +381,6 @@ export function registerIpcHandlers(db: DB): void {
 
   /* ─────────────── الكفالات ─────────────── */
   on('warranty:getAll', () => db.prepare(`SELECT * FROM warranties ORDER BY start_date DESC, id DESC`).all())
-  on('warranty:add', (input: WarrantyInput) => {
-    const info = db.prepare(`
-      INSERT INTO warranties
-        (source, source_id, customer_name, customer_phone, car_plate, item_name, start_date, period_value, period_unit, notes)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(
-      input.source, input.source_id, input.customer_name, input.customer_phone ?? null,
-      input.car_plate ?? null, input.item_name, input.start_date ?? today(),
-      input.period_value, input.period_unit, input.notes ?? null,
-    )
-    return Number(info.lastInsertRowid)
-  })
   on('warranty:update', (id: number, input: WarrantyInput) => {
     db.prepare(`
       UPDATE warranties SET
@@ -377,9 +392,11 @@ export function registerIpcHandlers(db: DB): void {
       input.car_plate ?? null, input.item_name, input.start_date,
       input.period_value, input.period_unit, input.notes ?? null, id,
     )
+    logActivity(db, 'update', 'warranty', id, `تعديل كفالة #${id} — ${input.customer_name}`)
   })
   on('warranty:delete', (id: number) => {
     db.prepare(`DELETE FROM warranties WHERE id=?`).run(id)
+    logActivity(db, 'delete', 'warranty', id, `حذف كفالة #${id}`)
     return { id }
   })
 
@@ -460,4 +477,29 @@ export function registerIpcHandlers(db: DB): void {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }
   })
+
+  /* ─────────────── النسخ الاحتياطي التلقائي (منفصل تماماً عن backup:export/backup:import أعلاه) ─────────────── */
+  on('autoBackup:getSettings', () => getAutoBackupSettings(db))
+  on('autoBackup:updateSettings', (updates: Partial<{ enabled: boolean; folder: string | null; keepCount: number }>) =>
+    updateAutoBackupSettings(db, updates))
+  on('autoBackup:runNow', () => runAutoBackup(db))
+  on('autoBackup:getStatus', () => getAutoBackupStatus(db))
+
+  ipcMain.handle('autoBackup:pickFolder', async () => {
+    try {
+      const folder = await pickAutoBackupFolder()
+      return { success: true, data: folder }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  /* ─────────────── الأمان: كلمة السر / القفل عند تجاوز المحاولات / القفل التلقائي / سجل النشاط ─────────────── */
+  on('auth:verifyPassword', (password: string) => verifyPassword(db, password))
+  on('auth:changePassword', (oldPassword: string, newPassword: string) => changePassword(db, oldPassword, newPassword))
+  on('auth:getLockoutStatus', () => getLockoutStatus(db))
+  on('auth:getAutoLockSettings', () => getAutoLockSettings(db))
+  on('auth:updateAutoLockSettings', (updates: Partial<AutoLockSettings>) => updateAutoLockSettings(db, updates))
+
+  on('activityLog:getAll', (limit?: number) => getActivityLog(db, limit))
 }

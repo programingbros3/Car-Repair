@@ -20,7 +20,7 @@
 ════════════════════════════════════════════════════════════════════════ */
 
 import type {
-  CarRecord, CarItem,
+  CarRecord,
   SaleRecord, SaleItem,
   SupplierRecord,
   Expense, Employee, SalaryRecord,
@@ -41,10 +41,12 @@ import type {
   SupplierDirectoryRow, WarrantyRow,
   SaleInvoiceRow, PurchaseInvoiceRow,
   CashAuditRow, CashAuditInput,
+  AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
+  PasswordVerifyResult, AutoLockSettings, ActivityLogRow,
 } from '../db/types'
 
 import {
-  carToDbInput, carToUpdateInput, dbRowToCarRecord, carItemToDbInput,
+  carToDbInput, carToUpdateInput, dbRowToCarRecord,
   saleToDbInput, saleItemToDbInput, dbRowToSaleRecord,
   supplierToDbInput, dbRowToSupplierRecord,
   expenseToDbInput, dbRowToExpense,
@@ -96,9 +98,6 @@ export const dbService = {
 
     update: (car: CarRecord) =>
       invoke<void>('maintenance:update', car.id, carToUpdateInput(car)),
-
-    addItem: (invoiceId: number, item: CarItem) =>
-      invoke<void>('maintenance:addItem', invoiceId, carItemToDbInput(item)),
 
     deliver: (invoiceId: number, date: string, payments: PaymentRow[] = []) =>
       invoke<void>('maintenance:deliver', {
@@ -243,8 +242,6 @@ export const dbService = {
   warranty: {
     getAll: () => invoke<WarrantyRow[]>('warranty:getAll').then(rows => rows.map(dbRowToWarranty)),
 
-    add: (w: WarrantyRecord) => invoke<number>('warranty:add', warrantyToDbInput(w)),
-
     update: (w: WarrantyRecord) => invoke<void>('warranty:update', w.id, warrantyToDbInput(w)),
 
     delete: (id: number) => invoke<void>('warranty:delete', id),
@@ -296,6 +293,33 @@ export const dbService = {
   backup: {
     export: () => invoke<string | null>('backup:export'),
     import: () => invoke<null>('backup:import'),
+  },
+
+  /* ─────────────── النسخ الاحتياطي التلقائي (منفصل تماماً عن backup أعلاه) ─────────────── */
+  autoBackup: {
+    getSettings: () => invoke<AutoBackupSettings>('autoBackup:getSettings'),
+    updateSettings: (updates: Partial<AutoBackupSettings>) =>
+      invoke<AutoBackupSettings>('autoBackup:updateSettings', updates),
+    runNow: () => invoke<AutoBackupRunResult>('autoBackup:runNow'),
+    getStatus: () => invoke<AutoBackupStatus>('autoBackup:getStatus'),
+    pickFolder: () => invoke<string | null>('autoBackup:pickFolder'),
+  },
+
+  /* ─────────────── الأمان: كلمة السر / القفل عند تجاوز المحاولات / القفل التلقائي ─────────────── */
+  auth: {
+    verifyPassword: (password: string) => invoke<PasswordVerifyResult>('auth:verifyPassword', password),
+    changePassword: (oldPassword: string, newPassword: string) =>
+      invoke<void>('auth:changePassword', oldPassword, newPassword),
+    getLockoutStatus: () =>
+      invoke<{ lockedUntil: number | null; attemptsRemaining: number }>('auth:getLockoutStatus'),
+    getAutoLockSettings: () => invoke<AutoLockSettings>('auth:getAutoLockSettings'),
+    updateAutoLockSettings: (updates: Partial<AutoLockSettings>) =>
+      invoke<AutoLockSettings>('auth:updateAutoLockSettings', updates),
+  },
+
+  /* ─────────────── سجل النشاط (قراءة فقط) ─────────────── */
+  activityLog: {
+    getAll: (limit?: number) => invoke<ActivityLogRow[]>('activityLog:getAll', limit),
   },
 }
 

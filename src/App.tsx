@@ -1,9 +1,9 @@
-import { useState } from 'react'
-import { HashRouter, Routes, Route } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { GarageProvider, useGarage } from './store/GarageContext'
+import { useAutoLock } from './utils/useAutoLock'
 import PasswordGate from './components/PasswordGate'
 import Sidebar from './components/Sidebar'
-import Home from './pages/Home'
 import CashLedger from './pages/CashLedger'
 import MaintenanceInvoices from './pages/MaintenanceInvoices'
 import DirectSales from './pages/DirectSales'
@@ -36,7 +36,7 @@ function AppShell() {
         <Sidebar />
         <main className="main-content">
           <Routes>
-            <Route path="/"                   element={<Home />} />
+            <Route path="/"                   element={<Navigate to="/cash-ledger" replace />} />
             <Route path="/cash-ledger"        element={<CashLedger />} />
             <Route path="/sales-invoices"     element={<SalesInvoices />} />
             <Route path="/purchase-invoices"  element={<PurchaseInvoices />} />
@@ -58,6 +58,9 @@ function AppShell() {
 
 export default function App() {
   const [isUnlocked, setIsUnlocked] = useState(false)
+  const lock = useCallback(() => setIsUnlocked(false), [])
+
+  useAutoLock(isUnlocked, lock)
 
   if (!isUnlocked) return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
 

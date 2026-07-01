@@ -31,7 +31,9 @@ function parseWarrantyJsonDS(raw: string | null | undefined): { value: number; u
   try {
     const w = JSON.parse(raw)
     if (w.value && w.unit) return { value: Number(w.value), unit: w.unit as WarrantyPeriodUnit }
-  } catch {}
+  } catch {
+    // ignore malformed warranty JSON
+  }
   return null
 }
 
@@ -113,6 +115,7 @@ export default function DirectSales() {
   const [payDate,        setPayDate]        = useState(today())
   const [payNotes,       setPayNotes]       = useState('')
   const [deleteInvoice,  setDeleteInvoice]  = useState<SaleRecord | null>(null)
+  const [warnInv,        setWarnInv]        = useState<SaleRecord | null>(null)
   const [formPayRows,    setFormPayRows]    = useState<PaymentRow[]>([emptyPayRow()])
 
   /* Draft */
@@ -153,7 +156,7 @@ export default function DirectSales() {
   const updateItem = (id: number, field: keyof FormItem, value: string | number) =>
     setItems(prev => prev.map(it => it.id !== id ? it : { ...it, [field]: value }))
 
-  const openEdit = async (inv: SaleRecord) => {
+  const doOpenEdit = async (inv: SaleRecord) => {
     localStorage.removeItem(DRAFT_KEY)
     try {
       const full = await dbService.directSale.getOne(inv.id)
@@ -172,6 +175,15 @@ export default function DirectSales() {
     } catch (err) {
       showError('تعذّر تحميل بيانات الفاتورة', err)
     }
+  }
+
+  const openEdit = (inv: SaleRecord) => setWarnInv(inv)
+
+  const confirmEditInv = async () => {
+    if (!warnInv) return
+    const inv = warnInv
+    setWarnInv(null)
+    await doOpenEdit(inv)
   }
 
   /* Validation */
@@ -683,6 +695,16 @@ export default function DirectSales() {
             catch (err) { showError('تعذّر حذف الفاتورة', err) }
           }}
           onCancel={() => setDeleteInvoice(null)}
+        />
+      )}
+
+      {/* ════ Confirm before edit ════ */}
+      {warnInv && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل فاتورة الزبون "${warnInv.customerName}"؟`}
+          onConfirm={confirmEditInv}
+          onCancel={() => setWarnInv(null)}
         />
       )}
     </div>

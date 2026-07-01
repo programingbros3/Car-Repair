@@ -203,26 +203,56 @@ export default function CashLedger() {
         <h1 className="page-title">الصندوق الرئيسي</h1>
       </div>
 
-      {/* ── Daily Stats ── */}
+      {/* ── Daily Stats (مرتبطة بالكامل بـ selectedDate) ── */}
       {(() => {
-        const dailyCash    = rows.filter(r => r.type === 'incoming').reduce((s, r) => s + r.amount, 0)
-        const opCount      = rows.length
-        const lastAuditRec = auditRecords.length > 0 ? auditRecords[0] : null
-        const lastDiff     = lastAuditRec?.difference ?? 0
+        const opCount        = rows.length
+        const incomingTotal  = rows.filter(r => r.type === 'incoming').reduce((s, r) => s + r.amount, 0)
+        const outgoingTotal  = rows.filter(r => r.type === 'outgoing').reduce((s, r) => s + r.amount, 0)
+        const savedAudit     = auditRecords.find(a => a.audit_date === selectedDate) ?? null
+
+        const liveActualNum  = actualAmount.trim() === '' ? null : parseFloat(actualAmount)
+        const hasLiveActual  = liveActualNum !== null && !isNaN(liveActualNum)
+
+        const actualDisplay: number | null = savedAudit
+          ? savedAudit.actual_amount
+          : hasLiveActual ? liveActualNum : null
+
+        const diffDisplay: number | null = savedAudit
+          ? savedAudit.difference
+          : hasLiveActual ? (dailyNet - (liveActualNum as number)) : null
+
         return (
           <div className="stats-grid">
             <div className="stat-card">
-              <span className="stat-label">كاش اليوم ₪</span>
-              <span className="stat-value incoming">{fmt(dailyCash)} ₪</span>
+              <span className="stat-label">إجمالي النظام ₪</span>
+              <span className="stat-value" style={{ color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
+                {dailyNet > 0 ? '+' : dailyNet < 0 ? '−' : ''}{fmt(dailyNet)} ₪
+              </span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">المبلغ الفعلي ₪</span>
+              <span className="stat-value balance">
+                {actualDisplay !== null ? `${fmt(actualDisplay)} ₪` : '—'}
+              </span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">الفرق ₪</span>
+              <span className="stat-value" style={{ color: diffDisplay !== null ? diffColor(diffDisplay) : '#999' }}>
+                {diffDisplay !== null
+                  ? `${diffDisplay > 0 ? '+' : diffDisplay < 0 ? '−' : ''}${fmt(diffDisplay)} ₪`
+                  : '—'}
+              </span>
             </div>
             <div className="stat-card">
               <span className="stat-label">إحصاء العمليات</span>
               <span className="stat-value balance">{opCount}</span>
             </div>
             <div className="stat-card">
-              <span className="stat-label">الفرق ₪</span>
-              <span className="stat-value" style={{ color: diffColor(lastDiff) }}>
-                {lastDiff > 0 ? '+' : lastDiff < 0 ? '−' : ''}{fmt(lastDiff)} ₪
+              <span className="stat-label">الوارد / الصادر ₪</span>
+              <span className="stat-value">
+                <span style={{ color: '#2ECC71' }}>{fmt(incomingTotal)}</span>
+                <span style={{ color: '#999', fontWeight: 400 }}> / </span>
+                <span style={{ color: '#E74C3C' }}>{fmt(outgoingTotal)}</span>
               </span>
             </div>
           </div>

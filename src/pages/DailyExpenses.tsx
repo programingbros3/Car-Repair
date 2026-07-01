@@ -44,6 +44,7 @@ export default function DailyExpenses() {
   /* modals */
   const [detailsExp, setDetailsExp] = useState<Expense | null>(null)
   const [deleteExp,  setDeleteExp]  = useState<Expense | null>(null)
+  const [warnExp,    setWarnExp]    = useState<Expense | null>(null)
 
   /* filters */
   const [search,     setSearch]     = useState('')
@@ -101,12 +102,20 @@ export default function DailyExpenses() {
   /* ── Form helpers ── */
   const setField = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
 
-  const openEdit = (exp: Expense) => {
+  const doOpenEdit = (exp: Expense) => {
     localStorage.removeItem(DRAFT_KEY)
     setEditingExpense(exp)
     setForm({ description: exp.description, amount: String(exp.amount), date: exp.date, notes: exp.notes })
     setSubmitAttempted(false)
     setShowForm(true)
+  }
+
+  const openEdit = (exp: Expense) => setWarnExp(exp)
+
+  const confirmEditExp = () => {
+    if (!warnExp) return
+    doOpenEdit(warnExp)
+    setWarnExp(null)
   }
 
   /* ── Validation ── */
@@ -217,16 +226,17 @@ export default function DailyExpenses() {
         </div>
       )}
 
-      {/* ════ Total card ════ */}
-      <div className="stats-grid">
-        <div className="stat-card">
+      {/* ════ Expenses list ════ */}
+      <div className="mi-card">
+        <div className="stat-card" style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          background: 'transparent', boxShadow: 'none', borderRadius: 0, padding: 0,
+          paddingBottom: '1.25rem', marginBottom: '1.25rem',
+          borderBottom: '1px solid #e8edf2',
+        }}>
           <span className="stat-label">إجمالي المصاريف</span>
           <span className="stat-value outgoing">{totalExpenses.toLocaleString('en-US')} ₪</span>
         </div>
-      </div>
-
-      {/* ════ Expenses list ════ */}
-      <div className="mi-card">
         <h2 className="mi-section-title">المصاريف المسجلة</h2>
 
         <div className="mi-filters">
@@ -344,6 +354,16 @@ export default function DailyExpenses() {
             catch (err) { showError('تعذّر حذف المصروف', err) }
           }}
           onCancel={() => setDeleteExp(null)}
+        />
+      )}
+
+      {/* ════ Confirm before edit ════ */}
+      {warnExp && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل المصروف "${warnExp.description}"؟`}
+          onConfirm={confirmEditExp}
+          onCancel={() => setWarnExp(null)}
         />
       )}
     </div>

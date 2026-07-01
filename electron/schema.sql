@@ -276,6 +276,23 @@ CREATE INDEX IF NOT EXISTS idx_salary_date          ON salary_payments(payment_d
 CREATE INDEX IF NOT EXISTS idx_ledger_date          ON cash_ledger(transaction_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_ref           ON cash_ledger(reference_type, reference_id);
 
+-- إعدادات التطبيق (key/value) — تُستخدم حالياً لإعدادات النسخ الاحتياطي التلقائي
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- سجل النشاط (توثيق خفيف للعمليات الحساسة — تعديل/حذف — لغرض المراجعة)
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_type TEXT    NOT NULL,   -- 'update' | 'delete'
+    entity_type TEXT    NOT NULL,   -- 'maintenance_invoice' | 'direct_sale_invoice' | ...
+    entity_id   INTEGER,
+    details     TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_activity_log_date ON activity_log(created_at);
+
 CREATE TABLE IF NOT EXISTS daily_cash_audits (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     audit_date     TEXT    NOT NULL,

@@ -1,3 +1,6 @@
+import tajawal400 from '@fontsource/tajawal/400.css?inline'
+import tajawal700 from '@fontsource/tajawal/700.css?inline'
+
 export function printPdf(title: string, bodyHtml: string): void {
   const win = window.open('', '_blank', 'width=794,height=1123')
   if (!win) return
@@ -5,8 +8,9 @@ export function printPdf(title: string, bodyHtml: string): void {
 <head>
   <meta charset="UTF-8"/>
   <title>${title}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap" rel="stylesheet"/>
   <style>
+    ${tajawal400}
+    ${tajawal700}
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:'Tajawal',sans-serif; direction:rtl; padding:20mm; color:#213547; font-size:13px; }
     .header { text-align:center; margin-bottom:24px; border-bottom:2px solid #1E2A38; padding-bottom:12px; }

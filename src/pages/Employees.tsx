@@ -49,6 +49,10 @@ export default function Employees() {
   const [deleteEmp,    setDeleteEmp]    = useState<Employee | null>(null)
   const [deleteSalary, setDeleteSalary] = useState<SalaryRecord | null>(null)
 
+  /* edit confirms */
+  const [warnEmp,    setWarnEmp]    = useState<Employee | null>(null)
+  const [warnSalary, setWarnSalary] = useState<SalaryRecord | null>(null)
+
   /* salary filters */
   const [filterEmp,  setFilterEmp]  = useState('')
   const [filterFrom, setFilterFrom] = useState('')
@@ -105,11 +109,19 @@ export default function Employees() {
   /* ── Employee form ── */
   const setEmpField = (field: string, value: string) => setEmpForm(prev => ({ ...prev, [field]: value }))
 
-  const openEmpEdit = (emp: Employee) => {
+  const doOpenEmpEdit = (emp: Employee) => {
     setEditingEmp(emp)
     setEmpForm({ name: emp.name, phone: emp.phone, dailyWage: String(emp.dailyWage) })
     setEmpSubmitted(false)
     setShowEmpForm(true)
+  }
+
+  const openEmpEdit = (emp: Employee) => setWarnEmp(emp)
+
+  const confirmEmpEdit = () => {
+    if (!warnEmp) return
+    doOpenEmpEdit(warnEmp)
+    setWarnEmp(null)
   }
 
   const empNameErr      = empForm.name.trim() ? (/\d/.test(empForm.name) ? 'الاسم يجب أن يحتوي على حروف فقط' : '') : 'اسم الموظف مطلوب'
@@ -143,7 +155,7 @@ export default function Employees() {
   /* ── Salary form ── */
   const setSalaryField = (field: string, value: string) => setSalaryForm(prev => ({ ...prev, [field]: value }))
 
-  const openSalaryEdit = (rec: SalaryRecord) => {
+  const doOpenSalaryEdit = (rec: SalaryRecord) => {
     setEditingSalary(rec)
     setSalaryForm({
       employeeId: String(rec.employeeId),
@@ -155,6 +167,14 @@ export default function Employees() {
     })
     setSalarySubmitted(false)
     setShowSalaryForm(true)
+  }
+
+  const openSalaryEdit = (rec: SalaryRecord) => setWarnSalary(rec)
+
+  const confirmSalaryEdit = () => {
+    if (!warnSalary) return
+    doOpenSalaryEdit(warnSalary)
+    setWarnSalary(null)
   }
 
   const salaryEmpErr    = salaryForm.employeeId ? '' : 'يجب اختيار الموظف'
@@ -396,16 +416,17 @@ export default function Employees() {
         </div>
       )}
 
-      {/* ════ Stats ════ */}
-      <div className="stats-grid">
-        <div className="stat-card">
+      {/* ════ Salary Records List ════ */}
+      <div className="mi-card">
+        <div className="stat-card" style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          background: 'transparent', boxShadow: 'none', borderRadius: 0, padding: 0,
+          paddingBottom: '1.25rem', marginBottom: '1.25rem',
+          borderBottom: '1px solid #e8edf2',
+        }}>
           <span className="stat-label">إجمالي الرواتب المدفوعة (الصافي)</span>
           <span className="stat-value outgoing">{totalSalaries.toLocaleString('en-US')} ₪</span>
         </div>
-      </div>
-
-      {/* ════ Salary Records List ════ */}
-      <div className="mi-card">
         <div className="mi-parts-header">
           <h2 className="mi-section-title">سجل الرواتب</h2>
           {!showSalaryForm && (
@@ -605,6 +626,26 @@ export default function Employees() {
             catch (err) { showError('تعذّر حذف دفعة الراتب', err) }
           }}
           onCancel={() => setDeleteSalary(null)}
+        />
+      )}
+
+      {/* ════ Confirm before employee edit ════ */}
+      {warnEmp && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل بيانات الموظف "${warnEmp.name}"؟`}
+          onConfirm={confirmEmpEdit}
+          onCancel={() => setWarnEmp(null)}
+        />
+      )}
+
+      {/* ════ Confirm before salary edit ════ */}
+      {warnSalary && (
+        <ConfirmDialog
+          title="تأكيد التعديل"
+          message={`هل أنت متأكد من رغبتك في تعديل دفعة راتب الموظف "${empName(warnSalary.employeeId)}"؟`}
+          onConfirm={confirmSalaryEdit}
+          onCancel={() => setWarnSalary(null)}
         />
       )}
     </div>

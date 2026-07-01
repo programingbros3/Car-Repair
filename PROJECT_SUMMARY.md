@@ -17,7 +17,8 @@
 | better-sqlite3 | قاعدة بيانات SQLite المتزامنة في Main process |
 | React Router (HashRouter) | التنقل بين الشاشات |
 | Fuse.js | بحث ضبابي (Fuzzy search) بدعم عربي |
-| Tajawal Font | خط عربي من Google Fonts |
+| bcryptjs | تشفير (hash) كلمة سر التطبيق — نسخة JS خالصة، بدون بناء أصلي/electron-rebuild |
+| Tajawal Font | خط عربي، محزَّم محلياً عبر حزمة npm `@fontsource/tajawal` (لا يعتمد على اتصال إنترنت أو Google Fonts CDN) |
 
 **نمط التطبيق:**
 - Main process (Electron) → يشغّل قاعدة البيانات وتسجيل IPC handlers
@@ -35,6 +36,8 @@
 │   ├── main.ts              — نقطة دخول Electron: يهيّئ DB ويسجّل IPC ثم يفتح النافذة
 │   ├── preload.ts           — يكشف window.ipcRenderer للـ renderer عبر contextBridge
 │   ├── ipc-handlers.ts      — جميع معالجات IPC (ipcMain.handle) — القلب الخلفي للتطبيق
+│   ├── auto-backup.ts       — النسخ الاحتياطي التلقائي الدوري (منفصل عن backup:export/import)
+│   ├── auth.ts              — كلمة السر (bcrypt hash)، القفل عند تجاوز المحاولات، القفل التلقائي، سجل النشاط
 │   └── schema.sql           — تعريف كل جداول قاعدة البيانات (CREATE TABLE IF NOT EXISTS)
 │
 ├── src/
@@ -62,22 +65,22 @@
 │   │   └── GarageContext.tsx — React Context: يحمل كل البيانات + reload() + getLinkedOps()
 │   │
 │   ├── utils/
-│   │   ├── auth.ts          — كلمة سر التطبيق (APP_PASSWORD = 'garage2026')
+│   │   ├── auth.ts          — DEFAULT_PASSWORD: بذرة كلمة السر لأول تشغيل فقط (المصدر الحقيقي: hash في app_settings عبر electron/auth.ts)
 │   │   ├── notify.ts        — showError(): يعرض alert() عند وقوع أخطاء
 │   │   ├── printPdf.ts      — printPdf(title, bodyHtml): يفتح نافذة طباعة HTML
 │   │   ├── dbMapper.ts      — دوال التحويل بين أنواع DB (snake_case) وأنواع UI (camelCase)
 │   │   ├── warranty.ts      — calcEndDate() و daysRemaining(): دوال مشتركة لحساب الكفالة
-│   │   └── exportCsv.ts     — exportToCsv(): تصدير البيانات إلى ملف CSV
+│   │   ├── exportCsv.ts     — exportToCsv(): تصدير البيانات إلى ملف CSV
+│   │   └── useAutoLock.ts   — hook: يقفل التطبيق تلقائياً (يعيد عرض PasswordGate) بعد فترة خمول
 │   │
 │   ├── components/
-│   │   ├── Sidebar.tsx      — شريط التنقل الجانبي (13 رابط) + التاريخ العربي بأرقام لاتينية
+│   │   ├── Sidebar.tsx      — شريط التنقل الجانبي (12 رابط) + التاريخ العربي بأرقام لاتينية
 │   │   ├── ConfirmDialog.tsx — مودال تأكيد مع اختياري كلمة سر (يستخدم PasswordInput)
 │   │   ├── PasswordGate.tsx — شاشة إدخال كلمة السر قبل فتح التطبيق (يستخدم PasswordInput)
-│   │   └── PasswordInput.tsx — حقل إدخال كلمة السر مع زر إظهار/إخفاء ومؤشر Caps Lock
+│   │   └── PasswordInput.tsx — حقل إدخال كلمة السر مع زر إظهار/إخفاء
 │   │
 │   └── pages/
-│       ├── Home.tsx             — لوحة التحكم: إحصائيات + بطاقة كفالات تنتهي قريباً + آخر العمليات
-│       ├── CashLedger.tsx       — الصندوق الرئيسي: سجل الحركات + إحصاء نهاية اليوم
+│       ├── CashLedger.tsx       — الصندوق الرئيسي: سجل الحركات + إحصاء نهاية اليوم (شاشة الهبوط الافتراضية عند "/")
 │       ├── MaintenanceInvoices.tsx — فواتير الصيانة: CRUD كامل + بنود + دفعات + طباعة
 │       ├── DirectSales.tsx      — البيع المباشر: CRUD + تعديل البنود + دفعات + كفالة الفاتورة
 │       ├── SalesInvoices.tsx    — فواتير البيع (عرض مجمّع صيانة+بيع مباشر)
@@ -86,15 +89,25 @@
 │       ├── DailyExpenses.tsx    — المصاريف اليومية: CRUD + بحث + فلترة
 │       ├── Suppliers.tsx        — الموردون: فواتير الشراء CRUD + دفعات + موردون دليل
 │       ├── Employees.tsx        — الموظفون والرواتب: CRUD + اليومية + حساب الراتب تلقائياً
-│       ├── Warranties.tsx       — الكفالات: عرض نشطة/منتهية + CRUD يدوي + نوع العملية
+│       ├── Warranties.tsx       — الكفالات: عرض نشطة/منتهية + تعديل/حذف + نوع العملية (لا إضافة يدوية)
 │       ├── Reports.tsx          — التقارير: يومي/شهري/سنوي/ديون/أفضل زبائن + تصدير CSV
-│       └── Settings.tsx         — الإعدادات: تصدير/استيراد نسخة احتياطية من قاعدة البيانات
+│       └── Settings.tsx         — الإعدادات: نسخ احتياطي (يدوي + تلقائي دوري) + الأمان (تغيير كلمة السر، القفل التلقائي، سجل النشاط)
+│
+├── public/
+│   └── icon.png             — أيقونة التطبيق (favicon في index.html + أيقونة نافذة Electron عبر VITE_PUBLIC)
+│
+├── src/assets/icon.png      — نسخة مصدر لنفس الأيقونة (غير مُستوردة مباشرة في كود الواجهة)
+│
+├── build/                   — أيقونات التعبئة لـ electron-builder (غير متتبَّعة بـ git، تُنشأ محلياً): icon.icns (mac) / icon.ico (win) / icon.png (linux)
 │
 ├── package.json             — تعريف المشروع، الاعتماديات، سكريبتات البناء
+├── electron-builder.json5   — إعدادات تعبئة Electron (يشمل مسارات أيقونات build/ لكل منصة)
 ├── vite.config.ts           — إعدادات Vite
 ├── tsconfig.json            — إعدادات TypeScript
 └── PROJECT_SUMMARY.md       — هذا الملف
 ```
+
+**أيقونة التطبيق:** استُبدلت أيقونة Vite/Electron الافتراضية (`electron-vite.svg`) بأيقونة مخصّصة `icon.png`. تُستخدم في ثلاثة مواضع منفصلة: `index.html` (favicon المتصفح/الـ renderer)، `electron/main.ts` (أيقونة نافذة BrowserWindow عبر `process.env.VITE_PUBLIC`)، و`electron-builder.json5` (أيقونة الملف التنفيذي المُعبّأ لكل من mac/win/linux عبر مجلد `build/`).
 
 ---
 
@@ -265,6 +278,26 @@
 - `daily_expense` — مصروف يومي
 - `salary` — راتب موظف
 
+#### `app_settings` — إعدادات التطبيق (key/value)
+| العمود | النوع |
+|---|---|
+| key | TEXT PRIMARY KEY |
+| value | TEXT |
+
+تُستخدم لإعدادات النسخ الاحتياطي التلقائي (`auto_backup_*` — راجع قسم "النسخ الاحتياطي التلقائي" أدناه) ولإعدادات الأمان (`app_password_hash`, `auth_failed_attempts`, `auth_lockout_until`, `auth_lockout_level`, `auto_lock_enabled`, `auto_lock_minutes` — راجع قسم "الأمان" أدناه).
+
+#### `activity_log` — سجل النشاط (توثيق خفيف للعمليات الحساسة)
+| العمود | النوع | الوصف |
+|---|---|---|
+| id | INTEGER PK AUTOINCREMENT | |
+| action_type | TEXT NOT NULL | `'update'` أو `'delete'` |
+| entity_type | TEXT NOT NULL | مثل `'maintenance_invoice'`, `'employee'`, `'warranty'`، إلخ |
+| entity_id | INTEGER | id السجل المتأثر (بدون FK — نفس فلسفة `cash_ledger.reference_id`) |
+| details | TEXT | وصف عربي مختصر |
+| created_at | TEXT | |
+
+يُسجَّل تلقائياً من `electron/auth.ts → logActivity()` عند نجاح أي عملية تعديل/حذف محمية بـ `ConfirmDialog` — راجع قسم "الأمان" ضمن الـ Backend أدناه لتفاصيل نطاق التسجيل. قراءة فقط من الواجهة (لا تعديل ولا حذف يدوي لسجلاته).
+
 #### `daily_cash_audits` — إحصاءات نهاية اليوم
 | العمود | النوع |
 |---|---|
@@ -352,7 +385,6 @@ React Page
 | `maintenance:history` | phone | CarRow[] | تاريخ الزبون برقم الهاتف |
 | `maintenance:add` | CarInput | { id } | إضافة فاتورة + بنود + دفعات + مزامنة كفالات |
 | `maintenance:update` | CarRecord | void | تحديث الفاتورة + بنودها + مزامنة كفالات |
-| `maintenance:addItem` | { invoiceId, item } | void | إضافة بند لفاتورة موجودة |
 | `maintenance:deliver` | { id, payments, date } | void | تسليم السيارة + دفعة التسليم + Ledger |
 | `maintenance:delete` | id | void | حذف الفاتورة + بنودها + دفعاتها + كفالاتها |
 
@@ -445,7 +477,6 @@ React Page
 | القناة | الوصف |
 |---|---|
 | `warranty:getAll` | كل الكفالات (يدوية + تلقائية) |
-| `warranty:add` | إضافة كفالة يدوية (source_id=0) |
 | `warranty:update` | تحديث كفالة |
 | `warranty:delete` | حذف كفالة |
 
@@ -462,6 +493,50 @@ React Page
 | `backup:import` | يفتح نافذة اختيار ملف → يتحقق من صحته → ينسخ القاعدة الحالية تلقائياً → يُبدّل الملف → يُعيد تشغيل التطبيق |
 
 **ملاحظة backup:import:** قبل الاستبدال يُنشئ نسخة تلقائية بمسار `{dbPath}.backup-{timestamp}`. يتحقق من صحة الملف المستورد بـ `ATTACH DATABASE ... AS _imported_validate` والتحقق من وجود جدول `maintenance_invoices`. يستخدم `ipcMain.handle` مباشرةً (لا wrapper) لأنه يحتاج `dialog` و`app` من Electron.
+
+#### النسخ الاحتياطي التلقائي (منفصل تماماً عن backup:export/backup:import أعلاه)
+| القناة | الوصف |
+|---|---|
+| `autoBackup:getSettings` | يرجع `{ enabled, folder, keepCount }` الحالية من جدول `app_settings` |
+| `autoBackup:updateSettings` | يحدّث أياً من `enabled` / `folder` / `keepCount` (partial update) ويرجع الإعدادات الكاملة بعد التحديث |
+| `autoBackup:runNow` | ينفّذ نسخة فورية لمسار الإعدادات الحالي (بصرف النظر عن `enabled`) — للاختبار اليدوي من الإعدادات |
+| `autoBackup:getStatus` | يرجع `{ lastRunAt, lastStatus, lastError, lastSuccessAt }` |
+| `autoBackup:pickFolder` | يفتح `dialog.showOpenDialog({ properties: ['openDirectory'] })` ويرجع المسار المختار أو `null` |
+
+**المنطق (`electron/auto-backup.ts`):**
+- الإعدادات تُخزَّن في جدول جديد **`app_settings (key TEXT PRIMARY KEY, value TEXT)`** داخل `garage.db` نفسه (وليس ملف JSON منفصل) — قرار مقصود: القاعدة مهيّأة أصلاً، ونمط key/value موجود بالفعل في `daily_cash_audits` كسلوك مشابه، والأهم أن الإعدادات تُنسخ تلقائياً ضمن أي نسخة احتياطية (يدوية أو تلقائية) لأنها جزء من نفس الملف.
+- مفاتيح `app_settings` المستخدمة: `auto_backup_enabled`, `auto_backup_folder`, `auto_backup_keep_count`, `auto_backup_last_run_at` (كل محاولة)، `auto_backup_last_status`, `auto_backup_last_error`, `auto_backup_last_success_at` (فقط عند النجاح — هذا هو أساس شرط "مرّ يوم كامل").
+- `runAutoBackup(db)`: يتحقق أن المجلد قابل للكتابة (`fs.accessSync(..., W_OK)`) → `db.pragma('wal_checkpoint(FULL)')` (نفس أسلوب backup:export) → ينسخ إلى `garage-backup-YYYY-MM-DD-HHmmss.db` → `applyRotation` تحذف أقدم الملفات الزائدة عن `keepCount` (المطابقة عبر regex على اسم الملف، الترتيب الأبجدي = الزمني). لا يرمي استثناءً أبداً — أي فشل (مجلد غير موجود/غير قابل للكتابة) يُسجَّل بالحالة فقط.
+- `maybeRunAutoBackupOnStartup(db)`: يُستدعى من `main.ts` بعد `registerIpcHandlers`، إذا `enabled` ومرّ يوم كامل (24 ساعة) منذ `auto_backup_last_success_at` (أو لم تُنفَّذ نسخة ناجحة من قبل) → ينفّذ بالخلفية عبر `setImmediate` دون حجب بدء التطبيق.
+- `runAutoBackupOnQuit(db)`: يُستدعى من `app.on('before-quit', ...)` في `main.ts`، ينفّذ نسخة إذا `enabled` (بصرف النظر عن التوقيت) — لأنه `fs.copyFileSync` متزامن، لا حاجة لـ `event.preventDefault()`.
+- **لا يوجد أي تكامل مع Google Drive API أو أي API سحابي** — الميزة تنسخ الملف محلياً فقط؛ أي مزامنة سحابية تعتمد على برنامج مثبّت عند المستخدم (Google Drive Desktop، Dropbox، إلخ) يراقب المجلد المحدد.
+
+**Settings.tsx:** قسم "النسخ الاحتياطي التلقائي" بطاقة `mi-card` منفصلة تماماً عن طاقة "النسخ الاحتياطي" اليدوية أعلاها — نفس الصفحة، بصرياً مفصولة. يعرض: مسار المجلد الحالي + زر "اختيار مجلد…" (`autoBackup:pickFolder`) → يحفظ فوراً عبر `updateSettings`، مفتاح تفعيل (checkbox `mi-checkbox`)، حقل رقمي لعدد النسخ (`onBlur` يحفظ)، زر "نسخ الآن يدوياً" (`autoBackup:runNow` ثم يُحدّث الحالة المعروضة)، وعرض "آخر نسخة ناجحة" + "آخر محاولة: نجحت/فشلت" مع رسالة الخطأ إن وُجدت. **القسم القديم "النسخ الاحتياطي" (تصدير/استيراد عبر backup:export/backup:import) لم يتغيّر إطلاقاً** — نفس الأزرار، نفس الحالة، نفس السلوك.
+
+#### الأمان (`electron/auth.ts`) — منذ 2026-07-01
+
+قبل هذا التحديث كانت كلمة السر ثابتة نصياً (`APP_PASSWORD` في `src/utils/auth.ts`) وتُقارَن مباشرة في الـ Renderer — أي شخص يفتح DevTools أو يفكّك ملفات الحزمة يراها بوضوح. الآن التحقق يتم حصراً في الـ main process عبر IPC، وكلمة السر تُخزَّن كـ **bcrypt hash** في `app_settings` (مفتاح `app_password_hash`) — نفس نمط `auto-backup.ts` بالضبط (يأخذ `db` كمعامل، يخزّن حالته في `app_settings`).
+
+| القناة | المدخلات | الخرج | الوصف |
+|---|---|---|---|
+| `auth:verifyPassword` | password | `{valid, lockedUntil, attemptsRemaining}` | يتحقق من كلمة السر مقابل الـ hash المخزَّن، مع احترام القفل المؤقت الحالي |
+| `auth:changePassword` | oldPassword, newPassword | void (يرمي خطأ عند الفشل) | يتحقق من القديمة (يفيد من نفس منطق القفل)، يتحقق من طول الجديدة (≥6)، يخزّن hash جديد |
+| `auth:getLockoutStatus` | — | `{lockedUntil, attemptsRemaining}` | حالة القفل الحالية دون محاولة تحقق |
+| `auth:getAutoLockSettings` | — | `{enabled, minutes}` | إعدادات القفل التلقائي عند الخمول (افتراضي: مفعّل، 10 دقائق) |
+| `auth:updateAutoLockSettings` | Partial\<{enabled, minutes}\> | `{enabled, minutes}` | تحديث جزئي، يحفظ فوراً |
+| `activityLog:getAll` | limit? (افتراضي 200) | `ActivityLogRow[]` | آخر سجلات النشاط، الأحدث أولاً |
+
+**بذرة أول تشغيل (`ensurePasswordSeeded`):** تُستدعى من `electron/main.ts` بعد `initDB()` مباشرة (وقبل `registerIpcHandlers`). إذا لم يوجد `app_password_hash` في `app_settings` بعد (أول إطلاق بعد هذا التحديث)، يُنشئ hash لكلمة السر الحالية `'garage2026'` (الثابت `DEFAULT_PASSWORD` في `src/utils/auth.ts` — يُستخدم فقط كبذرة، وليس مصدر الحقيقة) ويخزّنه — بهذا تستمر كلمة السر الحالية بالعمل للمستخدمين الموجودين دون أي انقطاع، وتصبح قابلة للتغيير لاحقاً من شاشة الإعدادات. no-op في كل إطلاق لاحق (نفس فلسفة migrations `src/database.ts`).
+
+**القفل عند تجاوز المحاولات:** 5 محاولات فاشلة متتالية (`MAX_ATTEMPTS`) → قفل مؤقت متصاعد: 30 ثانية → دقيقة → 5 دقائق (يُحسب عبر `auth_lockout_level` الذي يزداد مع كل قفل جديد ولا يُصفَّر إلا عند نجاح التحقق). الحالة (`auth_failed_attempts`, `auth_lockout_until`, `auth_lockout_level`) مخزَّنة في `app_settings` — **تصمد أمام إعادة تشغيل التطبيق**، وليست state في الذاكرة فقط (قفل يُلغى بإعادة فتح التطبيق يكون عديم الفائدة).
+
+**القفل التلقائي عند الخمول:** `src/utils/useAutoLock.ts` (hook مستدعى من `App.tsx`) يستمع لأحداث `mousemove/keydown/mousedown/scroll/touchstart` على `window`، ويقارن دورياً (كل 5 ثوانٍ) وقت آخر حركة بالمهلة المُعدَّة؛ عند التجاوز يستدعي نفس `setIsUnlocked(false)` المستخدم للقفل الأولي — أي يُعاد عرض `PasswordGate` بالضبط كما لو أُغلق التطبيق وأُعيد فتحه.
+
+**`PasswordGate.tsx` و`ConfirmDialog.tsx`:** كلاهما يستدعيان `dbService.auth.verifyPassword(password)` (async) بدل المقارنة النصية المحلية السابقة `password === APP_PASSWORD`. عند `lockedUntil` يُعرض عدّاد تنازلي بالثواني (`setInterval` محلي) ويُعطَّل زر التأكيد حتى ينتهي القفل.
+
+**سجل النشاط:** `logActivity(db, actionType, entityType, entityId, details)` يُستدعى من `ipc-handlers.ts` بعد نجاح **بالضبط** نفس مجموعة القنوات المحمية بـ `ConfirmDialog` (تعديل/حذف) في كل الصفحات: `maintenance:update/delete`, `directSale:update/delete`, `supplierInvoice:update/delete`, `expense:update/delete`, `employee:update/delete`, `salary:update/delete`, `warranty:update/delete`, `suppliers:update/delete` (دليل الموردين). لا تسجيل لعمليات الإضافة (لا تمر عبر `ConfirmDialog` أصلاً). يُعرض للقراءة فقط في `Settings.tsx` (قسم "سجل النشاط").
+
+**Transactions atomic بالكامل:** `maintenance:add`/`maintenance:update`/`directSale:add`/`directSale:update` في `ipc-handlers.ts` أصبحت ملفوفة بـ `db.transaction(() => {...})()` خارجي واحد يضمّ كتابة الفاتورة **و** مزامنة الكفالات (`syncWarrantiesForMaintenance`/`syncWarrantiesForDirectSale`) معاً — كانتا سابقاً transaction-ين منفصلتين متتاليتين (كل منهما atomic بمفردها، لكن غير atomic معاً)، فإذا انهار التطبيق بينهما تبقى الفاتورة محفوظة بدون مزامنة كفالات. better-sqlite3 يدعم تداخل `db.transaction()` تلقائياً عبر SAVEPOINT، فلم يلزم أي تعديل على `src/db/maintenance.ts`/`direct-sale.ts` أو دوال المزامنة نفسها — فقط لفّة خارجية إضافية في `ipc-handlers.ts`. بقية عمليات الكتابة المركّبة في المشروع كانت ملفوفة بـ `db.transaction()` بالفعل من قبل.
 
 ### مزامنة الكفالات التلقائية
 
@@ -486,11 +561,12 @@ React Page
 #### `src/db/maintenance.ts`
 - `addMaintenanceInvoice(db, input)` — INSERT + insertItems (يكتب warranty وpart_type في DB) + insertPayments
 - `updateMaintenanceInvoice(db, car)` — UPDATE فاتورة + يحذف البنود القديمة ويُعيد إدراجها
-- `addMaintenanceItem(db, invoiceId, item)` — INSERT بند واحد + تحديث total_amount
 - `deliverMaintenance(db, id, payments, date)` — UPDATE status='delivered' + date_released + دفعات + Ledger
 - `deleteMaintenanceInvoice(db, id)` — DELETE + بنودها + دفعاتها
 - `getMaintenanceInvoices(db, filters)` — SELECT مع فلاتر (بحث، تاريخ، حالة)
 - `getMaintenanceInvoice(db, id)` — SELECT + بنود كاملة (يُعيد warranty وpart_type لكل بند)
+
+**ملاحظة:** دالة `addMaintenanceItem` (وقناة `maintenance:addItem` المقابلة) لإضافة بند واحد لفاتورة موجودة دون تعديلها بالكامل — أُزيلتا لعدم استخدامهما (نموذج التعديل الكامل في `MaintenanceInvoices.tsx` يغطي نفس الحاجة).
 
 #### `src/db/direct-sale.ts`
 - `addDirectSaleInvoice(db, input)` — INSERT + invoice_items + payments + Ledger
@@ -535,47 +611,18 @@ React Page
 
 ## 5. الشاشات
 
-### لوحة التحكم — `src/pages/Home.tsx`
-**المسار:** `/`
-
-**البيانات المُجلبة:**
-- من GarageContext: `maintenanceCars`, `directSales`, `expenses`, `salaries`, `employees`, `debts`, `salesInvoices`, `purchaseInvoices`, `warranties`
-- من DB مباشرة: `dbService.report.monthly()` + `dbService.ledger.getSummary()`
-
-**الإحصائيات المعروضة (بطاقات):**
-- إجمالي الوارد هذا الشهر
-- إجمالي الصادر هذا الشهر
-- الرصيد الحالي (من cash_ledger)
-- عدد السيارات قيد الصيانة
-- عدد وإجمالي الديون المعلقة
-- فواتير البيع اليوم / الشراء اليوم
-- مصاريف اليوم
-- **كفالات تنتهي قريباً** (خلال 7 أيام) — بطاقة جديدة بحد برتقالي عند وجودها؛ النقر عليها يفتح مودال يعرض جدول الكفالات مرتباً بالأقل أياماً متبقية أولاً
-
-**حساب بطاقة الكفالات:**
-```ts
-// في useMemo على مصفوفة warranties من GarageContext
-const expiringWarranties = warranties
-  .map(w => ({ ...w, endDate: calcEndDate(w.startDate, w.periodValue, w.periodUnit),
-                      remaining: daysRemaining(endDate) }))
-  .filter(w => w.remaining > 0 && w.remaining <= 7)
-  .sort((a, b) => a.remaining - b.remaining)
-```
-
-تُستورد `calcEndDate` و`daysRemaining` من `src/utils/warranty.ts`.
-
-**جدول آخر العمليات:**
-- يجمع: صيانة + بيع مباشر + مصاريف + رواتب
-- فلترة بثلاثة تبويبات: اليوم / الأسبوع (6 أيام) / الشهر (29 يوماً)
-- الأعمدة: التاريخ، نوع العملية (badge)، الاسم، المبلغ (+ للوارد / − للصادر)
-
----
-
 ### الصندوق الرئيسي — `src/pages/CashLedger.tsx`
-**المسار:** `/cash-ledger`
+**المسار:** `/cash-ledger` (وأيضاً شاشة الهبوط الافتراضية: `/` يُعاد توجيهها إليها عبر `<Navigate>`)
 
 **الأقسام:**
-1. **3 بطاقات إحصاء:** كاش اليوم (مجموع الوارد) / عدد العمليات / الفرق من آخر إحصاء
+1. **5 بطاقات إحصاء — مرتبطة كلها بحقل "تاريخ الحساب" (`selectedDate`) وتتحدّث حياً عند تغييره دون أي زر إضافي:**
+   - **إجمالي النظام ₪:** صافي حركات `cash_ledger` لليوم المحدد فقط (`dailyNet`، من `report:daily(selectedDate)`)
+   - **المبلغ الفعلي ₪:** إن وُجد سجل محفوظ مسبقاً في `daily_cash_audits` لنفس `audit_date = selectedDate` (يُبحث عنه بالفلترة على `auditRecords` المُحمَّلة أصلاً من `cashAudit:getAll` — بدون قناة IPC جديدة) يُعرض `actual_amount` المحفوظ منه، وإلا تُعرض القيمة الحية المُدخلة في حقل "المبلغ الفعلي في الصندوق" أو "—" إن كانت فارغة
+   - **الفرق ₪:** إن وُجد سجل محفوظ لنفس التاريخ تُعرض `difference` المحفوظة (بنفس ألوان `diffColor`)، وإلا تُحسب حياً = إجمالي النظام − المبلغ الفعلي المُدخل حالياً (تتحدّث مع كل ضغطة مفتاح دون الحاجة لزر "احسب الفرق")، أو "—" إن لم يُدخَل مبلغ بعد
+   - **إحصاء العمليات:** عدد صفوف `cash_ledger` لليوم المحدد فقط (`rows.length`)
+   - **الوارد / الصادر ₪:** مجموع `amount_in` (أخضر) ومجموع `amount_out` (أحمر) لنفس اليوم المحدد، بجانب بعضهما بصيغة "وارد / صادر"
+
+   **ملاحظة إصلاح سابق:** كانت بطاقة "الفرق" قديماً تُعرض من `auditRecords[0]` (أحدث سجل إحصاء بالتاريخ الكلي عبر `ORDER BY audit_date DESC`) دون أي فلترة على `selectedDate`، فكانت تعرض قيمة إحصاء يوم آخر تماماً عند تصفّح تاريخ مختلف. أصبحت الآن جميع البطاقات الخمس مشتقّة من IIFE واحد بالكامل معتمد على `selectedDate` (عبر `rows`, `dailyNet`, `auditRecords.find(...)`, و`actualAmount`).
 
 2. **إحصاء نهاية اليوم:**
    - حقل اختيار تاريخ (افتراضي: اليوم)
@@ -616,7 +663,7 @@ parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warr
 رقم الزبون | اسم الزبون | نمرة السيارة | نوع السيارة | تاريخ الاستلام | تاريخ التسليم | الحالة | الإجمالي | المتبقي | الإجراءات
 
 **الإجراءات في كل صف:**
-- **تعديل:** `async` — يستدعي `dbService.maintenance.getOne(car.id)` أولاً لجلب البنود الكاملة (مع warranty وpart_type)، ثم يملأ النموذج بها. يتجنّب الاعتماد على بيانات GarageContext التي لا تحمل البنود.
+- **تعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnCar`/`confirmEditCar`) — لكل الفواتير بلا استثناء. الرسالة تختلف: إن كانت الفاتورة "مُسلَّمة" تُضمَّن تفاصيل إضافية (الزبون، النمرة، الإجمالي، تاريخ التسليم) ضمن نص التحذير؛ غير ذلك رسالة عامة. بعد التأكيد يُستدعى `dbService.maintenance.getOne(car.id)` لجلب البنود الكاملة (مع warranty وpart_type) ثم يملأ النموذج بها. يتجنّب الاعتماد على بيانات GarageContext التي لا تحمل البنود. *(سابقاً كانت الفواتير المُسلَّمة فقط تعرض تحذيراً مخصصاً بدون ConfirmDialog ولا كلمة سر، وبقية الفواتير تُفتح للتعديل مباشرة بلا أي تأكيد — تم توحيدها في 2026-07-01.)*
 - **تسليم:** يفتح مودال التسليم (دفعات + تأكيد) → `maintenance:deliver`
 - **طباعة:** async يجلب `getOne` + `payments:getByInvoice` ثم يطبع HTML كامل
 - **حذف:** ConfirmDialog مع كلمة سر
@@ -659,10 +706,13 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 
 **دفع عند الإضافة:** نفس نظام دفعات الصيانة (كاش/شيك/فيزا/دين) — **إلزامي** لإضافة فاتورة جديدة (خطأ validation إذا لا مبلغ ولا دين)
 
+**التعديل:**
+- ConfirmDialog أولاً (مع كلمة سر، `warnInv`/`confirmEditInv`) *(أُضيف بتاريخ 2026-07-01 — سابقاً كان زر "تعديل" يفتح المودال مباشرة بلا أي تأكيد)*
+- بعد التأكيد يستدعي `dbService.directSale.getOne(id)` لجلب البنود الحالية، ثم عند الحفظ يستدعي `dbService.directSale.updateItems(id, newItems)` لتحديث البنود
+
 **البنود في البيع المباشر:**
 - جدول قابل للتعديل المباشر: اسم البند، الكمية، السعر، ملاحظات (بدون كفالة فردية)
 - عند **إضافة** فاتورة جديدة: البنود تُحفظ مع الفاتورة
-- عند **تعديل** فاتورة موجودة: يستدعي `dbService.directSale.getOne(id)` لجلب البنود الحالية، ثم عند الحفظ يستدعي `dbService.directSale.updateItems(id, newItems)` لتحديث البنود
 
 **دالة `warrantyLabelDS(raw)`:**
 تُحوّل JSON الكفالة لنص عربي مثل "3 أشهر" أو "أسبوع واحد". تُستخدم في مودال التفاصيل والطباعة.
@@ -738,9 +788,9 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 **الجدول:** اسم الزبون | رقم الهاتف | النوع | التاريخ | نمرة السيارة | الإجمالي | المدفوع | المتبقي | الإجراءات
 
 **الإجراءات:**
-1. **تعديل:** مودال يُعدّل بيانات الفاتورة الأصلية (يوجّه حسب `debt.type`)
+1. **تعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnDebt`/`confirmEditDebt`) *(أُضيف بتاريخ 2026-07-01 — سابقاً بلا تأكيد)*، ثم مودال يُعدّل بيانات الفاتورة الأصلية (يوجّه حسب `debt.type`)
 2. **إضافة دفعة:** مودال الدفع (كاش/شيك/فيزا) → `debt:addPayment` + Ledger
-3. **حذف:** يحذف الفاتورة المصدر بالكامل
+3. **حذف:** ConfirmDialog مع كلمة سر، يحذف الفاتورة المصدر بالكامل
 
 **LinkedOps:** تظهر في مودال التفاصيل
 
@@ -753,14 +803,14 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 - الوصف (مطلوب)، المبلغ (مطلوب > 0)، التاريخ، ملاحظات
 - Draft يُحفظ في localStorage (مفتاح `'garage-exp-draft'`)
 
-**التعديل:** مودال منفصل
+**التعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnExp`/`confirmEditExp`) *(أُضيف بتاريخ 2026-07-01 — سابقاً كان زر "تعديل" يفتح المودال مباشرة بلا أي تأكيد)*، ثم مودال منفصل
 
 **الفلاتر:**
 - بحث Fuse.js بالوصف
 - فلتر تاريخ (من-إلى)
 - فلتر مبلغ (min-max)
 
-**البطاقة:** إجمالي المصاريف المُصفّاة
+**البطاقة:** إجمالي المصاريف المُصفّاة — **ملتصقة بصرياً** داخل نفس `mi-card` الخاصة بالجدول (وليست بطاقة `stats-grid` منفصلة فوقه): تُعرض كصف علوي (`className="stat-card"` مع `style` مُخصّص يُصفّر `boxShadow`/`borderRadius`/`padding`/`background` ويُحوّل الاتجاه لصف أفقي) مفصول عن عنوان "المصاريف المسجلة" وجدولها بـ `border-bottom: 1px solid #e8edf2` بدل ظل بطاقة مستقل. الإبقاء على كلاس `stat-card` ضروري لأن تنسيق `stat-label`/`stat-value` معرّف بمحدد CSS ابن-من-أب `.stat-card .stat-label` في `App.css`.
 
 **الجدول:** الوصف | المبلغ | التاريخ | ملاحظات | الإجراءات (تعديل/حذف)
 
@@ -783,6 +833,10 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 
 **الفلاتر على الفواتير:** بحث باسم المورد + فلتر تاريخ
 
+**التعديل:**
+- **فاتورة مورد:** ConfirmDialog أولاً (مع كلمة سر، `warnSup`/`confirmEditSup`) — لكل الفواتير بلا استثناء. إن كانت الفاتورة مدفوعة بالكامل (`amountRemaining === 0`) تُضمَّن تفاصيلها (المورد، تاريخ الشراء، الإجمالي) ضمن نص التحذير؛ غير ذلك رسالة عامة. *(سابقاً كانت الفواتير المدفوعة بالكامل فقط تعرض تحذيراً مخصصاً بدون ConfirmDialog ولا كلمة سر، وبقية الفواتير تُفتح للتعديل مباشرة بلا أي تأكيد — تم توحيدها في 2026-07-01.)*
+- **مورد (دليل):** ConfirmDialog أولاً (مع كلمة سر، `warnSupplier`/`confirmSupEdit`) *(أُضيف بتاريخ 2026-07-01 — سابقاً بلا تأكيد)*
+
 ---
 
 ### الموظفون والرواتب — `src/pages/Employees.tsx`
@@ -790,7 +844,7 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 
 **قسم الموظفين:**
 - نموذج إضافة inline: اسم الموظف (حروف فقط) + رقم الهاتف + **اليومية (₪/يوم)** — الحقول الثلاثة مطلوبة
-- التعديل في مودال (يشمل تعديل اليومية)
+- التعديل: ConfirmDialog أولاً (مع كلمة سر، `warnEmp`/`confirmEmpEdit`) *(أُضيف بتاريخ 2026-07-01 — سابقاً بلا تأكيد)*، ثم مودال (يشمل تعديل اليومية)
 - الجدول: اسم الموظف | رقم الهاتف | **اليومية ₪/يوم** | الإجراءات (4 أعمدة)
 - مودال التفاصيل يعرض: اسم الموظف، رقم الهاتف، **اليومية الحالية**، إجمالي الرواتب المدفوعة (الصافي)
 
@@ -812,6 +866,8 @@ amount = daily_wage_snapshot × days_worked + bonus − deduction
 ```
 عند التعديل: `daily_wage_snapshot` يبقى كما هو (لا يُحدَّث من اليومية الحالية)، ويُعاد حساب `amount` بناءً على القيم الجديدة.
 
+**بطاقة "إجمالي الرواتب المدفوعة (الصافي)":** ملتصقة بصرياً داخل نفس `mi-card` لقسم "سجل الرواتب" أسفلها (وليست بطاقة `stats-grid` منفصلة فوقها) — بنفس الأسلوب المستخدم في `DailyExpenses.tsx` (صف علوي بكلاس `stat-card` مع `style` مُخصّص يُصفّر الظل/الحواف/الخلفية ويحوّله لصف أفقي، مفصول بـ `border-bottom: 1px solid #e8edf2` عن عنوان الجدول).
+
 **جدول الرواتب (8 أعمدة):**
 الموظف | اليومية (وقت الدفعة) | الأيام | بونص ₪ | خصم ₪ | الصافي ₪ | تاريخ الدفعة | الإجراءات
 
@@ -819,7 +875,7 @@ amount = daily_wage_snapshot × days_worked + bonus − deduction
 
 **طباعة إيصال الراتب:** يعرض: اسم الموظف، التاريخ، اليومية (وقت الدفعة)، عدد أيام الدوام، حاصل الضرب، البونص، الخصم، الصافي النهائي بارز بالأخضر.
 
-**التعديل:** يستدعي `dbService.salary.update(id, salData)` مباشرةً — تُعاد كتابة Ledger entry ليطابق المبلغ الجديد.
+**التعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnSalary`/`confirmSalaryEdit`) *(أُضيف بتاريخ 2026-07-01 — سابقاً بلا تأكيد)*، ثم يستدعي `dbService.salary.update(id, salData)` مباشرةً — تُعاد كتابة Ledger entry ليطابق المبلغ الجديد.
 
 **الفلاتر:** اختيار الموظف + تاريخ من-إلى
 
@@ -832,17 +888,18 @@ amount = daily_wage_snapshot × days_worked + bonus − deduction
 
 **دوال حساب انتهاء الكفالة (من `src/utils/warranty.ts`):**
 ```ts
-export function calcEndDate(startDate: string, value: number, unit: WarrantyPeriodUnit): string {
-  // week → date + value*7 أيام
-  // month → date + value أشهر
-  // year → date + value سنوات
-}
-export function daysRemaining(endDate: string): number {
-  return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86_400_000)
-}
+// week  → تُحسب بحساب UTC صرف: startDate + value*7 أيام
+// month/year → يُحوَّلان لعدد أشهر إجمالي، ثم يُثبَّت اليوم على آخر يوم في
+//              الشهر الهدف عند التجاوز (مثال: 2026-01-31 + شهر = 2026-02-28
+//              وليس 2026-03-03 كما كان يحدث مع setMonth() الافتراضي في JS)
+export function calcEndDate(startDate: string, value: number, unit: WarrantyPeriodUnit): string
+
+// مقارنة تقويمية صرفة (يوم UTC مقابل يوم UTC)، بمعزل عن التوقيت المحلي
+// وساعة اليوم الحالية — لا تعتمد على Date.now()
+export function daysRemaining(endDate: string): number
 ```
 
-كانت هذه الدوال محلية في Warranties.tsx، نُقلت إلى `warranty.ts` لمشاركتها مع Home.tsx.
+كانت هذه الدوال محلية في Warranties.tsx، نُقلت إلى `warranty.ts` لتكون قابلة للمشاركة. بعد حذف صفحة الرئيسية (Home.tsx) بتاريخ 2026-07-01، بقيت `calcEndDate` و`daysRemaining` في مكانهما بـ `warranty.ts` — لكن أُعيد كتابة داخلهما بتاريخ 2026-07-01 لإصلاح خطأين: (1) `setMonth()`/`setFullYear()` في `Date` المحلي كانا يتجاوزان نهاية الأشهر القصيرة بدل التثبيت على آخر يوم فيها، و(2) `daysRemaining` كان يعتمد على `Date.now()` (يشمل الساعة الحالية) فيُنتج نتائج غير مستقرة عبر اليوم نفسه بدل مقارنة تقويمية صرفة. لا يزالان مستخدمين مباشرة في `Warranties.tsx` بنفس التوقيع الخارجي (لا تغيير على استدعاءاتهما).
 
 **الجدولان:**
 1. **الكفالات النشطة:** `endDate >= today`
@@ -861,7 +918,11 @@ export function daysRemaining(endDate: string): number {
 - تبويبات: نشطة / منتهية
 - فلتر المصدر: الكل / صيانة / بيع مباشر / يدوي
 
-**إضافة يدوية:** نموذج يملأ source_id=0 مع تحديد source يدوياً
+**ملاحظة:** الإضافة اليدوية لكفالة جديدة (زر "+ إضافة كفالة" + بطاقتي الإحصاء العلويتين "الكفالات السارية"/"الكفالات المنتهية" اللتين كانتا أعلى الصفحة) أُزيلت عمداً بتاريخ 2026-07-01 بقرار من المستخدم — الصفحة الآن تعرض/تعدّل/تحذف فقط الكفالات القائمة (يدوية قديمة أو تلقائية)، دون إمكانية إضافة كفالة جديدة يدوياً.
+
+**الإجراءات:**
+- **تعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnWarranty`/`confirmEditWarranty`) *(أُضيف بتاريخ 2026-07-01 — سابقاً كان زر "تعديل" يفتح المودال مباشرة بلا أي تأكيد، وهي المشكلة التي أدّت لفحص شامل لكل الصفحات ثم توحيد هذه البوابة في كل مكان)*
+- **حذف:** ConfirmDialog مع كلمة سر
 
 **ملاحظة:** الكفالات التلقائية (source_id > 0) تُدار من صفحات الصيانة/البيع المباشر. الحذف اليدوي من هذه الصفحة مسموح به، لكن عند تعديل الفاتورة المصدر ستُعاد المزامنة.
 
@@ -901,7 +962,7 @@ export function daysRemaining(endDate: string): number {
 ### الإعدادات — `src/pages/Settings.tsx`
 **المسار:** `/settings`
 
-**القسم الوحيد حالياً: النسخ الاحتياطي**
+**القسم الأول (بدون تغيير): النسخ الاحتياطي (يدوي)**
 
 **تصدير نسخة احتياطية:**
 - زر "تصدير" → `dbService.backup.export()` → يفتح نافذة حفظ ملف (save dialog)
@@ -914,12 +975,36 @@ export function daysRemaining(endDate: string): number {
 - يتحقق من صحة الملف → ينشئ نسخة احتياطية تلقائية → يُبدّل الملف → يُعيد تشغيل التطبيق
 - تحذير: "هذه العملية لا يمكن التراجع عنها"
 
+**القسم الثاني (جديد، بطاقة `mi-card` منفصلة): النسخ الاحتياطي التلقائي**
+
+راجع تفاصيل القنوات والمنطق الكامل في قسم "النسخ الاحتياطي التلقائي" ضمن `electron/ipc-handlers.ts` أعلاه. ملخص واجهة المستخدم:
+- **اختيار مجلد:** زر "اختيار مجلد…" → `dbService.autoBackup.pickFolder()` (يفتح `openDirectory` dialog) → يُحفظ فوراً عبر `updateSettings`
+- **تفعيل/تعطيل:** checkbox يحفظ فوراً عند التبديل
+- **عدد النسخ المحتفظ بها:** حقل رقمي (افتراضي 14)، يحفظ عند `onBlur`
+- **"نسخ الآن يدوياً":** يستدعي `autoBackup:runNow` فوراً بصرف النظر عن حالة التفعيل، ثم يُحدّث عرض الحالة
+- **عرض الحالة:** "آخر نسخة ناجحة" (تاريخ/وقت) + "آخر محاولة: نجحت/فشلت" مع رسالة الخطأ عند الفشل (مثلاً مجلد غير موجود أو غير قابل للكتابة) — بلا أي alert/نافذة مزعجة
+- الإعدادات والحالة تُحمَّل عبر `useEffect` عند تحميل الصفحة (`getSettings` + `getStatus` بالتوازي)
+
+**ملاحظة مهمة:** هذا القسم منفصل تماماً عن قسم "النسخ الاحتياطي" اليدوي أعلاه — قنوات مختلفة (`autoBackup:*` مقابل `backup:*`)، حالة React منفصلة، ولا يوجد أي كود مشترك بينهما عدا استخدام نفس أسلوب `wal_checkpoint(FULL)` قبل النسخ.
+
+**القسم الثالث (جديد، بطاقة `mi-card` منفصلة): تغيير كلمة السر**
+
+حقول: كلمة السر الحالية، الجديدة، تأكيد الجديدة (كلها `PasswordInput`). تحقق محلي أولاً (طول ≥6، تطابق التأكيد)، ثم `dbService.auth.changePassword(old, new)` — يرمي خطأ عربي واضح عند رفض القديمة (بما يشمل رسالة القفل المؤقت إن كان مقفلاً). عند النجاح تُفرَّغ الحقول الثلاثة وتظهر رسالة نجاح.
+
+**القسم الرابع (جديد، بطاقة `mi-card` منفصلة): القفل التلقائي عند الخمول**
+
+نفس نمط قسم "النسخ الاحتياطي التلقائي" بالضبط (checkbox تفعيل يحفظ فوراً + حقل رقمي "مدة الخمول بالدقائق" يحفظ عند `onBlur`) — عبر `dbService.auth.getAutoLockSettings`/`updateAutoLockSettings`.
+
+**القسم الخامس (جديد، بطاقة `mi-card` منفصلة، للقراءة فقط): سجل النشاط**
+
+يُحمَّل عبر `dbService.activityLog.getAll(200)` في `useEffect` عند فتح الصفحة. جدول: التاريخ | العملية (تعديل/حذف) | النوع (اسم الكيان بالعربي) | التفاصيل. لا إمكانية تعديل أو حذف من هذه الشاشة — راجع تفاصيل نطاق التسجيل الكامل ضمن قسم "الأمان" في الـ Backend أعلاه.
+
 ---
 
 ## 6. المكونات المشتركة
 
 ### `src/components/Sidebar.tsx`
-- **13 رابط تنقل:** لوحة التحكم / الصندوق / فواتير البيع / فواتير الشراء / الصيانة / البيع المباشر / الديون المعلقة / المصاريف / الموردون / الموظفون / الكفالات / التقارير / **الإعدادات** (أيقونة ⚙)
+- **12 رابط تنقل (بهذا الترتيب بالضبط):** الصندوق الرئيسي / فواتير البيع / البيع المباشر / سيارات الصيانة / فواتير الشراء / الموردون / المصاريف اليومية / الموظفون والرواتب / الديون المعلقة / الكفالات / التقارير / **الإعدادات** (أيقونة ⚙) *(أُعيد ترتيبها بتاريخ 2026-07-01)*
 - يعرض التاريخ الحالي بالعربي في الأسفل (`toLocaleDateString('ar-EG-u-nu-latn', ...)` — أرقام لاتينية)
 - شعار "**كراج التل الأخضر**" في الأعلى
 - `.sidebar` يستخدم `overflow: hidden` (بدلاً من `position: sticky`)
@@ -936,14 +1021,16 @@ export function daysRemaining(endDate: string): number {
 />
 ```
 - عند `requirePassword=true`: أول نقرة "تأكيد" تُظهر `<PasswordInput>` بدلاً من `<input type="password">` العادي
-- كلمة السر الصحيحة (APP_PASSWORD) → تُستدعى `onConfirm()`
+- **(منذ 2026-07-01)** كلمة السر تُتحقَّق منها عبر `dbService.auth.verifyPassword(password)` (async، عبر IPC → hash في main process) بدل المقارنة النصية المحلية السابقة → عند الصواب تُستدعى `onConfirm()`
+- عند القفل المؤقت (تجاوز عدد المحاولات) يُعرض عدّاد تنازلي بالثواني ويُعطَّل زر التأكيد
 - الأخطاء تُعرض داخل المودال
 
 ### `src/components/PasswordGate.tsx`
 - شاشة مظلمة (#1E2A38) مع شعار "كراج" باللون الأخضر
 - يستخدم `<PasswordInput>` بدلاً من `<input type="password">` العادي
+- **(منذ 2026-07-01)** نفس آلية التحقق عبر IPC والقفل المؤقت الموجودة في `ConfirmDialog.tsx` أعلاه (نفس النمط بالضبط)
 - عند الصواب يستدعي `onUnlock()`
-- يُلفّ كامل التطبيق في `App.tsx`
+- يُلفّ كامل التطبيق في `App.tsx` — ويُعاد عرضه تلقائياً أيضاً عند القفل التلقائي للخمول (`src/utils/useAutoLock.ts`)، وليس فقط عند إطلاق التطبيق لأول مرة
 
 ### `src/components/PasswordInput.tsx`
 ```tsx
@@ -961,8 +1048,9 @@ export function daysRemaining(endDate: string): number {
 **السلوك:**
 - يعرض `<input type="password">` افتراضياً
 - زر (👁/👁‍🗨) يبدّل بين type="password" وtype="text"
-- يرصد حالة `CapsLock` عبر `getModifierState('CapsLock')` في onKeyDown وonKeyUp
-- عند تفعيل Caps Lock: يظهر `<span className="pwd-capslock-warning">⚠ مفتاح Caps Lock مفعّل</span>`
+- `onKeyDown` (اختياري) يُمرَّر مباشرة لحقل الإدخال — يُستخدم مثلاً في `ConfirmDialog.tsx` لالتقاط Enter للتأكيد.
+
+**ملاحظة تاريخية:** كان المكوّن يتضمّن سابقاً ميزة "مؤشر Caps Lock" (تحذير نصي يظهر عند تفعيل Caps Lock أثناء إدخال كلمة السر)، اعتمدت في محاولاتها المتعاقبة على `onKeyDown`/`onKeyUp`/`onFocus` محليّين ثم على مستمعين على مستوى `window` مرتبطين بحالة تركيز الحقل. تبيّن أن الفائدة لا تستحق التعقيد المصاحب لها، فأُزيلت الميزة بالكامل (الـ state، الـ useEffect، عنصر JSX الخاص بالتحذير، وتنسيق `pwd-capslock-warning` في `App.css`)، وأبقي المكوّن مقتصراً على وظيفته الأصلية: إظهار/إخفاء كلمة السر عبر زر أيقونة العين.
 
 ### `src/store/GarageContext.tsx`
 - **يوفّر:** جميع البيانات المحمّلة من DB + `reload()` + `loading` + `getLinkedOps()`
@@ -1028,7 +1116,7 @@ export function daysRemaining(endDate: string): number {
 - `mi-amount` — مبلغ عادي
 - `mi-plate` — نمرة السيارة
 - `mi-phone-highlight` — رقم الهاتف
-- `pwd-wrapper`, `pwd-input-wrap`, `pwd-input`, `pwd-toggle-btn`, `pwd-capslock-warning` — مكوّن PasswordInput (معرَّفة في `App.css`)
+- `pwd-wrapper`, `pwd-input-wrap`, `pwd-input`, `pwd-toggle-btn` — مكوّن PasswordInput (معرَّفة في `App.css`)
 
 **إصلاحات Sidebar (App.css):**
 - `.sidebar`: أُزيلت `position: sticky` و`top: 0`، أُضيفت `overflow: hidden`
@@ -1132,7 +1220,7 @@ path.join(process.resourcesPath, 'schema.sql')  // للـ schema فقط
 printPdf(title: string, bodyHtml: string): void
 ```
 - يفتح نافذة popup جديدة
-- يُضيف: Tajawal font + RTL layout + A4 print styles
+- يُضيف: خط Tajawal (400/700) + RTL layout + A4 print styles — الخط يُحقن كـ CSS نصّي مباشرة داخل الصفحة عبر استيراد Vite الخاص `@fontsource/tajawal/400.css?inline` و`700.css?inline` (مُعرَّف في `src/vite-env.d.ts`)، وليس رابط `<link>` لخادم خارجي، لذا تعمل الطباعة بدون اتصال إنترنت
 - الرأس: "**كراج التل الأخضر**" + العنوان
 - يُحقن `bodyHtml` في الجسم
 - يستخدم `toLocaleDateString('ar-EG-u-nu-latn', ...)` لتاريخ الطباعة (أرقام لاتينية)
@@ -1165,14 +1253,14 @@ printPdf(title: string, bodyHtml: string): void
 - [x] تقارير (يومي/شهري/سنوي/ديون) مع طباعة
 - [x] فواتير البيع المجمّعة (صيانة + بيع مباشر) مع فلاتر متقدمة
 - [x] فواتير الشراء المجمّعة (مورد + مصروف + راتب)
-- [x] الكفالات: CRUD يدوي + مزامنة تلقائية من الصيانة والبيع المباشر
+- [x] الكفالات: عرض/تعديل/حذف + مزامنة تلقائية من الصيانة والبيع المباشر (الإضافة اليدوية كانت موجودة سابقاً وأُزيلت عمداً بتاريخ 2026-07-01 بقرار من المستخدم — ليست نقصاً أو خطأ، بل تبسيط متعمّد للصفحة لتُدار الكفالات فقط عبر المزامنة التلقائية من فواتير الصيانة والبيع المباشر)
 - [x] نظام الكفالات المنظّم (dropdown وحدة + عدد) مخزّن كـ JSON
 - [x] عمود "نوع العملية" في شاشة الكفالات
 - [x] دليل الموردين منفصل
 - [x] بحث Fuse.js مع تطبيع عربي في كل الشاشات
 - [x] LinkedOps (عمليات سابقة لنفس الزبون) في التفاصيل
 - [x] PasswordGate + ConfirmDialog مع كلمة سر
-- [x] مكوّن PasswordInput مع إظهار/إخفاء كلمة السر ومؤشر Caps Lock
+- [x] مكوّن PasswordInput مع إظهار/إخفاء كلمة السر
 - [x] Draft localStorage للنماذج الطويلة
 - [x] طباعة لكل نوع فاتورة
 - [x] دعم طرق دفع متعددة: كاش/شيك/فيزا/دين مع التفاصيل الكاملة
@@ -1182,13 +1270,23 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **تعديل بنود البيع المباشر:** `directSale:updateItems` تحذف البنود وتُعيد إدراجها + تُحدّث الإجمالي
 - [x] **نظام الرواتب باليومية:** daily_wage في employees + 4 أعمدة في salary_payments + migration تلقائي + salary:update
 - [x] **تقرير أفضل الزبائن:** تبويب جديد في Reports.tsx يستدعي `report:topCustomers(20)`
-- [x] **تنبيه الكفالات القريبة من الانتهاء:** بطاقة تفاعلية في Home.tsx تعرض الكفالات التي تنتهي خلال 7 أيام
 - [x] **تصدير CSV:** زر تصدير في Reports.tsx لتبويبات يومي/شهري/سنوي/ديون
 - [x] **نسخ احتياطي:** backup:export و backup:import مع التحقق والنسخة التلقائية + صفحة Settings.tsx
+- [x] **نسخ احتياطي تلقائي دوري:** جدول app_settings + autoBackup:getSettings/updateSettings/runNow/getStatus/pickFolder + تشغيل عند بدء التطبيق وعند الإغلاق + rotation — منفصل تماماً عن النسخ اليدوي
+- [x] **توحيد بوابة ConfirmDialog+كلمة السر على كل أزرار التعديل** (وليس الحذف فقط) عبر كل الصفحات — راجع "الأمان وكلمة السر"
+- [x] **أيقونة تطبيق مخصّصة** لكل من نافذة Electron والملف التنفيذي المُعبّأ (mac/win/linux) بدل أيقونة Vite/Electron الافتراضية
+- [x] **خط Tajawal محزَّم محلياً** (`@fontsource/tajawal`) بدل تحميله من Google Fonts CDN — يعمل التطبيق والطباعة بدون اتصال إنترنت
+- [x] **إصلاح حساب انتهاء الكفالة:** `calcEndDate`/`daysRemaining` في `warranty.ts` أُعيدا كتابتهما بحساب UTC صرف لتفادي تجاوز نهاية الأشهر القصيرة وعدم استقرار العد اليومي
+- [x] **كلمة سر مشفّرة (bcrypt hash)** بدل ثابت نصي، تحقق عبر IPC فقط + شاشة "تغيير كلمة السر" في الإعدادات
+- [x] **قفل تلقائي عند الخمول** (افتراضي 10 دقائق، قابل للتعطيل/التعديل) — `src/utils/useAutoLock.ts`
+- [x] **قفل مؤقت متصاعد عند تجاوز محاولات كلمة السر** (5 محاولات → 30 ثانية ← دقيقة ← 5 دقائق، يصمد أمام إعادة التشغيل)
+- [x] **سجل نشاط** (`activity_log`) لكل عمليات التعديل/الحذف الحساسة — قراءة فقط في الإعدادات
+- [x] **ضمان atomic كامل لكل عمليات الكتابة المركّبة:** لفّ `maintenance:add/update` و`directSale:add/update` بـ transaction خارجي واحد يضمّ كتابة الفاتورة ومزامنة الكفالات معاً (بقية عمليات الكتابة المركّبة كانت ملفوفة بالفعل)
 
 ### غير مكتمل / قيود معروفة
 
 - [ ] **تعديل الكميات بعد التسليم:** لا يمكن تعديل الكميات أو الأسعار في الفاتورة المُسلَّمة.
+- [ ] **تشفير قاعدة البيانات بالكامل (SQLCipher):** غير منفَّذ بعد — يتطلب استبدال محرك `better-sqlite3` بمكتبة متوافقة مع SQLCipher (مثل `better-sqlite3-multiple-ciphers`) وإعادة هيكلة تسلسل بدء التطبيق بالكامل (فتح قاعدة البيانات يحدث حالياً في `main.ts` قبل ظهور شاشة كلمة السر؛ التشفير يتطلب انتظار كلمة السر أولاً). قرار مؤجَّل عمداً لمرحلة مستقلة لاحقة — راجع نقاش القرار في محادثة تطوير الأمان بتاريخ 2026-07-01.
 
 ---
 
@@ -1270,11 +1368,14 @@ npx electron-rebuild -f -w better-sqlite3
 
 ### الأمان وكلمة السر
 
-- `APP_PASSWORD = 'garage2026'` في `src/utils/auth.ts`
-- تغيير كلمة السر = تغيير هذا الثابت فقط
-- `ConfirmDialog` يطلب كلمة السر عند `requirePassword={true}` (الافتراضي)
-- `PasswordGate` يحجب التطبيق كاملاً حتى إدخال الكلمة الصحيحة
-- كلا المكوّنَين يستخدمان `PasswordInput` لتجربة أفضل (إظهار/إخفاء + Caps Lock)
+- **(منذ 2026-07-01) كلمة السر لم تعد ثابتاً نصياً.** تُخزَّن كـ **bcrypt hash** في جدول `app_settings` (مفتاح `app_password_hash`)، ويتم التحقق منها حصراً في الـ main process عبر قناة `auth:verifyPassword` — لا مقارنة نصية في الـ Renderer بعد الآن. راجع التفاصيل الكاملة (بذرة أول تشغيل، القفل عند تجاوز المحاولات، القفل التلقائي عند الخمول، سجل النشاط) ضمن قسم "الأمان (`electron/auth.ts`)" في الـ Backend أعلاه.
+- **تغيير كلمة السر يتم الآن من شاشة الإعدادات** (`Settings.tsx` → قسم "تغيير كلمة السر")، **وليس** بتعديل أي ثابت في الكود وإعادة البناء. `src/utils/auth.ts` أصبح يحمل فقط `DEFAULT_PASSWORD` — بذرة أول تشغيل (لضمان استمرار كلمة السر الحالية `garage2026` دون انقطاع)، وليس مصدر الحقيقة.
+- `ConfirmDialog` يطلب كلمة السر عند `requirePassword={true}` (الافتراضي) — التحقق نفسه أصبح عبر IPC (انظر أعلاه)
+- `PasswordGate` يحجب التطبيق كاملاً حتى إدخال الكلمة الصحيحة — يظهر أيضاً تلقائياً عند **القفل التلقائي للخمول** (`src/utils/useAutoLock.ts`، افتراضياً بعد 10 دقائق خمول، قابل للتعطيل/التعديل من الإعدادات)، وليس فقط عند إطلاق التطبيق لأول مرة
+- **القفل عند تجاوز المحاولات:** 5 محاولات خاطئة متتالية (في `PasswordGate` أو `ConfirmDialog`) → قفل مؤقت متصاعد 30 ثانية ← دقيقة ← 5 دقائق، يصمد أمام إعادة تشغيل التطبيق
+- كلا المكوّنَين (`PasswordGate`, `ConfirmDialog`) يستخدمان `PasswordInput` لتجربة أفضل (إظهار/إخفاء كلمة السر)
+- **سجل النشاط:** كل عملية تعديل/حذف تمر عبر `ConfirmDialog` تُسجَّل تلقائياً في جدول `activity_log` (قراءة فقط من `Settings.tsx`) — لغرض المراجعة التاريخية، بلا ربط بمستخدمين متعددين (النظام يبقى أحادي المستخدم بتصميم مقصود)
+- **القاعدة المُوحَّدة (منذ 2026-07-01):** كل زر "تعديل" أو "حذف" حسّاس في أي صفحة (`src/pages/*.tsx`) يجب أن يمرّ عبر `ConfirmDialog` (مع `requirePassword` الافتراضي `true`) قبل تنفيذ العملية. الحذف كان مضبوطاً بهذه الطريقة في كل الصفحات من البداية؛ التعديل لم يكن كذلك في أغلب الصفحات (Warranties, DailyExpenses, DirectSales, Employees ×2, PendingDebts, Suppliers ×2, MaintenanceInvoices) — تم فحصها وتوحيدها جميعاً لتتبع نفس نمط `warnX`/`confirmXEdit` المستخدم أصلاً في PurchaseInvoices.tsx وSalesInvoices.tsx. لا يوجد الآن أي زر تعديل أو حذف في المشروع يتجاوز هذه البوابة.
 
 ### مسار قاعدة البيانات في التطوير vs الإنتاج
 
@@ -1290,3 +1391,22 @@ const dbPath = app.getPath('userData') + '/garage.db'
 
 *آخر تحديث: 2026-07-01*
 *الإصدار الموثَّق: يشمل كل التعديلات حتى تاريخ كتابة هذا الملف*
+
+**تحديث 2026-07-01:** حُذفت صفحة "لوحة التحكم" (`src/pages/Home.tsx`) بالكامل — كانت شاشة تكرر إحصائيات موجودة أصلاً في CashLedger.tsx وReports.tsx وWarranties.tsx دون أن تضيف قيمة مستقلة. المسار الافتراضي `/` أصبح يُعيد التوجيه (`<Navigate>`) إلى `/cash-ledger`، وانخفض عدد روابط Sidebar من 13 إلى 12. الدوال `calcEndDate` و`daysRemaining` في `src/utils/warranty.ts` لم تُحذف لأنها لا تزال مستخدمة في `Warranties.tsx`.
+
+**تحديث 2026-07-01 (٢):** أُضيفت ميزة "النسخ الاحتياطي التلقائي" (`electron/auto-backup.ts`) — نسخ دوري لـ garage.db إلى مجلد يحدده المستخدم (مثلاً مجلد Google Drive/Dropbox محلي)، بقنوات IPC جديدة `autoBackup:*` وجدول `app_settings` جديد، بدون أي تعديل على ميزة النسخ اليدوي `backup:export`/`backup:import` الموجودة أصلاً. راجع التفاصيل الكاملة ضمن قسم "النسخ الاحتياطي" و`src/pages/Settings.tsx` أعلاه.
+
+**تحديث 2026-07-01 (٣):** ثلاثة تعديلات إضافية غير مرتبطة بالنسخ الاحتياطي:
+1. **أيقونة تطبيق مخصّصة:** استُبدلت أيقونة Vite/Electron الافتراضية بأيقونة `icon.png` مخصّصة، مع أيقونات تعبئة مخصّصة (`build/icon.icns`/`.ico`/`.png`) لكل من mac/win/linux في `electron-builder.json5`. تم حذف ملفات SVG الافتراضية القديمة (`public/vite.svg`, `public/electron-vite.svg`, `public/electron-vite.animate.svg`).
+2. **خط Tajawal محلي:** استُبدل تحميل الخط من Google Fonts CDN (في `index.html` وفي `printPdf.ts`) بحزمة npm محلية `@fontsource/tajawal` — مستوردة في `src/index.css` وكـ CSS نصّي مُحقَن مباشرة في `printPdf.ts` (`?inline` imports). يجعل التطبيق ونوافذ الطباعة تعمل بدون اتصال إنترنت.
+3. **حُذفت دالة `addMaintenanceItem`** (وقناة `maintenance:addItem` المقابلة) من `src/db/maintenance.ts`/`ipc-handlers.ts`/`dbService` لعدم استخدامها — كانت مخصّصة لإضافة بند واحد لفاتورة صيانة موجودة دون فتح نموذج التعديل الكامل، لكن لم تُستدعَ من أي واجهة.
+
+**تحديث 2026-07-01 (٤) — المرحلة 1 من خطة تحسينات الأمان:** إضافات أمنية بحتة، بدون حذف أو تعطيل أي ميزة/سلوك حالي:
+1. **كلمة السر أصبحت hash** (`bcryptjs`) مخزَّن في `app_settings` بدل ثابت نصي `APP_PASSWORD`، والتحقق منها انتقل بالكامل إلى الـ main process عبر قنوات `auth:*` جديدة (`electron/auth.ts`) — الـ Renderer لم يعد يقارن كلمة السر محلياً إطلاقاً. كلمة السر الحالية `garage2026` تستمر بالعمل تلقائياً (بذرة أول تشغيل)، وتصبح قابلة للتغيير من شاشة إعدادات جديدة "تغيير كلمة السر".
+2. **قفل تلقائي عند الخمول** (`src/utils/useAutoLock.ts`، افتراضي 10 دقائق، قابل للتعطيل/التعديل من الإعدادات) يُعيد عرض `PasswordGate` تلقائياً.
+3. **قفل مؤقت متصاعد** عند 5 محاولات كلمة سر خاطئة متتالية (30 ثانية ← دقيقة ← 5 دقائق)، يصمد أمام إعادة تشغيل التطبيق (مخزَّن في `app_settings` لا في الذاكرة).
+4. **سجل نشاط** جديد (جدول `activity_log`) يوثّق تلقائياً كل عملية تعديل/حذف حساسة (نفس نطاق `ConfirmDialog`)، معروض للقراءة فقط في الإعدادات.
+5. **ضمان atomic كامل:** `maintenance:add/update` و`directSale:add/update` أصبحت مغلَّفة بـ transaction خارجي واحد يضمّ كتابة الفاتورة ومزامنة الكفالات معاً (بالاستفادة من دعم better-sqlite3 التلقائي لتداخل transactions عبر SAVEPOINT، دون أي تعديل على `src/db/maintenance.ts`/`direct-sale.ts`).
+6. **تشفير قاعدة البيانات بالكامل (SQLCipher) أُجِّل عمداً** لمرحلة مستقلة لاحقة — راجع "غير مكتمل / قيود معروفة" أعلاه للتفاصيل والسبب.
+
+راجع التفاصيل الكاملة ضمن قسم "الأمان (`electron/auth.ts`)" في الـ Backend، وقسم "الأمان وكلمة السر" آخر الملف.
