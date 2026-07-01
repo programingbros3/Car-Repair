@@ -40,6 +40,7 @@ import {
   getAutoBackupSettings, updateAutoBackupSettings, getAutoBackupStatus,
   runAutoBackup, pickAutoBackupFolder,
 } from './auto-backup'
+import { getVatSettings, updateVatSettings } from './vat'
 import {
   verifyPassword, changePassword, getLockoutStatus,
   getAutoLockSettings, updateAutoLockSettings,
@@ -517,4 +518,9 @@ export function registerIpcHandlers(db: DB): void {
   on('auth:updateAutoLockSettings', (updates: Partial<AutoLockSettings>) => updateAutoLockSettings(db, updates))
 
   on('activityLog:getAll', (limit?: number) => getActivityLog(db, limit))
+
+  /* ─────────────── الضريبة (VAT) — اختيارية، معطّلة افتراضياً، محسوبة وقت العرض فقط ─────────────── */
+  on('vat:getSettings', () => getVatSettings(db))
+  on('vat:updateSettings', (updates: Partial<{ enabled: boolean; rate: number }>) =>
+    updateVatSettings(db, updates))
 }

@@ -5,6 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import type { VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
    Local Types
@@ -55,6 +56,16 @@ function discountBreakdown(
     subtotal: subtotal != null ? round2(subtotal) : null,
     label: `${v}%${amount != null ? ` (${fmtN(amount)} ₪)` : ''}`,
   }
+}
+
+/* الضريبة (VAT) للعرض فقط (derived): تُحسب على المجموع بعد الخصم (total المخزَّن).
+   تُرجع null عندما تكون الضريبة معطّلة أو النسبة ≤ 0 — فلا يظهر أي شيء متعلق بها. */
+type VatBreakdown = { rate: number; tax: number; grand: number }
+function vatBreakdown(base: number, vat: VatSettings | null): VatBreakdown | null {
+  if (!vat || !vat.enabled || vat.rate <= 0) return null
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const tax = round2(base * vat.rate / 100)
+  return { rate: vat.rate, tax, grand: round2(base + tax) }
 }
 
 /* ════════════════════════════════════════
@@ -194,6 +205,10 @@ export default function MaintenanceInvoices() {
   const hasDlFilters = !!(dlSearch || dlPhone || dlPlate || dlFrom || dlTo || dlAmtMin || dlAmtMax)
   const clearIpFilters = () => { setIpSearch(''); setIpPhone(''); setIpPlate(''); setIpFrom(''); setIpTo(''); setIpAmtMin(''); setIpAmtMax('') }
   const clearDlFilters = () => { setDlSearch(''); setDlPhone(''); setDlPlate(''); setDlFrom(''); setDlTo(''); setDlAmtMin(''); setDlAmtMax('') }
+
+  /* إعدادات الضريبة (VAT) — تُحمَّل مرة واحدة؛ null افتراضياً فلا يظهر أي شيء متعلق بها */
+  const [vat, setVat] = useState<VatSettings | null>(null)
+  useEffect(() => { dbService.vat.getSettings().then(setVat).catch(() => { /* تجاهل — تبقى الضريبة مخفية */ }) }, [])
 
   /* Draft */
   useEffect(() => {
@@ -387,6 +402,13 @@ export default function MaintenanceInvoices() {
           <div class="detail-item"><label>الإجمالي بعد الخصم</label><span class="amount-in">${fmt(full.total)} ₪</span></div>`
             : `
           <div class="detail-item"><label>الإجمالي الكلي</label><span class="amount-in">${fmt(full.total)} ₪</span></div>`
+          })()}
+          ${(() => {
+            const vb = vatBreakdown(full.total, vat)
+            return vb ? `
+          <div class="detail-item"><label>المجموع قبل الضريبة</label><span>${fmt(full.total)} ₪</span></div>
+          <div class="detail-item"><label>الضريبة (${vb.rate}%)</label><span>${fmt(vb.tax)} ₪</span></div>
+          <div class="detail-item"><label>الإجمالي شامل الضريبة</label><span class="amount-in">${fmt(vb.grand)} ₪</span></div>` : ''
           })()}
           <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(full.amountPaid ?? 0)} ₪</span></div>
           <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(full.amountRemaining ?? 0)} ₪</span></div>
@@ -763,6 +785,23 @@ export default function MaintenanceInvoices() {
                   <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
                     الإجمالي الكلي: <strong>{fmt(detailsCar.total)} ₪</strong>
                   </div>
+                )
+              })()}
+              {(() => {
+                const vb = vatBreakdown(detailsCar.total, vat)
+                if (!vb) return null
+                return (
+                  <>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      المجموع قبل الضريبة: <strong>{fmt(detailsCar.total)} ₪</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الضريبة ({vb.rate}%): <strong>{fmt(vb.tax)} ₪</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الإجمالي شامل الضريبة: <strong>{fmt(vb.grand)} ₪</strong>
+                    </div>
+                  </>
                 )
               })()}
 

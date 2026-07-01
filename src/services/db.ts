@@ -42,7 +42,7 @@ import type {
   SaleInvoiceRow, PurchaseInvoiceRow,
   CashAuditRow, CashAuditInput,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
-  PasswordVerifyResult, AutoLockSettings, ActivityLogRow,
+  PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
   UpcomingChequeRow,
   DebtAgingRow,
 } from '../db/types'
@@ -334,6 +334,13 @@ export const dbService = {
   /* ─────────────── سجل النشاط (قراءة فقط) ─────────────── */
   activityLog: {
     getAll: (limit?: number) => invoke<ActivityLogRow[]>('activityLog:getAll', limit),
+  },
+
+  /* ─────────────── الضريبة (VAT) — اختيارية، معطّلة افتراضياً ─────────────── */
+  vat: {
+    getSettings: () => invoke<VatSettings>('vat:getSettings'),
+    updateSettings: (updates: Partial<VatSettings>) =>
+      invoke<VatSettings>('vat:updateSettings', updates),
   },
 }
 

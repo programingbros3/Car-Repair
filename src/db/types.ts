@@ -530,6 +530,13 @@ export interface AutoLockSettings {
   minutes: number
 }
 
+// ── الضريبة (VAT) — اختيارية، قابلة للتعطيل الكامل، لا تُخزَّن ضمن total_amount ──
+// معطّلة افتراضياً؛ عند التفعيل تُحسب وقت العرض فقط (derived) في المودالات والإيصالات.
+export interface VatSettings {
+  enabled: boolean
+  rate: number // نسبة مئوية (مثلاً 16 = الضريبة الرسمية في فلسطين)
+}
+
 export interface ActivityLogRow {
   id: number
   action_type: string

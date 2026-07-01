@@ -3,7 +3,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import PasswordInput from '../components/PasswordInput'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
-import type { AutoBackupSettings, AutoBackupStatus, AutoLockSettings, ActivityLogRow } from '../db/types'
+import type { AutoBackupSettings, AutoBackupStatus, AutoLockSettings, ActivityLogRow, VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
    Settings — النسخ الاحتياطي (يدوي) + النسخ الاحتياطي التلقائي
@@ -189,6 +189,41 @@ export default function Settings() {
       showError('فشل حفظ إعدادات القفل التلقائي', err)
     } finally {
       setLockSaving(false)
+    }
+  }
+
+  /* ════════════════════════════════════════
+     الضريبة (VAT) — اختيارية، معطّلة افتراضياً
+  ════════════════════════════════════════ */
+  const [vatLoaded, setVatLoaded]   = useState(false)
+  const [vatEnabled, setVatEnabled] = useState(false)
+  const [vatRate, setVatRate]       = useState(16)
+  const [vatSaving, setVatSaving]   = useState(false)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const settings = await dbService.vat.getSettings()
+        setVatEnabled(settings.enabled)
+        setVatRate(settings.rate)
+      } catch (err) {
+        showError('تعذّر تحميل إعدادات الضريبة', err)
+      } finally {
+        setVatLoaded(true)
+      }
+    })()
+  }, [])
+
+  const persistVatSettings = async (updates: Partial<VatSettings>) => {
+    setVatSaving(true)
+    try {
+      const settings = await dbService.vat.updateSettings(updates)
+      setVatEnabled(settings.enabled)
+      setVatRate(settings.rate)
+    } catch (err) {
+      showError('فشل حفظ إعدادات الضريبة', err)
+    } finally {
+      setVatSaving(false)
     }
   }
 
@@ -463,6 +498,53 @@ export default function Settings() {
               onBlur={() => persistLockSettings({ minutes: lockMinutes })}
             />
           </div>
+        </div>
+      </div>
+
+      {/* ── قسم جديد: الضريبة (VAT) — اختيارية، معطّلة افتراضياً ── */}
+      <div className="mi-card">
+        <h2 className="mi-section-title">الضريبة (VAT)</h2>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 520 }}>
+          <div style={rowStyle}>
+            <div>
+              <div style={rowTitle}>تفعيل الضريبة</div>
+              <div style={rowDesc}>عند التفعيل تظهر الضريبة المحسوبة تلقائياً في مودالات تفاصيل الفواتير والإيصالات المطبوعة. عند التعطيل لا يظهر أي شيء متعلق بالضريبة في أي مكان.</div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                className="mi-checkbox"
+                checked={vatEnabled}
+                disabled={!vatLoaded || vatSaving}
+                onChange={e => { setVatEnabled(e.target.checked); void persistVatSettings({ enabled: e.target.checked }) }}
+              />
+              <span style={{ fontSize: '0.86rem', color: '#444' }}>{vatEnabled ? 'مفعّلة' : 'معطّلة'}</span>
+            </label>
+          </div>
+
+          {vatEnabled && (
+            <>
+              <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
+
+              <div style={rowStyle}>
+                <div>
+                  <div style={rowTitle}>نسبة الضريبة (%)</div>
+                  <div style={rowDesc}>النسبة المئوية المطبَّقة على المجموع بعد الخصم (الضريبة الرسمية في فلسطين 16%).</div>
+                </div>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  style={{ ...numberInputStyle, flexShrink: 0 }}
+                  value={vatRate}
+                  disabled={!vatLoaded || vatSaving}
+                  onChange={e => setVatRate(Number(e.target.value) || 0)}
+                  onBlur={() => persistVatSettings({ rate: vatRate })}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 
