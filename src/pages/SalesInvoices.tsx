@@ -20,7 +20,7 @@ const TYPE_CLS:    Record<SaleInvoiceType, string>   = { maintenance: 'mi-badge-
 const STATUS_LABELS: Record<SaleInvoiceStatus, string> = { paid: 'مدفوع', partial_debt: 'دين جزئي', full_debt: 'دين كامل' }
 const STATUS_CLS:    Record<SaleInvoiceStatus, string> = { paid: 'mi-badge-green', partial_debt: 'mi-badge-yellow', full_debt: 'mi-badge-red' }
 
-const fmt = (n: number) => n.toLocaleString('ar-EG')
+const fmt = (n: number) => n.toLocaleString('en-US')
 
 const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
@@ -107,6 +107,7 @@ export default function SalesInvoices() {
   /* ── Search & Filter ── */
   const [search,       setSearch]       = useState('')
   const [phoneSearch,  setPhoneSearch]  = useState('')
+  const [plateSearch,  setPlateSearch]  = useState('')
   const [typeFilter,   setTypeFilter]   = useState<'all' | SaleInvoiceType>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | SaleInvoiceStatus>('all')
   const [filterFrom,   setFilterFrom]   = useState('')
@@ -147,6 +148,7 @@ export default function SalesInvoices() {
       ? fuse.search(normalizeAr(q)).map(r => salesInvoices[r.item._idx])
       : [...salesInvoices]
     if (phoneSearch)            result = result.filter(i => i.phone.includes(phoneSearch))
+    if (plateSearch)            result = result.filter(i => i.carPlate.toLowerCase().includes(plateSearch.toLowerCase()))
     if (typeFilter !== 'all')   result = result.filter(i => i.type === typeFilter)
     if (statusFilter !== 'all') result = result.filter(i => i.status === statusFilter)
     if (filterFrom)             result = result.filter(i => i.date >= filterFrom)
@@ -156,11 +158,11 @@ export default function SalesInvoices() {
     return result
   }, [salesInvoices, search, phoneSearch, typeFilter, statusFilter, filterFrom, filterTo, amtMin, amtMax, fuse])
 
-  const hasFilters = !!search.trim() || !!phoneSearch || typeFilter !== 'all' || statusFilter !== 'all'
+  const hasFilters = !!search.trim() || !!phoneSearch || !!plateSearch || typeFilter !== 'all' || statusFilter !== 'all'
     || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
 
   const clearFilters = () => {
-    setSearch(''); setPhoneSearch(''); setTypeFilter('all'); setStatusFilter('all')
+    setSearch(''); setPhoneSearch(''); setPlateSearch(''); setTypeFilter('all'); setStatusFilter('all')
     setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('')
   }
 
@@ -262,6 +264,10 @@ export default function SalesInvoices() {
           <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
             <input type="text" className="mi-search-input" placeholder="📞  بحث برقم الهاتف..."
               value={phoneSearch} onChange={e => setPhoneSearch(e.target.value)} />
+          </div>
+          <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
+            <input type="text" className="mi-search-input" placeholder="🚗  بحث بنمرة السيارة..."
+              value={plateSearch} onChange={e => setPlateSearch(e.target.value)} />
           </div>
 
           <div className="pd-type-tabs">
@@ -486,12 +492,16 @@ export default function SalesInvoices() {
                 <div className="mi-form-field">
                   <label className="mi-form-label">الإجمالي ₪</label>
                   <input type="number" min={0} className="mi-form-input" value={editForm.total}
-                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">المدفوع ₪</label>
                   <input type="number" min={0} className="mi-form-input" value={editForm.paid}
-                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">نمرة السيارة {editForm.type === 'maintenance' && <span className="mi-required">*</span>}</label>
@@ -567,7 +577,8 @@ export default function SalesInvoices() {
                       <div className="mi-form-field">
                         <label className="mi-form-label">المبلغ ₪</label>
                         <input type="number" min={0} className="mi-form-input" value={row.amount || ''}
-                          onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))} />
+                          onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))}
+                          onBlur={e => { if (!e.target.value) updatePayRow(row.id, 'amount', 0) }} />
                       </div>
                       {row.method === 'check' && (<>
                         <div className="mi-form-field">

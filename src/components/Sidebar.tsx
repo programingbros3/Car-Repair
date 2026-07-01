@@ -13,10 +13,11 @@ const navItems = [
   { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
   { to: '/warranties',         icon: '🛡️', label: 'الكفالات'           },
   { to: '/reports',            icon: '📊', label: 'التقارير'           },
+  { to: '/settings',           icon: '⚙', label: 'الإعدادات'          },
 ]
 
 function getArabicDate(): string {
-  return new Date().toLocaleDateString('ar-EG', {
+  return new Date().toLocaleDateString('ar-EG-u-nu-latn', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   })
 }
@@ -24,7 +25,7 @@ function getArabicDate(): string {
 export default function Sidebar() {
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">كراج</div>
+      <div className="sidebar-logo">كراج التل الأخضر</div>
 
       <ul className="sidebar-nav">
         {navItems.map(({ to, icon, label }) => (

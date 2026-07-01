@@ -10,7 +10,9 @@
    • منطق الأعمال الأساسي يعيش في src/db/* (Layer A)؛ هذا الملف يربطه بالقنوات
      فقط، مع SQL مضمّن للفجوات (الحذف/التعديل/الدليل/الكفالات/العروض المجمّعة).
 ════════════════════════════════════════════════════════════════════════ */
-import { ipcMain } from 'electron'
+import { ipcMain, dialog, app } from 'electron'
+import fs from 'node:fs'
+import path from 'node:path'
 import type Database from 'better-sqlite3'
 
 import {
@@ -18,7 +20,7 @@ import {
   releaseMaintenanceCar, getMaintenanceInvoices, getMaintenanceInvoice, getCarHistory,
 } from '../src/db/maintenance'
 import {
-  addDirectSaleInvoice, getDirectSaleInvoices, getDirectSaleInvoice,
+  addDirectSaleInvoice, updateDirectSaleItems, getDirectSaleInvoices, getDirectSaleInvoice,
 } from '../src/db/direct-sale'
 import {
   addSupplierInvoice, addSupplierPayment, addSupplierDebtPayment,
@@ -26,8 +28,8 @@ import {
 } from '../src/db/suppliers'
 import {
   addDailyExpense, getDailyExpenses,
-  addEmployee, getEmployees,
-  addSalaryPayment, getSalaryHistory, getAllSalaries,
+  addEmployee, updateEmployee, getEmployees,
+  addSalaryPayment, updateSalaryPayment, getSalaryHistory, getAllSalaries,
 } from '../src/db/expenses'
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
 import { getLedgerSummary, getLedgerByDateRange, recordLedgerEntry, REF } from '../src/db/ledger'
@@ -35,7 +37,7 @@ import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers } from
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
-  PaymentInput, InvoiceType, InvoiceItemInput,
+  PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput,
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
   DailyExpenseInput, EmployeeInput, SalaryInput,
   SupplierDirectoryInput, WarrantyInput,
@@ -44,6 +46,52 @@ import type {
 type DB = Database.Database
 
 const today = () => new Date().toISOString().slice(0, 10)
+
+/* ── مزامنة الكفالات مع جدول warranties عند حفظ الفواتير ── */
+function syncWarrantiesForMaintenance(db: DB, invoiceId: number): void {
+  const inv = db.prepare(
+    `SELECT customer_name, customer_phone, car_plate, date_received FROM maintenance_invoices WHERE id=?`,
+  ).get(invoiceId) as any
+  if (!inv) return
+  db.transaction(() => {
+    db.prepare(`DELETE FROM warranties WHERE source='maintenance' AND source_id=?`).run(invoiceId)
+    const items = db.prepare(
+      `SELECT item_name, warranty FROM invoice_items WHERE invoice_id=? AND invoice_type='maintenance'`,
+    ).all(invoiceId) as any[]
+    for (const item of items) {
+      if (!item.warranty) continue
+      try {
+        const w = JSON.parse(item.warranty)
+        if (!w.value || !w.unit) continue
+        db.prepare(`
+          INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, item_name, start_date, period_value, period_unit, notes)
+          VALUES (?,?,?,?,?,?,?,?,?,?)
+        `).run('maintenance', invoiceId, inv.customer_name, inv.customer_phone, inv.car_plate,
+               item.item_name, inv.date_received, Number(w.value), String(w.unit), null)
+      } catch { /* JSON غير صالح، تخطّ */ }
+    }
+  })()
+}
+
+function syncWarrantiesForDirectSale(db: DB, invoiceId: number): void {
+  const inv = db.prepare(
+    `SELECT customer_name, customer_phone, sale_date, warranty FROM direct_sale_invoices WHERE id=?`,
+  ).get(invoiceId) as any
+  if (!inv) return
+  db.transaction(() => {
+    db.prepare(`DELETE FROM warranties WHERE source='direct_sale' AND source_id=?`).run(invoiceId)
+    if (!inv.warranty) return
+    try {
+      const w = JSON.parse(inv.warranty)
+      if (!w.value || !w.unit) return
+      db.prepare(`
+        INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, item_name, start_date, period_value, period_unit, notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+      `).run('direct_sale', invoiceId, inv.customer_name, inv.customer_phone, null,
+             'كفالة شاملة', inv.sale_date, Number(w.value), String(w.unit), null)
+    } catch { /* JSON غير صالح، تخطّ */ }
+  })()
+}
 
 /** يسجّل معالجاً ملفوفاً بـ try/catch موحّد */
 function on(channel: string, fn: (...args: any[]) => any): void {
@@ -80,12 +128,19 @@ export function registerIpcHandlers(db: DB): void {
   on('maintenance:getAll', (filters?: MaintenanceFilters) => getMaintenanceInvoices(filters ?? {}))
   on('maintenance:getOne', (id: number) => getMaintenanceInvoice(id))
   on('maintenance:history', (carPlate: string) => getCarHistory(carPlate))
-  on('maintenance:add', (input: MaintenanceInvoiceInput) => addMaintenanceInvoice(input))
+  on('maintenance:add', (input: MaintenanceInvoiceInput) => {
+    const id = addMaintenanceInvoice(input)
+    syncWarrantiesForMaintenance(db, id)
+    return id
+  })
   on('maintenance:update', (id: number, updates: {
     customer_name?: string; customer_phone?: string; car_plate?: string
     car_type?: string; car_color?: string; date_received?: string
     warranty?: string; notes?: string; items?: InvoiceItemInput[]
-  }) => updateMaintenanceInvoice(id, updates))
+  }) => {
+    updateMaintenanceInvoice(id, updates)
+    syncWarrantiesForMaintenance(db, id)
+  })
   on('maintenance:addItem', (invoiceId: number, item: InvoiceItemInput) =>
     addMaintenanceItem(invoiceId, item))
   on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[] }) =>
@@ -99,6 +154,7 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM payments WHERE invoice_id=? AND invoice_type='maintenance'`).run(id)
       db.prepare(`DELETE FROM debt_payments WHERE invoice_id=? AND invoice_type='maintenance'`).run(id)
       db.prepare(`DELETE FROM invoice_items WHERE invoice_id=? AND invoice_type='maintenance'`).run(id)
+      db.prepare(`DELETE FROM warranties WHERE source='maintenance' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM maintenance_invoices WHERE id=?`).run(id)
     })()
     return { id }
@@ -107,7 +163,11 @@ export function registerIpcHandlers(db: DB): void {
   /* ─────────────── البيع المباشر ─────────────── */
   on('directSale:getAll', (filters?: DirectSaleFilters) => getDirectSaleInvoices(filters ?? {}))
   on('directSale:getOne', (id: number) => getDirectSaleInvoice(id))
-  on('directSale:add', (input: DirectSaleInput) => addDirectSaleInvoice(input))
+  on('directSale:add', (input: DirectSaleInput) => {
+    const id = addDirectSaleInvoice(input)
+    syncWarrantiesForDirectSale(db, id)
+    return id
+  })
   on('directSale:update', (id: number, input: DirectSaleInput) => {
     db.prepare(
       `UPDATE direct_sale_invoices SET customer_name=?, customer_phone=?, sale_date=?, warranty=?, notes=? WHERE id=?`,
@@ -115,7 +175,10 @@ export function registerIpcHandlers(db: DB): void {
       input.customer_name, input.customer_phone ?? null, input.sale_date,
       input.warranty ?? null, input.notes ?? null, id,
     )
+    syncWarrantiesForDirectSale(db, id)
   })
+  on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[]) =>
+    updateDirectSaleItems(invoiceId, items))
   on('directSale:addPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
     addPayment(invoiceId, 'direct_sale', payments, date))
   on('directSale:delete', (id: number) => {
@@ -127,6 +190,7 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM payments WHERE invoice_id=? AND invoice_type='direct_sale'`).run(id)
       db.prepare(`DELETE FROM debt_payments WHERE invoice_id=? AND invoice_type='direct_sale'`).run(id)
       db.prepare(`DELETE FROM invoice_items WHERE invoice_id=? AND invoice_type='direct_sale'`).run(id)
+      db.prepare(`DELETE FROM warranties WHERE source='direct_sale' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM direct_sale_invoices WHERE id=?`).run(id)
     })()
     return { id }
@@ -184,9 +248,7 @@ export function registerIpcHandlers(db: DB): void {
   /* ─────────────── الموظفون ─────────────── */
   on('employee:getAll', () => getEmployees())
   on('employee:add', (input: EmployeeInput) => addEmployee(input))
-  on('employee:update', (id: number, input: EmployeeInput) => {
-    db.prepare(`UPDATE employees SET name=?, phone=? WHERE id=?`).run(input.name, input.phone ?? null, id)
-  })
+  on('employee:update', (id: number, input: EmployeeInput) => updateEmployee(id, input))
   on('employee:delete', (id: number) => {
     db.prepare(`DELETE FROM employees WHERE id=?`).run(id)
     return { id }
@@ -196,6 +258,7 @@ export function registerIpcHandlers(db: DB): void {
   on('salary:getAll', () => getAllSalaries())
   on('salary:getByEmployee', (employeeId: number) => getSalaryHistory(employeeId))
   on('salary:add', (employeeId: number, input: SalaryInput) => addSalaryPayment(employeeId, input))
+  on('salary:update', (id: number, input: SalaryInput) => updateSalaryPayment(id, input))
   on('salary:delete', (id: number) => {
     db.transaction(() => {
       db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.SALARY, id)
@@ -272,6 +335,23 @@ export function registerIpcHandlers(db: DB): void {
     return { id }
   })
 
+  /* ─────────────── إحصاء نهاية اليوم ─────────────── */
+  on('cashAudit:getAll', () =>
+    db.prepare(`SELECT * FROM daily_cash_audits ORDER BY audit_date DESC`).all()
+  )
+  on('cashAudit:save', (input: { audit_date: string; system_total: number; actual_amount: number; difference: number }) => {
+    const info = db.prepare(`
+      INSERT INTO daily_cash_audits (audit_date, system_total, actual_amount, difference)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(audit_date) DO UPDATE SET
+        system_total  = excluded.system_total,
+        actual_amount = excluded.actual_amount,
+        difference    = excluded.difference,
+        created_at    = datetime('now','localtime')
+    `).run(input.audit_date, input.system_total, input.actual_amount, input.difference)
+    return Number(info.lastInsertRowid)
+  })
+
   /* ─────────────── الكفالات ─────────────── */
   on('warranty:getAll', () => db.prepare(`SELECT * FROM warranties ORDER BY start_date DESC, id DESC`).all())
   on('warranty:add', (input: WarrantyInput) => {
@@ -301,5 +381,83 @@ export function registerIpcHandlers(db: DB): void {
   on('warranty:delete', (id: number) => {
     db.prepare(`DELETE FROM warranties WHERE id=?`).run(id)
     return { id }
+  })
+
+  /* ── دفعات الفاتورة (صيانة / بيع مباشر) ── */
+  on('payments:getByInvoice', (invoiceId: number, invoiceType: string) =>
+    db.prepare(`
+      SELECT method, amount, payment_date
+      FROM payments
+      WHERE invoice_id = ? AND invoice_type = ?
+      ORDER BY id ASC
+    `).all(invoiceId, invoiceType)
+  )
+
+  /* ── دفعات فواتير الموردين ── */
+  on('supplierPayments:getByInvoice', (invoiceId: number) =>
+    db.prepare(`
+      SELECT method, amount, payment_date
+      FROM supplier_payments
+      WHERE invoice_id = ?
+      ORDER BY id ASC
+    `).all(invoiceId)
+  )
+
+  /* ─────────────── النسخ الاحتياطي ─────────────── */
+  ipcMain.handle('backup:export', async () => {
+    try {
+      const dbPath = db.name
+      const dateStr = new Date().toISOString().slice(0, 10)
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        title: 'حفظ نسخة احتياطية',
+        defaultPath: path.join(app.getPath('downloads'), `garage-backup-${dateStr}.db`),
+        filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+      })
+      if (canceled || !filePath) return { success: true, data: null }
+      db.pragma('wal_checkpoint(FULL)')
+      fs.copyFileSync(dbPath, filePath)
+      return { success: true, data: filePath }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('backup:import', async () => {
+    try {
+      const dbPath = db.name
+      const { filePaths, canceled } = await dialog.showOpenDialog({
+        title: 'استيراد نسخة احتياطية',
+        filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+        properties: ['openFile'],
+      })
+      if (canceled || filePaths.length === 0) return { success: true, data: null }
+      const importPath = filePaths[0]
+
+      // التحقق من أن الملف نسخة احتياطية صالحة للتطبيق
+      db.prepare('ATTACH DATABASE ? AS _imported_validate').run(importPath)
+      const validTable = db.prepare(
+        `SELECT name FROM _imported_validate.sqlite_master WHERE type='table' AND name='maintenance_invoices'`,
+      ).get()
+      db.prepare('DETACH DATABASE _imported_validate').run()
+      if (!validTable) {
+        return { success: false, error: 'الملف المختار ليس نسخة احتياطية صالحة لتطبيق الكراج' }
+      }
+
+      // نسخة احتياطية تلقائية من قاعدة البيانات الحالية
+      const timestamp = Date.now()
+      const autoBackupPath = `${dbPath}.backup-${timestamp}`
+      db.pragma('wal_checkpoint(FULL)')
+      fs.copyFileSync(dbPath, autoBackupPath)
+
+      // إغلاق الاتصال، تبديل الملف، إعادة التشغيل
+      db.close()
+      fs.copyFileSync(importPath, dbPath)
+      app.relaunch()
+      app.exit(0)
+      return { success: true, data: null }
+    } catch (err) {
+      try { db.prepare('DETACH DATABASE _imported_validate').run() } catch { /* تجاهل */ }
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
   })
 }

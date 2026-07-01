@@ -12,8 +12,8 @@
 
    ملاحظات دقّة:
      • InvoiceItemRow في types.ts لا يحوي warranty / part_type (موجودان في
-       المخطّط لكن غير ممثَّلَين في النوع)، لذا تُستخدم قيم افتراضية عند القراءة
-       وتُسقَط عند الكتابة.
+       المخطّط لكن غير ممثَّلَين في النوع)، لذا تُستخدم قيم افتراضية عند القراءة.
+     • InvoiceItemInput الآن يحوي warranty / part_type، فتُكتبان في DB.
      • CarRecord لا يحمل دفعات؛ SaleRecord/SupplierRecord/DebtRecord تحملها،
        لذا تُمرَّر صفوف الدفعات كوسيط منفصل في اتجاه القراءة.
      • suppliers (الدليل) و warranties لا نظير لهما في types.ts بعد، فأُسقِطا.
@@ -132,24 +132,27 @@ export function dbPaymentToRow(r: PaymentRowDb): PaymentRow {
 /* ════════════════════════════════════════
    عناصر الفاتورة (صيانة / بيع مباشر)
 ════════════════════════════════════════ */
-/** CarItem (واجهة) → InvoiceItemInput (DB) — warranty/partType غير ممثَّلين في النوع */
+/** CarItem (واجهة) → InvoiceItemInput (DB) */
 export function carItemToDbInput(item: CarItem): InvoiceItemInput {
   return {
     item_name: item.name,
     quantity: item.quantity,
     unit_price: item.unitPrice,
     notes: item.notes || undefined,
+    warranty: item.warranty || undefined,
+    part_type: item.partType,
   }
 }
 
-/** InvoiceItemRow (DB) → CarItem (واجهة) — warranty/partType بقيم افتراضية */
+/** InvoiceItemRow (DB) → CarItem (واجهة) */
 export function dbRowToCarItem(r: InvoiceItemRow): CarItem {
+  const raw = r as any
   return {
     name: r.item_name,
     quantity: r.quantity,
     unitPrice: r.unit_price,
-    warranty: '',
-    partType: 'part',
+    warranty: raw.warranty ?? '',
+    partType: raw.part_type === 'service' ? 'service' : 'part',
     notes: r.notes ?? '',
   }
 }
@@ -233,6 +236,8 @@ export function dbRowToCarRecord(row: MaintenanceInvoiceRow, items: InvoiceItemR
     deliveredDate: row.date_released ?? undefined,
     notes: row.notes ?? '',
     total: row.total_amount,
+    amountPaid: row.amount_paid,
+    amountRemaining: row.amount_remaining,
     items: items.map(dbRowToCarItem),
   }
 }
@@ -365,6 +370,7 @@ export function employeeToDbInput(emp: Employee): EmployeeInput {
   return {
     name: emp.name,
     phone: phoneToDb(emp.phone),
+    daily_wage: emp.dailyWage,
   }
 }
 
@@ -374,6 +380,7 @@ export function dbRowToEmployee(row: EmployeeRow): Employee {
     id: row.id,
     name: row.name,
     phone: phoneToUi(row.phone),
+    dailyWage: row.daily_wage,
   }
 }
 
@@ -384,7 +391,9 @@ export function dbRowToEmployee(row: EmployeeRow): Employee {
 /** SalaryRecord (واجهة) → SalaryInput (DB) */
 export function salaryToDbInput(sal: SalaryRecord): SalaryInput {
   return {
-    amount: sal.amount,
+    days_worked: sal.daysWorked,
+    bonus: sal.bonus,
+    deduction: sal.deduction,
     payment_date: sal.date,
     notes: sal.notes || undefined,
   }
@@ -396,6 +405,10 @@ export function dbRowToSalaryRecord(row: SalaryRow): SalaryRecord {
     id: row.id,
     employeeId: row.employee_id,
     amount: row.amount,
+    dailyWageSnapshot: row.daily_wage_snapshot,
+    daysWorked: row.days_worked,
+    bonus: row.bonus,
+    deduction: row.deduction,
     date: row.payment_date,
     notes: row.notes ?? '',
   }

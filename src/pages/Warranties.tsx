@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { calcEndDate, daysRemaining } from '../utils/warranty'
 
 /* ════════════════════════════════════════
    Module-level helpers
@@ -18,16 +19,7 @@ const normalizeAr = (s: string) =>
 const blockDigits     = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
 const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault() }
 
-const fmt = (n: number) => n.toLocaleString('ar-EG')
-
-/* تاريخ انتهاء الكفالة */
-function calcEndDate(startDate: string, value: number, unit: WarrantyPeriodUnit): string {
-  const d = new Date(startDate)
-  if (unit === 'week')  d.setDate(d.getDate() + value * 7)
-  if (unit === 'month') d.setMonth(d.getMonth() + value)
-  if (unit === 'year')  d.setFullYear(d.getFullYear() + value)
-  return d.toISOString().slice(0, 10)
-}
+const fmt = (n: number) => n.toLocaleString('en-US')
 
 /* عرض الفترة بالعربي */
 const UNIT_WORDS: Record<WarrantyPeriodUnit, [string, string]> = {
@@ -44,10 +36,8 @@ const UNIT_OPTIONS: [WarrantyPeriodUnit, string][] = [
   ['week', 'أسبوع'], ['month', 'شهر'], ['year', 'سنة'],
 ]
 
-/* الأيام المتبقية */
-function daysRemaining(endDate: string): number {
-  return Math.ceil((new Date(endDate).getTime() - Date.now()) / 86_400_000)
-}
+const SOURCE_LABEL: Record<string, string> = { maintenance: 'صيانة', direct_sale: 'بيع مباشر' }
+const SOURCE_CLS:   Record<string, string> = { maintenance: 'mi-badge-orange', direct_sale: 'mi-badge-blue' }
 
 /* لون عداد الأيام المتبقية */
 function remainingColor(days: number): string {
@@ -343,19 +333,20 @@ export default function Warranties() {
             <table className="mi-table">
               <thead>
                 <tr>
-                  <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>القطعة / الخدمة</th>
+                  <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>نوع العملية</th><th>القطعة / الخدمة</th>
                   <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>الأيام المتبقية</th><th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
                 {activeWarranties.length === 0 ? (
-                  <tr><td colSpan={9} className="mi-empty-row">لا توجد كفالات سارية</td></tr>
+                  <tr><td colSpan={10} className="mi-empty-row">لا توجد كفالات سارية</td></tr>
                 ) : activeWarranties.map((w, i) => (
                   <tr key={w.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                     onClick={() => setDetailsWarranty(w)}>
                     <td>{w.customerName}</td>
                     <td>{w.phone ? <span className="mi-phone-highlight">{w.phone}</span> : <span className="mi-badge-gray">غير معروف</span>}</td>
                     <td>{w.carPlate ? <span className="mi-plate">{w.carPlate}</span> : '—'}</td>
+                    <td><span className={SOURCE_CLS[w.source] ?? 'mi-badge-gray'}>{SOURCE_LABEL[w.source] ?? w.source}</span></td>
                     <td>{w.itemName}</td>
                     <td>{w.startDate}</td>
                     <td>{periodLabel(w.periodValue, w.periodUnit)}</td>
@@ -383,19 +374,20 @@ export default function Warranties() {
             <table className="mi-table">
               <thead>
                 <tr>
-                  <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>القطعة / الخدمة</th>
+                  <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>نوع العملية</th><th>القطعة / الخدمة</th>
                   <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>انتهت منذ</th><th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
                 {expiredWarranties.length === 0 ? (
-                  <tr><td colSpan={9} className="mi-empty-row">لا توجد كفالات منتهية</td></tr>
+                  <tr><td colSpan={10} className="mi-empty-row">لا توجد كفالات منتهية</td></tr>
                 ) : expiredWarranties.map((w, i) => (
                   <tr key={w.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                     onClick={() => setDetailsWarranty(w)}>
                     <td>{w.customerName}</td>
                     <td>{w.phone ? <span className="mi-phone-highlight">{w.phone}</span> : <span className="mi-badge-gray">غير معروف</span>}</td>
                     <td>{w.carPlate ? <span className="mi-plate">{w.carPlate}</span> : '—'}</td>
+                    <td><span className={SOURCE_CLS[w.source] ?? 'mi-badge-gray'}>{SOURCE_LABEL[w.source] ?? w.source}</span></td>
                     <td>{w.itemName}</td>
                     <td>{w.startDate}</td>
                     <td>{periodLabel(w.periodValue, w.periodUnit)}</td>
@@ -438,6 +430,7 @@ export default function Warranties() {
                       : <span className="mi-badge-gray">غير معروف</span>}
                   </div>
                   <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span>{detailsWarranty.carPlate ? <span className="mi-plate">{detailsWarranty.carPlate}</span> : <span>—</span>}</div>
+                  <div className="mi-detail-item"><span className="mi-detail-label">نوع العملية</span><span className={SOURCE_CLS[detailsWarranty.source] ?? 'mi-badge-gray'}>{SOURCE_LABEL[detailsWarranty.source] ?? detailsWarranty.source}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">القطعة / الخدمة</span><span>{detailsWarranty.itemName}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">تاريخ البداية</span><span>{detailsWarranty.startDate}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">المدة</span><span>{periodLabel(detailsWarranty.periodValue, detailsWarranty.periodUnit)}</span></div>

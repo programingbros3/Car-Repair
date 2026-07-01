@@ -5,6 +5,7 @@ import type {
   DirectSaleRow,
   DirectSaleDetail,
   DirectSaleFilters,
+  DirectSaleItemInput,
   PaymentInput,
 } from './types'
 
@@ -140,6 +141,36 @@ export function getDirectSaleInvoices(filters: DirectSaleFilters = {}): DirectSa
   return db.prepare(`
     SELECT * FROM direct_sale_invoices ${where} ORDER BY sale_date DESC, id DESC
   `).all(...params) as DirectSaleRow[]
+}
+
+// ─── Update items for an existing direct sale invoice ────────────────────────
+
+export function updateDirectSaleItems(invoiceId: number, items: DirectSaleItemInput[]): void {
+  const db = getDB()
+  db.transaction(() => {
+    db.prepare(
+      `DELETE FROM invoice_items WHERE invoice_id = ? AND invoice_type = 'direct_sale'`,
+    ).run(invoiceId)
+
+    const stmt = db.prepare(`
+      INSERT INTO invoice_items
+        (invoice_id, invoice_type, item_name, quantity, unit_price, customer_owned, notes)
+      VALUES (?, 'direct_sale', ?, ?, ?, 0, ?)
+    `)
+    for (const item of items) {
+      stmt.run(invoiceId, item.item_name, item.quantity, item.unit_price, item.notes ?? null)
+    }
+
+    const total = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+    const row = db.prepare(
+      `SELECT amount_paid FROM direct_sale_invoices WHERE id = ?`,
+    ).get(invoiceId) as { amount_paid: number } | undefined
+    const amountPaid = row?.amount_paid ?? 0
+
+    db.prepare(
+      `UPDATE direct_sale_invoices SET total_amount = ?, amount_remaining = ? WHERE id = ?`,
+    ).run(total, total - amountPaid, invoiceId)
+  })()
 }
 
 // ─── Day 2: Get single invoice with items ────────────────────────────────────

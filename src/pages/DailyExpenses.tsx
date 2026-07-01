@@ -22,7 +22,7 @@ function printExpense(exp: Expense): void {
   const body = `
     <div class="detail-grid">
       <div class="detail-item"><label>الوصف</label><span>${exp.description}</span></div>
-      <div class="detail-item"><label>المبلغ</label><span class="amount-out">${exp.amount.toLocaleString('ar-EG')} ₪</span></div>
+      <div class="detail-item"><label>المبلغ</label><span class="amount-out">${exp.amount.toLocaleString('en-US')} ₪</span></div>
       <div class="detail-item"><label>التاريخ</label><span>${exp.date}</span></div>
       ${exp.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${exp.notes}</span></div>` : ''}
     </div>`
@@ -155,6 +155,8 @@ export default function DailyExpenses() {
         <span>المبلغ (₪) <span className="mi-required">*</span></span>
         <input type="number" min={0} value={form.amount}
           onChange={e => setField('amount', e.target.value)} placeholder="0"
+          onFocus={(e) => { if (e.target.value === '0') setField('amount', '') }}
+          onBlur={(e) => { if (!e.target.value) setField('amount', '0') }}
           className={errCls(submitAttempted && !!amountErr)} />
         {showErr(amountErr)}
       </label>
@@ -219,7 +221,7 @@ export default function DailyExpenses() {
       <div className="stats-grid">
         <div className="stat-card">
           <span className="stat-label">إجمالي المصاريف</span>
-          <span className="stat-value outgoing">{totalExpenses.toLocaleString('ar-EG')} ₪</span>
+          <span className="stat-value outgoing">{totalExpenses.toLocaleString('en-US')} ₪</span>
         </div>
       </div>
 
@@ -277,7 +279,7 @@ export default function DailyExpenses() {
                 <tr key={exp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsExp(exp)}>
                   <td>{exp.description}</td>
-                  <td className="mi-amount">{exp.amount.toLocaleString('ar-EG')} ₪</td>
+                  <td className="mi-amount">{exp.amount.toLocaleString('en-US')} ₪</td>
                   <td>{exp.date}</td>
                   <td>{exp.notes || '—'}</td>
                   <td>
@@ -309,7 +311,7 @@ export default function DailyExpenses() {
                 </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">المبلغ</span>
-                  <span className="mi-amount">{detailsExp.amount.toLocaleString('ar-EG')} ₪</span>
+                  <span className="mi-amount">{detailsExp.amount.toLocaleString('en-US')} ₪</span>
                 </div>
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">التاريخ</span>

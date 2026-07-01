@@ -20,7 +20,7 @@ const TYPE_CLS:    Record<PurchaseType, string>   = { supplier: 'mi-badge-purple
 const STATUS_LABELS: Record<PurchaseStatus, string> = { paid: 'مدفوع', partial_debt: 'دين جزئي', full_debt: 'دين كامل' }
 const STATUS_CLS:    Record<PurchaseStatus, string> = { paid: 'mi-badge-green', partial_debt: 'mi-badge-yellow', full_debt: 'mi-badge-red' }
 
-const fmt = (n: number) => n.toLocaleString('ar-EG')
+const fmt = (n: number) => n.toLocaleString('en-US')
 
 const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
@@ -469,12 +469,16 @@ export default function PurchaseInvoices() {
                 <div className="mi-form-field">
                   <label className="mi-form-label">الإجمالي ₪</label>
                   <input type="number" min={0} className="mi-form-input" value={editForm.total}
-                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">المدفوع ₪</label>
                   <input type="number" min={0} className="mi-form-input" value={editForm.paid}
-                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
                 </div>
                 <div className="mi-form-field mi-form-field-full">
                   <label className="mi-form-label">التفاصيل</label>
@@ -539,7 +543,8 @@ export default function PurchaseInvoices() {
                       <div className="mi-form-field">
                         <label className="mi-form-label">المبلغ ₪</label>
                         <input type="number" min={0} className="mi-form-input" value={row.amount || ''}
-                          onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))} />
+                          onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))}
+                          onBlur={e => { if (!e.target.value) updatePayRow(row.id, 'amount', 0) }} />
                       </div>
                       {row.method === 'check' && (<>
                         <div className="mi-form-field">

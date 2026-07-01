@@ -26,7 +26,7 @@ export type CarRecord = {
   id: number; customerName: string; phone: string; carPlate: string
   carType: string; carColor: string; dateReceived: string
   status: 'in_progress' | 'delivered'; deliveredDate?: string
-  notes: string; total: number; items: CarItem[]
+  notes: string; total: number; amountPaid?: number; amountRemaining?: number; items: CarItem[]
 }
 
 /* ── Direct Sales ── */
@@ -78,9 +78,12 @@ export type Expense = {
 }
 
 /* ── Employees ── */
-export type Employee    = { id: number; name: string; phone: string }
+export type Employee    = { id: number; name: string; phone: string; dailyWage: number }
 export type SalaryRecord = {
-  id: number; employeeId: number; amount: number; date: string; notes: string
+  id: number; employeeId: number
+  amount: number; dailyWageSnapshot: number
+  daysWorked: number; bonus: number; deduction: number
+  date: string; notes: string
 }
 
 /* ── Pending Debts ── */

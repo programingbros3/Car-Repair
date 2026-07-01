@@ -2,14 +2,15 @@
    Home / Dashboard
 ════════════════════════════════════════ */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useGarage } from '../store/GarageContext'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { MonthlyReport, LedgerSummary } from '../db/types'
+import { calcEndDate, daysRemaining } from '../utils/warranty'
 
 const today = () => new Date().toISOString().slice(0, 10)
-const fmt   = (n: number) => n.toLocaleString('ar-EG')
+const fmt   = (n: number) => n.toLocaleString('en-US')
 
 /* تاريخ قبل n يوماً بصيغة YYYY-MM-DD */
 const daysAgo = (n: number) => {
@@ -29,8 +30,9 @@ type OpRow = {
 type Period = 'day' | 'week' | 'month'
 
 export default function Home() {
-  const { maintenanceCars, directSales, expenses, salaries, employees, debts, salesInvoices, purchaseInvoices } = useGarage()
+  const { maintenanceCars, directSales, expenses, salaries, employees, debts, salesInvoices, purchaseInvoices, warranties } = useGarage()
   const [period, setPeriod] = useState<Period>('week')
+  const [showExpiringModal, setShowExpiringModal] = useState(false)
 
   /* ── إحصائيات الشهر الحالي + رصيد الصندوق من قاعدة البيانات ── */
   const [monthly, setMonthly] = useState<MonthlyReport | null>(null)
@@ -71,6 +73,18 @@ export default function Home() {
     { label: 'فواتير البيع اليوم',        value: fmt(salesToday),                      cls: 'incoming'    },
     { label: 'فواتير الشراء اليوم',       value: fmt(purchasesToday),                  cls: 'outgoing'    },
   ]
+
+  /* ── كفالات تنتهي خلال 7 أيام ── */
+  const expiringWarranties = useMemo(() => {
+    return warranties
+      .map(w => {
+        const endDate  = calcEndDate(w.startDate, w.periodValue, w.periodUnit)
+        const remaining = daysRemaining(endDate)
+        return { ...w, endDate, remaining }
+      })
+      .filter(w => w.remaining > 0 && w.remaining <= 7)
+      .sort((a, b) => a.remaining - b.remaining)
+  }, [warranties])
 
   /* ── تجميع العمليات من الـ Context ── */
   const empName = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
@@ -122,7 +136,65 @@ export default function Home() {
           <span className="stat-label">مصاريف اليوم</span>
           <span className="stat-value outgoing">{fmt(todayExpenses)} ₪</span>
         </div>
+        <div
+          className="stat-card"
+          style={expiringWarranties.length > 0 ? { cursor: 'pointer', borderRight: '4px solid #E67E22' } : undefined}
+          onClick={expiringWarranties.length > 0 ? () => setShowExpiringModal(true) : undefined}
+        >
+          <span className="stat-label">كفالات تنتهي قريباً</span>
+          <span className={`stat-value ${expiringWarranties.length > 0 ? 'cars-orange' : 'incoming'}`}>
+            {fmt(expiringWarranties.length)}
+          </span>
+          {expiringWarranties.length > 0 && (
+            <span style={{ fontSize: '0.7rem', color: '#E67E22', marginTop: '0.25rem' }}>خلال 7 أيام — اضغط للتفاصيل</span>
+          )}
+        </div>
       </div>
+
+      {/* ── Expiring warranties modal ── */}
+      {showExpiringModal && (
+        <div className="mi-modal-overlay" onClick={() => setShowExpiringModal(false)}>
+          <div className="mi-modal mi-modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>كفالات تنتهي خلال 7 أيام ({expiringWarranties.length})</h3>
+              <button className="mi-modal-close" onClick={() => setShowExpiringModal(false)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-table-wrap">
+                <table className="mi-table">
+                  <thead>
+                    <tr>
+                      <th>اسم الزبون</th>
+                      <th>رقم الهاتف</th>
+                      <th>القطعة / الخدمة</th>
+                      <th>تاريخ الانتهاء</th>
+                      <th>الأيام المتبقية</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expiringWarranties.map((w, i) => (
+                      <tr key={w.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                        <td>{w.customerName}</td>
+                        <td>{w.phone ? <span className="mi-phone-highlight">{w.phone}</span> : <span className="mi-badge-gray">غير معروف</span>}</td>
+                        <td>{w.itemName}</td>
+                        <td>{w.endDate}</td>
+                        <td>
+                          <span style={{ color: w.remaining <= 3 ? '#E74C3C' : '#E67E22', fontWeight: 700 }}>
+                            {fmt(w.remaining)} يوم
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-ghost" onClick={() => setShowExpiringModal(false)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Latest ops table ── */}
       <div className="mi-card" style={{ marginTop: '1.75rem' }}>

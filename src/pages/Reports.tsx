@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { printPdf } from '../utils/printPdf'
+import { exportToCsv } from '../utils/exportCsv'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type {
-  DailyReport, MonthlyReport, DebtReport, LedgerRow,
+  DailyReport, MonthlyReport, DebtReport, LedgerRow, TopCustomer,
 } from '../db/types'
 
 /* ════════════════════════════════════════
    Types
 ════════════════════════════════════════ */
-type Tab = 'daily' | 'monthly' | 'yearly' | 'debts'
+type Tab = 'daily' | 'monthly' | 'yearly' | 'debts' | 'top_customers'
 
 type YearlyReport = {
   year: number
@@ -42,15 +43,16 @@ const MONTH_NAMES = [
 const today     = () => new Date().toISOString().slice(0, 10)
 const thisMonth = () => new Date().toISOString().slice(0, 7)
 const thisYear  = () => new Date().getFullYear()
-const fmt       = (n: number) => n.toLocaleString('ar-EG')
+const fmt       = (n: number) => n.toLocaleString('en-US')
 
 const YEARS = Array.from({ length: 6 }, (_, i) => thisYear() - i)
 
 const PERIOD_LABELS: Record<Tab, string> = {
-  daily:   'يومي',
-  monthly: 'شهري',
-  yearly:  'سنوي',
-  debts:   'تقرير الديون',
+  daily:         'يومي',
+  monthly:       'شهري',
+  yearly:        'سنوي',
+  debts:         'تقرير الديون',
+  top_customers: 'أفضل الزبائن',
 }
 
 /* ════════════════════════════════════════
@@ -65,11 +67,12 @@ export default function Reports() {
   const [year, setYear]   = useState(thisYear())
 
   /* fetched reports */
-  const [daily, setDaily]     = useState<DailyReport | null>(null)
-  const [monthly, setMonthly] = useState<MonthlyReport | null>(null)
-  const [yearly, setYearly]   = useState<YearlyReport | null>(null)
-  const [debts, setDebts]     = useState<DebtReport | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [daily, setDaily]             = useState<DailyReport | null>(null)
+  const [monthly, setMonthly]         = useState<MonthlyReport | null>(null)
+  const [yearly, setYearly]           = useState<YearlyReport | null>(null)
+  const [debts, setDebts]             = useState<DebtReport | null>(null)
+  const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([])
+  const [loading, setLoading]         = useState(false)
 
   /* ── جلب التقرير المناسب عند تغيّر التبويب أو الفترة ── */
   useEffect(() => {
@@ -95,8 +98,10 @@ export default function Reports() {
           })),
         }
         setYearly(agg)
-      } else {
+      } else if (tab === 'debts') {
         setDebts(await dbService.report.debts())
+      } else {
+        setTopCustomers(await dbService.report.topCustomers(20))
       }
     }
     run()
@@ -106,9 +111,29 @@ export default function Reports() {
   }, [tab, day, month, year])
 
   /* ── Print report ── */
-  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج · الفترة: ${PERIOD_LABELS[tab]}</div>`
+  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
 
   const handlePrint = () => {
+    if (tab === 'top_customers') {
+      if (!topCustomers.length) return
+      const rows = topCustomers.map((c, i) => `
+        <tr>
+          <td style="text-align:center;font-weight:700;">${i + 1}</td>
+          <td>${c.customer_name}</td>
+          <td>${c.customer_phone ?? '—'}</td>
+          <td style="text-align:center;">${c.visit_count}</td>
+          <td class="amount-in">${fmt(c.total_spent)} ₪</td>
+        </tr>`).join('')
+      const body = `
+        <table>
+          <thead><tr><th>#</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>عدد الفواتير</th><th>إجمالي الإنفاق</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · أفضل ${topCustomers.length} زبون</div>`
+      printPdf('تقرير أفضل الزبائن', body)
+      return
+    }
+
     if (tab === 'debts') {
       if (!debts) return
       const custRows = debts.customer_debts.map(d => `
@@ -200,6 +225,62 @@ export default function Reports() {
     printPdf(`تقرير ${PERIOD_LABELS[tab]}`, body)
   }
 
+  /* ── Export CSV ── */
+  const handleExportCsv = () => {
+    if (tab === 'daily') {
+      if (!daily || daily.entries.length === 0) return
+      exportToCsv(
+        `تقرير-يومي-${day}.csv`,
+        ['التاريخ', 'النوع', 'المصدر', 'المبلغ', 'ملاحظات'],
+        daily.entries.map(e => [
+          e.transaction_date,
+          e.amount_in > 0 ? 'وارد' : 'صادر',
+          refLabel(e.reference_type),
+          e.amount_in > 0 ? e.amount_in : e.amount_out,
+          e.notes ?? '',
+        ]),
+      )
+    } else if (tab === 'monthly') {
+      if (!monthly || monthly.days.length === 0) return
+      exportToCsv(
+        `تقرير-شهري-${month}.csv`,
+        ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
+        monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net]),
+      )
+    } else if (tab === 'yearly') {
+      if (!yearly) return
+      exportToCsv(
+        `تقرير-سنوي-${year}.csv`,
+        ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
+        yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net]),
+      )
+    } else if (tab === 'debts') {
+      if (!debts) return
+      exportToCsv(
+        `ديون-الزبائن-${today()}.csv`,
+        ['اسم الزبون', 'المصدر', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        debts.customer_debts.map(d => [
+          d.customer_name,
+          d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر',
+          d.total_amount,
+          d.amount_paid,
+          d.amount_remaining,
+        ]),
+      )
+      exportToCsv(
+        `ديون-الموردين-${today()}.csv`,
+        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        debts.supplier_debts.map(d => [
+          d.supplier_name,
+          d.supplier_phone ?? '',
+          d.total_amount,
+          d.amount_paid,
+          d.amount_remaining,
+        ]),
+      )
+    }
+  }
+
   /* القيم المعروضة في بطاقات الإحصائيات للفترة الحالية */
   const periodTotals = useMemo(() => {
     if (tab === 'daily')   return daily   ? { in: daily.total_in,   out: daily.total_out,   net: daily.net }   : null
@@ -216,16 +297,22 @@ export default function Reports() {
       {/* ── Page header ── */}
       <div className="page-header mi-page-header">
         <h1 className="page-title">التقارير</h1>
-        <button className="btn btn-secondary" onClick={handlePrint}>🖨️ طباعة التقرير</button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {tab !== 'top_customers' && (
+            <button className="btn btn-secondary" onClick={handleExportCsv}>⬇ تصدير CSV</button>
+          )}
+          <button className="btn btn-secondary" onClick={handlePrint}>🖨️ طباعة التقرير</button>
+        </div>
       </div>
 
       {/* ── Main tabs ── */}
       <div className="pd-type-tabs rp-tabs">
         {([
-          ['daily',   'يومي'],
-          ['monthly', 'شهري'],
-          ['yearly',  'سنوي'],
-          ['debts',   'تقرير الديون'],
+          ['daily',         'يومي'],
+          ['monthly',       'شهري'],
+          ['yearly',        'سنوي'],
+          ['debts',         'تقرير الديون'],
+          ['top_customers', 'أفضل الزبائن'],
         ] as [Tab, string][]).map(([val, label]) => (
           <button
             key={val}
@@ -240,7 +327,7 @@ export default function Reports() {
       {/* ════════════════════════════════════════
           Period reports (daily / monthly / yearly)
       ════════════════════════════════════════ */}
-      {tab !== 'debts' && (
+      {tab !== 'debts' && tab !== 'top_customers' && (
         <>
           {/* ── Date filter ── */}
           <div className="mi-card">
@@ -399,6 +486,44 @@ export default function Reports() {
       {/* ════════════════════════════════════════
           Debts report
       ════════════════════════════════════════ */}
+      {tab === 'top_customers' && (
+        <div className="mi-card" style={{ marginTop: '1.5rem' }}>
+          <h2 className="mi-section-title">أفضل الزبائن حسب الإنفاق</h2>
+          <div className="mi-table-wrap">
+            <table className="mi-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>اسم الزبون</th>
+                  <th>رقم الهاتف</th>
+                  <th>عدد الفواتير</th>
+                  <th>إجمالي الإنفاق</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                ) : topCustomers.length === 0 ? (
+                  <tr><td colSpan={5} className="mi-empty-row">لا توجد بيانات</td></tr>
+                ) : topCustomers.map((c, i) => (
+                  <tr key={`${c.customer_name}-${i}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                    <td style={{ textAlign: 'center', fontWeight: 700 }}>{i + 1}</td>
+                    <td>{c.customer_name}</td>
+                    <td>
+                      {c.customer_phone
+                        ? <span className="mi-phone-highlight">{c.customer_phone}</span>
+                        : <span className="mi-badge-gray">غير معروف</span>}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{c.visit_count}</td>
+                    <td className="cl-amount-in">{fmt(c.total_spent)} ₪</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {tab === 'debts' && (
         <>
           {/* ── Debt totals cards ── */}

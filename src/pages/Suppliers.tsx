@@ -47,9 +47,13 @@ const validatePhone = (v: string) => v.trim() ? '' : 'رقم الهاتف مطل
 
 const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 
-const fmt = (n: number) => n.toLocaleString('ar-EG')
+const fmt = (n: number) => n.toLocaleString('en-US')
 
-function printSupplierInvoice(sup: SupplierRecord): void {
+function printSupplierInvoice(
+  sup: SupplierRecord,
+  payments: Array<{ method: string; amount: number }> = [],
+): void {
+  const PAY_AR: Record<string, string> = { cash: 'نقداً', cheque: 'شيك', check: 'شيك', visa: 'فيزا', debt: 'دين' }
   const rows = sup.items.map(item => `
     <tr>
       <td>${item.name}</td>
@@ -57,6 +61,11 @@ function printSupplierInvoice(sup: SupplierRecord): void {
       <td>${fmt(item.unitPrice)} ₪</td>
       <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
       <td>${item.notes || '—'}</td>
+    </tr>`).join('')
+  const payRows = payments.map(p => `
+    <tr>
+      <td>${PAY_AR[p.method] || p.method}</td>
+      <td class="amount-in">${fmt(p.amount)} ₪</td>
     </tr>`).join('')
   const body = `
     <div class="detail-grid">
@@ -73,7 +82,12 @@ function printSupplierInvoice(sup: SupplierRecord): void {
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(sup.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(sup.amountPaid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(sup.amountRemaining)} ₪</span></div>
-    </div>`
+    </div>
+    ${payRows ? `
+    <table style="margin-top:12px;">
+      <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
+      <tbody>${payRows}</tbody>
+    </table>` : ''}`
   printPdf('فاتورة مورد', body)
 }
 
@@ -350,6 +364,18 @@ export default function Suppliers() {
     }
   }
 
+  const handlePrintSup = async (sup: SupplierRecord) => {
+    try {
+      const [detail, payments] = await Promise.all([
+        dbService.supplierInvoice.getOne(sup.id),
+        dbService.invoicePayments.getSupplier(sup.id),
+      ])
+      printSupplierInvoice(detail || sup, payments)
+    } catch (err) {
+      showError('تعذّر طباعة الفاتورة', err)
+    }
+  }
+
   /* Shared supplier-list form body (inline for add, modal for edit) */
   const supFormBody = (
     <div className="mi-form-grid">
@@ -435,9 +461,10 @@ export default function Suppliers() {
                   {showPartErr(part.id, 'qtyErr')}
                 </td>
                 <td>
-                  <input type="number" min={0} value={part.unitPrice}
+                  <input type="number" min={0} value={part.unitPrice || ''}
                     className="mi-td-input mi-td-num"
-                    onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))} />
+                    onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))}
+                    onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'unitPrice', 0) }} />
                 </td>
                 <td>
                   <input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input"
@@ -467,7 +494,8 @@ export default function Suppliers() {
             </select>
             <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
               className="mi-td-input pay-amount"
-              onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })} />
+              onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
+              onBlur={(e) => { if (!e.target.value) updatePaymentRow(row.id, { amount: 0 }) }} />
             <button className="btn btn-danger-sm" disabled={paymentRows.length === 1}
               onClick={() => removePaymentRow(row.id)}>حذف</button>
           </div>
@@ -791,7 +819,7 @@ export default function Suppliers() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => printSupplierInvoice(detailsSup)}>طباعة</button>
+                onClick={() => handlePrintSup(detailsSup)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsSup(null)}>إغلاق</button>
             </div>
           </div>
@@ -881,7 +909,8 @@ export default function Suppliers() {
                     </select>
                     <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
                       className="mi-td-input pay-amount"
-                      onChange={e => updatePayRow(row.id, { amount: Math.max(0, Number(e.target.value)) })} />
+                      onChange={e => updatePayRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
+                      onBlur={(e) => { if (!e.target.value) updatePayRow(row.id, { amount: 0 }) }} />
                     <button className="btn btn-danger-sm" disabled={payRows.length === 1}
                       onClick={() => removePayRow(row.id)}>حذف</button>
                   </div>

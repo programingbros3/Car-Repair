@@ -30,8 +30,8 @@ function insertItems(invoiceId: number, items: InvoiceItemInput[]): void {
   const db = getDB()
   const stmt = db.prepare(`
     INSERT INTO invoice_items
-      (invoice_id, invoice_type, item_name, quantity, unit_price, customer_owned, notes)
-    VALUES (?, 'maintenance', ?, ?, ?, ?, ?)
+      (invoice_id, invoice_type, item_name, quantity, unit_price, customer_owned, notes, warranty, part_type)
+    VALUES (?, 'maintenance', ?, ?, ?, ?, ?, ?, ?)
   `)
   for (const item of items) {
     stmt.run(
@@ -41,6 +41,8 @@ function insertItems(invoiceId: number, items: InvoiceItemInput[]): void {
       item.unit_price,
       item.customer_owned ? 1 : 0,
       item.notes ?? null,
+      item.warranty ?? null,
+      item.part_type ?? 'part',
     )
   }
 }

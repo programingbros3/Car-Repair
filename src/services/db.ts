@@ -21,7 +21,7 @@
 
 import type {
   CarRecord, CarItem,
-  SaleRecord,
+  SaleRecord, SaleItem,
   SupplierRecord,
   Expense, Employee, SalaryRecord,
   DebtType,
@@ -40,11 +40,12 @@ import type {
   DailyReport, MonthlyReport, DebtReport, TopCustomer,
   SupplierDirectoryRow, WarrantyRow,
   SaleInvoiceRow, PurchaseInvoiceRow,
+  CashAuditRow, CashAuditInput,
 } from '../db/types'
 
 import {
   carToDbInput, carToUpdateInput, dbRowToCarRecord, carItemToDbInput,
-  saleToDbInput, dbRowToSaleRecord,
+  saleToDbInput, saleItemToDbInput, dbRowToSaleRecord,
   supplierToDbInput, dbRowToSupplierRecord,
   expenseToDbInput, dbRowToExpense,
   employeeToDbInput, dbRowToEmployee,
@@ -127,6 +128,9 @@ export const dbService = {
     update: (sale: SaleRecord) =>
       invoke<void>('directSale:update', sale.id, saleToDbInput(sale)),
 
+    updateItems: (id: number, items: SaleItem[]) =>
+      invoke<void>('directSale:updateItems', id, items.map(saleItemToDbInput)),
+
     addPayment: (invoiceId: number, payments: PaymentRow[], date: string) =>
       invoke<void>('directSale:addPayment', invoiceId, payments.map(paymentRowToDbInput), date),
 
@@ -200,6 +204,9 @@ export const dbService = {
     add: (sal: SalaryRecord) =>
       invoke<number>('salary:add', sal.employeeId, salaryToDbInput(sal)),
 
+    update: (id: number, sal: SalaryRecord) =>
+      invoke<void>('salary:update', id, salaryToDbInput(sal)),
+
     delete: (id: number) => invoke<void>('salary:delete', id),
   },
 
@@ -259,12 +266,36 @@ export const dbService = {
       invoke<LedgerRow[]>('ledger:getByDateRange', from, to),
   },
 
+  /* ─────────────── إحصاء نهاية اليوم ─────────────── */
+  cashAudit: {
+    getAll: () => invoke<CashAuditRow[]>('cashAudit:getAll'),
+    save: (input: CashAuditInput) => invoke<number>('cashAudit:save', input),
+  },
+
+  /* ─────────────── دفعات الفواتير (للطباعة) ─────────────── */
+  invoicePayments: {
+    get: (invoiceId: number, invoiceType: 'maintenance' | 'direct_sale') =>
+      invoke<Array<{ method: string; amount: number; payment_date: string }>>(
+        'payments:getByInvoice', invoiceId, invoiceType,
+      ),
+    getSupplier: (invoiceId: number) =>
+      invoke<Array<{ method: string; amount: number; payment_date: string }>>(
+        'supplierPayments:getByInvoice', invoiceId,
+      ),
+  },
+
   /* ─────────────── التقارير (قراءة فقط، أنواع DB) ─────────────── */
   report: {
     daily: (date: string) => invoke<DailyReport>('report:daily', date),
     monthly: (month: number, year: number) => invoke<MonthlyReport>('report:monthly', month, year),
     debts: () => invoke<DebtReport>('report:debts'),
     topCustomers: (limit = 10) => invoke<TopCustomer[]>('report:topCustomers', limit),
+  },
+
+  /* ─────────────── النسخ الاحتياطي ─────────────── */
+  backup: {
+    export: () => invoke<string | null>('backup:export'),
+    import: () => invoke<null>('backup:import'),
   },
 }
 

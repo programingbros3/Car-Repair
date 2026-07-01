@@ -15,6 +15,7 @@ import Suppliers from './pages/Suppliers'
 import Employees from './pages/Employees'
 import Warranties from './pages/Warranties'
 import Reports from './pages/Reports'
+import Settings from './pages/Settings'
 import './App.css'
 
 function AppShell() {
@@ -47,6 +48,7 @@ function AppShell() {
             <Route path="/employees"          element={<Employees />} />
             <Route path="/warranties"         element={<Warranties />} />
             <Route path="/reports"            element={<Reports />} />
+            <Route path="/settings"           element={<Settings />} />
           </Routes>
         </main>
       </div>

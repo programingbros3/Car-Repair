@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
-import { useGarage, CarRecord, CarItem, PayMethod, PaymentRow } from '../store/GarageContext'
+import { useGarage, CarRecord, CarItem, PayMethod, PaymentRow, WarrantyPeriodUnit } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
@@ -10,13 +10,32 @@ import { showError } from '../utils/notify'
    Local Types
 ════════════════════════════════════════ */
 type FormPartType = 'part' | 'service'
-type FormPart    = { id: number; partType: FormPartType; name: string; qty: number; unitPrice: number; warranty: string; notes: string }
+type FormPart    = { id: number; partType: FormPartType; name: string; qty: number; unitPrice: number; warrantyValue: string; warrantyUnit: WarrantyPeriodUnit | ''; notes: string }
 type FormPartErr = { nameErr: string; qtyErr: string }
+
+const UNIT_OPTIONS: [WarrantyPeriodUnit, string][] = [['week', 'أسبوع'], ['month', 'شهر'], ['year', 'سنة']]
+const UNIT_AR: Record<string, string> = { week: 'أسبوع', month: 'شهر', year: 'سنة' }
+
+function parseWarrantyJson(raw: string): { value: number; unit: WarrantyPeriodUnit } | null {
+  if (!raw) return null
+  try {
+    const w = JSON.parse(raw)
+    if (w.value && w.unit) return { value: Number(w.value), unit: w.unit as WarrantyPeriodUnit }
+  } catch {}
+  return null
+}
+
+function warrantyLabel(raw: string): string {
+  if (!raw) return '—'
+  const w = parseWarrantyJson(raw)
+  if (w) return `${w.value} ${UNIT_AR[w.unit] ?? w.unit}`
+  return raw || '—'
+}
 
 /* ════════════════════════════════════════
    Module-level helpers
 ════════════════════════════════════════ */
-const DRAFT_KEY = 'garage-mi-draft'
+const DRAFT_KEY = 'garage-mi-draft-v2'
 const today     = () => new Date().toISOString().slice(0, 10)
 let nextPartId  = 100
 let nextPayId   = 100
@@ -30,11 +49,11 @@ const emptyForm = () => ({
 })
 
 const newFormPart = (): FormPart => ({
-  id: nextPartId++, partType: 'part', name: '', qty: 1, unitPrice: 0, warranty: '', notes: '',
+  id: nextPartId++, partType: 'part', name: '', qty: 1, unitPrice: 0, warrantyValue: '1', warrantyUnit: '', notes: '',
 })
 
 const newFormService = (): FormPart => ({
-  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: 0, warranty: '', notes: '',
+  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: 0, warrantyValue: '1', warrantyUnit: '', notes: '',
 })
 
 const emptyPayRow = (): PaymentRow => ({
@@ -75,7 +94,7 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
   const { getLinkedOps } = useGarage()
   const ops = useMemo(() => getLinkedOps(phone, source, id), [phone, source, id, getLinkedOps])
   if (!ops.length) return null
-  const fmt = (n: number) => n.toLocaleString('ar-EG')
+  const fmt = (n: number) => n.toLocaleString('en-US')
   return (
     <div className="linked-ops-section">
       <h4 className="linked-ops-title">عمليات سابقة لهذا الزبون ({ops.length})</h4>
@@ -173,18 +192,27 @@ export default function MaintenanceInvoices() {
   const updatePart  = (id: number, field: keyof FormPart, value: string | number) =>
     setParts(prev => prev.map(p => p.id !== id ? p : { ...p, [field]: value }))
 
-  const doOpenEdit = (car: CarRecord) => {
+  const doOpenEdit = async (car: CarRecord) => {
     localStorage.removeItem(DRAFT_KEY)
-    setEditingCar(car)
-    setForm({ customerName: car.customerName, phone: car.phone === '0000' ? '' : car.phone,
-      carPlate: car.carPlate, carType: car.carType, carColor: car.carColor,
-      dateReceived: car.dateReceived, generalNotes: car.notes })
-    const ep: FormPart[] = car.items.length > 0
-      ? car.items.map(item => ({ id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
-          unitPrice: item.unitPrice, warranty: item.warranty, notes: item.notes }))
-      : [newFormPart()]
-    setParts(ep); setSubmitAttempted(false); setShowForm(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    try {
+      const full = await dbService.maintenance.getOne(car.id)
+      const record = full ?? car
+      setEditingCar(record)
+      setForm({ customerName: record.customerName, phone: record.phone === '0000' ? '' : record.phone,
+        carPlate: record.carPlate, carType: record.carType, carColor: record.carColor,
+        dateReceived: record.dateReceived, generalNotes: record.notes })
+      const ep: FormPart[] = record.items.length > 0
+        ? record.items.map(item => {
+            const w = parseWarrantyJson(item.warranty)
+            return { id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
+              unitPrice: item.unitPrice, warrantyValue: w ? String(w.value) : '1', warrantyUnit: w ? w.unit : '' as WarrantyPeriodUnit | '', notes: item.notes }
+          })
+        : [newFormPart()]
+      setParts(ep); setSubmitAttempted(false); setShowForm(true)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      showError('تعذّر تحميل بيانات الفاتورة', err)
+    }
   }
 
   const openEdit = (car: CarRecord) => {
@@ -205,7 +233,8 @@ export default function MaintenanceInvoices() {
     if (hasErrors) return
     const newItems: CarItem[] = parts.map(p => ({
       name: p.name, quantity: p.partType === 'service' ? 1 : p.qty, unitPrice: p.unitPrice,
-      warranty: p.warranty, partType: p.partType, notes: p.notes,
+      warranty: p.warrantyUnit ? JSON.stringify({ value: Math.max(1, parseInt(p.warrantyValue) || 1), unit: p.warrantyUnit }) : '',
+      partType: p.partType, notes: p.notes,
     }))
     const phone = form.phone.trim()
     const carData: CarRecord = {
@@ -257,38 +286,61 @@ export default function MaintenanceInvoices() {
   const showErr     = (msg: string) => submitAttempted && msg ? <span className="mi-err">{msg}</span> : null
   const showPartErr = (id: number, f: keyof FormPartErr) => submitAttempted && partsErrMap[id]?.[f] ? <span className="mi-err">{partsErrMap[id][f]}</span> : null
   const errCls      = (bad: boolean) => bad ? ' mi-input-err' : ''
-  const fmt         = (n: number) => n.toLocaleString('ar-EG')
+  const fmt         = (n: number) => n.toLocaleString('en-US')
 
-  const handlePrintCar = (car: CarRecord) => {
-    const rows = car.items.map(item => `
-      <tr>
-        <td>${item.partType === 'service' ? 'خدمة' : 'قطعة'}</td>
-        <td>${item.name}</td>
-        <td>${item.quantity}</td>
-        <td>${fmt(item.unitPrice)} ₪</td>
-        <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
-        <td>${item.warranty || '—'}</td>
-        <td>${item.notes || '—'}</td>
-      </tr>`).join('')
-    const body = `
-      <div class="detail-grid">
-        <div class="detail-item"><label>اسم الزبون</label><span>${car.customerName}</span></div>
-        <div class="detail-item"><label>رقم الهاتف</label><span>${car.phone && car.phone !== '0000' ? car.phone : 'غير معروف'}</span></div>
-        <div class="detail-item"><label>نمرة السيارة</label><span>${car.carPlate}</span></div>
-        <div class="detail-item"><label>نوع السيارة</label><span>${car.carType || '—'}</span></div>
-        <div class="detail-item"><label>اللون</label><span>${car.carColor || '—'}</span></div>
-        <div class="detail-item"><label>تاريخ الاستلام</label><span>${car.dateReceived}</span></div>
-        ${car.deliveredDate ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${car.deliveredDate}</span></div>` : ''}
-        ${car.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${car.notes}</span></div>` : ''}
-      </div>
-      <table>
-        <thead><tr><th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="detail-grid" style="margin-top:16px;grid-template-columns:1fr;">
-        <div class="detail-item"><label>الإجمالي الكلي</label><span class="amount-in">${fmt(car.total)} ₪</span></div>
-      </div>`
-    printPdf('فاتورة صيانة', body)
+  const handlePrintCar = async (car: CarRecord) => {
+    try {
+      const PAY_AR: Record<string, string> = { cash: 'نقداً', cheque: 'شيك', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+      const [detail, payments] = await Promise.all([
+        dbService.maintenance.getOne(car.id),
+        dbService.invoicePayments.get(car.id, 'maintenance'),
+      ])
+      const full = detail || car
+      const rows = full.items.map(item => `
+        <tr>
+          <td>${item.partType === 'service' ? 'خدمة' : 'قطعة'}</td>
+          <td>${item.name}</td>
+          <td>${item.quantity}</td>
+          <td>${fmt(item.unitPrice)} ₪</td>
+          <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+          <td>${warrantyLabel(item.warranty)}</td>
+          <td>${item.notes || '—'}</td>
+        </tr>`).join('')
+      const payRows = payments.map(p => `
+        <tr>
+          <td>${PAY_AR[p.method] || p.method}</td>
+          <td class="amount-in">${fmt(p.amount)} ₪</td>
+        </tr>`).join('')
+      const body = `
+        <div class="detail-grid">
+          <div class="detail-item"><label>اسم الزبون</label><span>${full.customerName}</span></div>
+          <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? full.phone : 'غير معروف'}</span></div>
+          <div class="detail-item"><label>نمرة السيارة</label><span>${full.carPlate}</span></div>
+          <div class="detail-item"><label>نوع السيارة</label><span>${full.carType || '—'}</span></div>
+          <div class="detail-item"><label>اللون</label><span>${full.carColor || '—'}</span></div>
+          <div class="detail-item"><label>تاريخ الاستلام</label><span>${full.dateReceived}</span></div>
+          ${full.deliveredDate ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${full.deliveredDate}</span></div>` : ''}
+          ${full.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${full.notes}</span></div>` : ''}
+        </div>
+        ${full.items.length > 0 ? `
+        <table>
+          <thead><tr><th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>` : ''}
+        <div class="detail-grid" style="margin-top:16px;">
+          <div class="detail-item"><label>الإجمالي الكلي</label><span class="amount-in">${fmt(full.total)} ₪</span></div>
+          <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(full.amountPaid ?? 0)} ₪</span></div>
+          <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(full.amountRemaining ?? 0)} ₪</span></div>
+        </div>
+        ${payRows ? `
+        <table style="margin-top:12px;">
+          <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
+          <tbody>${payRows}</tbody>
+        </table>` : ''}`
+      printPdf('فاتورة صيانة', body)
+    } catch (err) {
+      showError('تعذّر طباعة الفاتورة', err)
+    }
   }
 
   const renderFilters = (
@@ -417,10 +469,25 @@ export default function MaintenanceInvoices() {
                       {showPartErr(part.id, 'qtyErr')}
                     </td>
                     <td>
-                      <input type="number" min={0} value={part.unitPrice} className="mi-td-input mi-td-num"
-                        onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))} />
+                      <input type="number" min={0} value={part.unitPrice || ''} className="mi-td-input mi-td-num"
+                        onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))}
+                        onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'unitPrice', 0) }} />
                     </td>
-                    <td><input type="text" placeholder="مثال: 3 أشهر" value={part.warranty} className="mi-td-input" onChange={e => updatePart(part.id, 'warranty', e.target.value)} /></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                        <select className="pay-select" style={{ flex: '1 1 0', minWidth: 70 }}
+                          value={part.warrantyUnit}
+                          onChange={e => updatePart(part.id, 'warrantyUnit', e.target.value)}>
+                          <option value="">لا كفالة</option>
+                          {UNIT_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                        </select>
+                        {part.warrantyUnit && (
+                          <input type="number" min={1} max={99} value={part.warrantyValue}
+                            className="mi-td-input mi-td-num" style={{ width: 55 }}
+                            onChange={e => updatePart(part.id, 'warrantyValue', e.target.value)} />
+                        )}
+                      </div>
+                    </td>
                     <td><input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input" onChange={e => updatePart(part.id, 'notes', e.target.value)} /></td>
                     <td className="mi-td-center">
                       <button className="btn btn-danger-sm" disabled={parts.length === 1} onClick={() => removePart(part.id)}>حذف</button>
@@ -572,7 +639,7 @@ export default function MaintenanceInvoices() {
                         <td className="mi-td-center">{item.quantity}</td>
                         <td className="mi-td-center">{fmt(item.unitPrice)} ₪</td>
                         <td className="mi-td-center">{fmt(item.quantity * item.unitPrice)} ₪</td>
-                        <td>{item.warranty || '—'}</td>
+                        <td>{warrantyLabel(item.warranty)}</td>
                         <td>{item.notes || '—'}</td>
                       </tr>
                     ))}
@@ -652,7 +719,8 @@ export default function MaintenanceInvoices() {
                     </select>
                     <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
                       className="mi-td-input pay-amount"
-                      onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })} />
+                      onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
+                      onBlur={(e) => { if (!e.target.value) updatePaymentRow(row.id, { amount: 0 }) }} />
                     <button className="btn btn-danger-sm" disabled={paymentRows.length === 1} onClick={() => removePaymentRow(row.id)}>حذف</button>
                   </div>
                   {row.method === 'check' && (

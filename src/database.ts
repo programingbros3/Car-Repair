@@ -29,6 +29,22 @@ export function initDB(): void {
     console.warn('⚠️ schema.sql غير موجود في:', schemaPath)
   }
 
+  // Migration: add new columns to existing databases without recreating tables
+  const migrations = [
+    `ALTER TABLE employees ADD COLUMN daily_wage REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE salary_payments ADD COLUMN daily_wage_snapshot REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE salary_payments ADD COLUMN days_worked REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE salary_payments ADD COLUMN bonus REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE salary_payments ADD COLUMN deduction REAL NOT NULL DEFAULT 0`,
+  ]
+  for (const sql of migrations) {
+    try { db.exec(sql) }
+    catch (err) {
+      if (err instanceof Error && err.message.includes('duplicate column name')) continue
+      throw err
+    }
+  }
+
   console.log('✅ قاعدة البيانات جاهزة:', dbPath)
 }
 

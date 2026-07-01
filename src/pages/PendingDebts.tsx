@@ -37,7 +37,7 @@ const emptyPayRow = (): PaymentRow => ({
 })
 
 const PAY_LABELS: Record<PayMethod, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
-const fmt = (n: number) => n.toLocaleString('ar-EG')
+const fmt = (n: number) => n.toLocaleString('en-US')
 
 function printDebt(debt: DebtRecord): void {
   const body = `
@@ -426,7 +426,8 @@ export default function PendingDebts() {
                     </select>
                     <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
                       className="mi-td-input pay-amount"
-                      onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })} />
+                      onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
+                      onBlur={e => { if (!e.target.value) updatePaymentRow(row.id, { amount: 0 }) }} />
                     <button className="btn btn-danger-sm" disabled={paymentRows.length === 1}
                       onClick={() => removePaymentRow(row.id)}>حذف</button>
                   </div>
@@ -535,12 +536,16 @@ export default function PendingDebts() {
                 <label className="mi-field">
                   <span>الإجمالي ₪</span>
                   <input type="number" min={0} value={editForm.total}
-                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
                 </label>
                 <label className="mi-field">
                   <span>المدفوع ₪</span>
                   <input type="number" min={0} value={editForm.amountPaid}
-                    onChange={e => setEditForm(f => f && { ...f, amountPaid: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, amountPaid: e.target.value })}
+                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, amountPaid: '' }) }}
+                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, amountPaid: '0' }) }} />
                 </label>
               </div>
             </div>

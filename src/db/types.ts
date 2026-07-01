@@ -18,12 +18,21 @@ export interface PaymentInput {
 
 // ── Invoice Items ─────────────────────────────────────────────────────────────
 
+export interface DirectSaleItemInput {
+  item_name: string
+  quantity: number
+  unit_price: number
+  notes?: string
+}
+
 export interface InvoiceItemInput {
   item_name: string
   quantity: number
   unit_price: number
   customer_owned?: boolean
   notes?: string
+  warranty?: string   // JSON: {"value":N,"unit":"week"|"month"|"year"} or null
+  part_type?: string  // "part" | "service"
 }
 
 export interface InvoiceItemRow {
@@ -256,17 +265,21 @@ export interface ExpenseFilters {
 export interface EmployeeInput {
   name: string
   phone?: string
+  daily_wage: number
 }
 
 export interface EmployeeRow {
   id: number
   name: string
   phone: string | null
+  daily_wage: number
   created_at: string
 }
 
 export interface SalaryInput {
-  amount: number
+  days_worked: number
+  bonus: number
+  deduction: number
   payment_date: string
   notes?: string
 }
@@ -276,6 +289,10 @@ export interface SalaryRow {
   employee_id: number
   employee_name: string
   amount: number
+  daily_wage_snapshot: number
+  days_worked: number
+  bonus: number
+  deduction: number
   payment_date: string
   notes: string | null
   created_at: string
@@ -392,6 +409,24 @@ export interface SaleInvoiceRow {
   car_plate: string
   car_type: string
   details: string
+}
+
+// ── Daily cash audits (إحصاء نهاية اليوم) ────────────────────────────────────────
+
+export interface CashAuditRow {
+  id: number
+  audit_date: string
+  system_total: number
+  actual_amount: number
+  difference: number
+  created_at: string
+}
+
+export interface CashAuditInput {
+  audit_date: string
+  system_total: number
+  actual_amount: number
+  difference: number
 }
 
 // ── Aggregate purchase-invoices view (موردون + مصاريف + رواتب) ──────────────────

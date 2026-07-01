@@ -28,11 +28,11 @@ export function printPdf(title: string, bodyHtml: string): void {
 </head>
 <body>
   <div class="header">
-    <h1>🔧 كراج</h1>
+    <h1>🔧 كراج التل الأخضر</h1>
     <h2>${title}</h2>
   </div>
   ${bodyHtml}
-  <div class="footer">تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</div>
+  <div class="footer">تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG-u-nu-latn', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</div>
 </body></html>`)
   win.document.close()
   win.onload = () => { win.print(); win.addEventListener('afterprint', () => win.close()) }

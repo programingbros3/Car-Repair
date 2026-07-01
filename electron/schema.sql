@@ -210,20 +210,25 @@ CREATE TABLE IF NOT EXISTS daily_expenses (
 
 
 CREATE TABLE IF NOT EXISTS employees (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    NOT NULL,
-    phone      TEXT,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    phone       TEXT,
+    daily_wage  REAL    NOT NULL DEFAULT 0,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 
 CREATE TABLE IF NOT EXISTS salary_payments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    employee_id  INTEGER NOT NULL,
-    amount       REAL    NOT NULL,
-    payment_date TEXT    NOT NULL, 
-    notes        TEXT,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id         INTEGER NOT NULL,
+    amount              REAL    NOT NULL,
+    daily_wage_snapshot REAL    NOT NULL DEFAULT 0,
+    days_worked         REAL    NOT NULL DEFAULT 0,
+    bonus               REAL    NOT NULL DEFAULT 0,
+    deduction           REAL    NOT NULL DEFAULT 0,
+    payment_date        TEXT    NOT NULL,
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE RESTRICT
 );
 
@@ -270,3 +275,13 @@ CREATE INDEX IF NOT EXISTS idx_salary_emp           ON salary_payments(employee_
 CREATE INDEX IF NOT EXISTS idx_salary_date          ON salary_payments(payment_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_date          ON cash_ledger(transaction_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_ref           ON cash_ledger(reference_type, reference_id);
+
+CREATE TABLE IF NOT EXISTS daily_cash_audits (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    audit_date     TEXT    NOT NULL,
+    system_total   REAL    NOT NULL,
+    actual_amount  REAL    NOT NULL,
+    difference     REAL    NOT NULL,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_audit_date ON daily_cash_audits(audit_date);

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { APP_PASSWORD } from '../utils/auth'
+import PasswordInput from './PasswordInput'
 
 /* ════════════════════════════════════════
    ConfirmDialog — reusable confirm modal
@@ -43,14 +44,13 @@ export default function ConfirmDialog({
           {askPassword && (
             <label className="mi-field">
               <span>أدخل كلمة السر للتأكيد</span>
-              <input
-                type="password"
-                autoFocus
+              <PasswordInput
                 value={password}
-                onChange={e => { setPassword(e.target.value); setError('') }}
+                onChange={v => { setPassword(v); setError('') }}
                 onKeyDown={e => { if (e.key === 'Enter') handleConfirm() }}
                 placeholder="كلمة السر"
-                className={error ? 'mi-input-err' : ''}
+                autoFocus
+                inputClassName={error ? 'mi-input-err' : ''}
               />
               {error && <span className="mi-err">{error}</span>}
             </label>

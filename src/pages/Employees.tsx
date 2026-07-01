@@ -18,8 +18,10 @@ const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
 }
 
-const emptyEmpForm    = () => ({ name: '', phone: '' })
-const emptySalaryForm = () => ({ employeeId: '', amount: '', date: today(), notes: '' })
+const emptyEmpForm    = () => ({ name: '', phone: '', dailyWage: '' })
+const emptySalaryForm = () => ({
+  employeeId: '', daysWorked: '', bonus: '0', deduction: '0', date: today(), notes: '',
+})
 
 /* ════════════════════════════════════════
    Component
@@ -34,10 +36,10 @@ export default function Employees() {
   const [empSubmitted, setEmpSubmitted] = useState(false)
 
   /* salary form */
-  const [showSalaryForm,   setShowSalaryForm]   = useState(false)
-  const [editingSalary,    setEditingSalary]    = useState<SalaryRecord | null>(null)
-  const [salaryForm,       setSalaryForm]       = useState(emptySalaryForm)
-  const [salarySubmitted,  setSalarySubmitted]  = useState(false)
+  const [showSalaryForm,  setShowSalaryForm]  = useState(false)
+  const [editingSalary,   setEditingSalary]   = useState<SalaryRecord | null>(null)
+  const [salaryForm,      setSalaryForm]      = useState(emptySalaryForm)
+  const [salarySubmitted, setSalarySubmitted] = useState(false)
 
   /* details modals */
   const [detailsEmp,    setDetailsEmp]    = useState<Employee | null>(null)
@@ -52,17 +54,35 @@ export default function Employees() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo,   setFilterTo]   = useState('')
 
-  const empName = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
+  const empName  = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
   const empPhone = (id: number) => employees.find(e => e.id === id)?.phone ?? ''
 
+  /* ── Live net salary calculation ── */
+  const selectedEmp = employees.find(e => e.id === Number(salaryForm.employeeId))
+  const liveWage    = editingSalary ? editingSalary.dailyWageSnapshot : (selectedEmp?.dailyWage ?? 0)
+  const liveNet     = liveWage * Number(salaryForm.daysWorked || 0)
+                    + Number(salaryForm.bonus || 0)
+                    - Number(salaryForm.deduction || 0)
+
+  /* ── Print salary receipt ── */
   const handlePrintSalary = (rec: SalaryRecord) => {
+    const base = rec.dailyWageSnapshot * rec.daysWorked
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>اسم الموظف</label><span>${empName(rec.employeeId)}</span></div>
-        <div class="detail-item"><label>المبلغ المدفوع</label><span class="amount-out">${rec.amount.toLocaleString('ar-EG')} ₪</span></div>
         <div class="detail-item"><label>تاريخ الدفعة</label><span>${rec.date}</span></div>
-        ${rec.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${rec.notes}</span></div>` : ''}
-      </div>`
+        <div class="detail-item"><label>اليومية (وقت الدفعة)</label><span>${rec.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم</span></div>
+        <div class="detail-item"><label>عدد أيام الدوام</label><span>${rec.daysWorked} يوم</span></div>
+        <div class="detail-item" style="grid-column:span 2"><label>اليومية × الأيام (${rec.dailyWageSnapshot.toLocaleString('en-US')} × ${rec.daysWorked})</label><span>${base.toLocaleString('en-US')} ₪</span></div>
+        <div class="detail-item"><label>البونص</label><span class="amount-in">+${rec.bonus.toLocaleString('en-US')} ₪</span></div>
+        <div class="detail-item"><label>الخصم</label><span class="amount-out">−${rec.deduction.toLocaleString('en-US')} ₪</span></div>
+      </div>
+      <div style="text-align:center;margin:20px 0;padding:16px;background:#f0fdf4;border-radius:8px;border:2px solid #27ae60;">
+        <div style="font-size:12px;color:#888;margin-bottom:4px;">الصافي النهائي</div>
+        <div style="font-size:24px;font-weight:700;color:#27ae60;">${rec.amount.toLocaleString('en-US')} ₪</div>
+      </div>
+      ${rec.notes ? `<div style="margin-top:12px;padding:12px;background:#fafafa;border-radius:6px;"><span style="font-size:11px;color:#888;">ملاحظات:</span> ${rec.notes}</div>` : ''}
+    `
     printPdf('إيصال راتب', body)
   }
 
@@ -87,19 +107,25 @@ export default function Employees() {
 
   const openEmpEdit = (emp: Employee) => {
     setEditingEmp(emp)
-    setEmpForm({ name: emp.name, phone: emp.phone })
+    setEmpForm({ name: emp.name, phone: emp.phone, dailyWage: String(emp.dailyWage) })
     setEmpSubmitted(false)
     setShowEmpForm(true)
   }
 
-  const empNameErr  = empForm.name.trim() ? (/\d/.test(empForm.name) ? 'الاسم يجب أن يحتوي على حروف فقط' : '') : 'اسم الموظف مطلوب'
-  const empPhoneErr = empForm.phone.trim() ? '' : 'رقم الهاتف مطلوب'
-  const empHasError = !!empNameErr || !!empPhoneErr
+  const empNameErr      = empForm.name.trim() ? (/\d/.test(empForm.name) ? 'الاسم يجب أن يحتوي على حروف فقط' : '') : 'اسم الموظف مطلوب'
+  const empPhoneErr     = empForm.phone.trim() ? '' : 'رقم الهاتف مطلوب'
+  const empDailyWageErr = Number(empForm.dailyWage) > 0 ? '' : 'اليومية يجب أن تكون أكبر من صفر'
+  const empHasError     = !!empNameErr || !!empPhoneErr || !!empDailyWageErr
 
   const handleEmpSave = async () => {
     setEmpSubmitted(true)
     if (empHasError) return
-    const empData: Employee = { id: editingEmp?.id ?? 0, name: empForm.name, phone: empForm.phone }
+    const empData: Employee = {
+      id: editingEmp?.id ?? 0,
+      name: empForm.name,
+      phone: empForm.phone,
+      dailyWage: Number(empForm.dailyWage),
+    }
     try {
       if (editingEmp) await dbService.employee.update(empData)
       else            await dbService.employee.add(empData)
@@ -119,26 +145,41 @@ export default function Employees() {
 
   const openSalaryEdit = (rec: SalaryRecord) => {
     setEditingSalary(rec)
-    setSalaryForm({ employeeId: String(rec.employeeId), amount: String(rec.amount), date: rec.date, notes: rec.notes })
+    setSalaryForm({
+      employeeId: String(rec.employeeId),
+      daysWorked: String(rec.daysWorked),
+      bonus:      String(rec.bonus),
+      deduction:  String(rec.deduction),
+      date:       rec.date,
+      notes:      rec.notes,
+    })
     setSalarySubmitted(false)
     setShowSalaryForm(true)
   }
 
   const salaryEmpErr    = salaryForm.employeeId ? '' : 'يجب اختيار الموظف'
-  const salaryAmountErr = Number(salaryForm.amount) > 0 ? '' : 'المبلغ يجب أن يكون أكبر من صفر'
-  const salaryHasError  = !!salaryEmpErr || !!salaryAmountErr
+  const salaryDaysErr   = Number(salaryForm.daysWorked) > 0 ? '' : 'عدد الأيام يجب أن يكون أكبر من صفر'
+  const salaryBonusErr  = Number(salaryForm.bonus) >= 0 ? '' : 'البونص يجب أن يكون صفرًا أو أكبر'
+  const salaryDeductErr = Number(salaryForm.deduction) >= 0 ? '' : 'الخصم يجب أن يكون صفرًا أو أكبر'
+  const salaryHasError  = !!salaryEmpErr || !!salaryDaysErr || !!salaryBonusErr || !!salaryDeductErr
 
   const handleSalarySave = async () => {
     setSalarySubmitted(true)
     if (salaryHasError) return
     const salData: SalaryRecord = {
-      id: editingSalary?.id ?? 0, employeeId: Number(salaryForm.employeeId),
-      amount: Number(salaryForm.amount), date: salaryForm.date, notes: salaryForm.notes,
+      id:               editingSalary?.id ?? 0,
+      employeeId:       Number(salaryForm.employeeId),
+      amount:           0,   // computed on backend
+      dailyWageSnapshot: editingSalary?.dailyWageSnapshot ?? 0,  // not used on add
+      daysWorked:       Number(salaryForm.daysWorked),
+      bonus:            Number(salaryForm.bonus || 0),
+      deduction:        Number(salaryForm.deduction || 0),
+      date:             salaryForm.date,
+      notes:            salaryForm.notes,
     }
     try {
-      // لا توجد قناة salary:update — التعديل = حذف الدفعة القديمة ثم إضافتها من جديد
-      if (editingSalary) await dbService.salary.delete(editingSalary.id)
-      await dbService.salary.add(salData)
+      if (editingSalary) await dbService.salary.update(editingSalary.id, salData)
+      else               await dbService.salary.add(salData)
       await reload()
       clearSalaryForm()
     } catch (err) {
@@ -150,11 +191,11 @@ export default function Employees() {
     setShowSalaryForm(false); setSalarySubmitted(false); setSalaryForm(emptySalaryForm()); setEditingSalary(null)
   }
 
-  const showEmpErr    = (msg: string) => empSubmitted && msg ? <span className="mi-err">{msg}</span> : null
+  const showEmpErr    = (msg: string) => empSubmitted    && msg ? <span className="mi-err">{msg}</span> : null
   const showSalaryErr = (msg: string) => salarySubmitted && msg ? <span className="mi-err">{msg}</span> : null
   const errCls        = (bad: boolean) => bad ? ' mi-input-err' : ''
 
-  /* Shared employee form body (inline for add, modal for edit) */
+  /* Shared employee form body */
   const empFormBody = (
     <div className="mi-form-grid">
       <label className="mi-field">
@@ -167,20 +208,28 @@ export default function Employees() {
       <label className="mi-field">
         <span>رقم الهاتف <span className="mi-required">*</span></span>
         <input type="text" value={empForm.phone} onKeyDown={allowPhoneChars}
-          onChange={e => setEmpField('phone', e.target.value)}
-          placeholder="05XXXXXXXX"
+          onChange={e => setEmpField('phone', e.target.value)} placeholder="05XXXXXXXX"
           className={errCls(empSubmitted && !!empPhoneErr)} />
         {showEmpErr(empPhoneErr)}
+      </label>
+      <label className="mi-field">
+        <span>اليومية (₪/يوم) <span className="mi-required">*</span></span>
+        <input type="number" min={0.01} step="0.01" value={empForm.dailyWage}
+          onChange={e => setEmpField('dailyWage', e.target.value)} placeholder="0"
+          onFocus={e => { if (e.target.value === '0') setEmpField('dailyWage', '') }}
+          onBlur={e  => { if (!e.target.value) setEmpField('dailyWage', '0') }}
+          className={errCls(empSubmitted && !!empDailyWageErr)} />
+        {showEmpErr(empDailyWageErr)}
       </label>
     </div>
   )
 
-  /* Shared salary form body (inline for add, modal for edit) */
+  /* Shared salary form body */
   const salaryFormBody = (
     <div className="mi-form-grid">
       <label className="mi-field">
         <span>الموظف <span className="mi-required">*</span></span>
-        <select value={salaryForm.employeeId}
+        <select value={salaryForm.employeeId} disabled={!!editingSalary}
           onChange={e => setSalaryField('employeeId', e.target.value)}
           className={'pay-select' + errCls(salarySubmitted && !!salaryEmpErr)}>
           <option value="">— اختر الموظف —</option>
@@ -189,12 +238,41 @@ export default function Employees() {
         {showSalaryErr(salaryEmpErr)}
       </label>
       <label className="mi-field">
-        <span>المبلغ المدفوع (₪) <span className="mi-required">*</span></span>
-        <input type="number" min={0} value={salaryForm.amount}
-          onChange={e => setSalaryField('amount', e.target.value)} placeholder="0"
-          className={errCls(salarySubmitted && !!salaryAmountErr)} />
-        {showSalaryErr(salaryAmountErr)}
+        <span>عدد أيام الدوام <span className="mi-required">*</span></span>
+        <input type="number" min={0.5} step="0.5" value={salaryForm.daysWorked}
+          onChange={e => setSalaryField('daysWorked', e.target.value)} placeholder="0"
+          onFocus={e => { if (e.target.value === '0') setSalaryField('daysWorked', '') }}
+          className={errCls(salarySubmitted && !!salaryDaysErr)} />
+        {showSalaryErr(salaryDaysErr)}
       </label>
+      <label className="mi-field">
+        <span>بونص (₪)</span>
+        <input type="number" min={0} step="0.01" value={salaryForm.bonus}
+          onChange={e => setSalaryField('bonus', e.target.value)} placeholder="0"
+          className={errCls(salarySubmitted && !!salaryBonusErr)} />
+        {showSalaryErr(salaryBonusErr)}
+      </label>
+      <label className="mi-field">
+        <span>خصم (₪)</span>
+        <input type="number" min={0} step="0.01" value={salaryForm.deduction}
+          onChange={e => setSalaryField('deduction', e.target.value)} placeholder="0"
+          className={errCls(salarySubmitted && !!salaryDeductErr)} />
+        {showSalaryErr(salaryDeductErr)}
+      </label>
+      <div className="mi-field">
+        <span>صافي الراتب</span>
+        <div style={{
+          padding: '8px 12px', background: '#f0fdf4', border: '1px solid #27ae60',
+          borderRadius: '6px', fontWeight: 700, fontSize: '16px', color: '#27ae60',
+        }}>
+          {liveNet.toLocaleString('en-US')} ₪
+          {editingSalary && (
+            <span style={{ fontSize: '11px', fontWeight: 400, color: '#888', marginRight: '8px' }}>
+              (اليومية المحفوظة: {editingSalary.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم)
+            </span>
+          )}
+        </div>
+      </div>
       <label className="mi-field">
         <span>تاريخ الدفعة</span>
         <input type="date" value={salaryForm.date} max={today()}
@@ -225,7 +303,7 @@ export default function Employees() {
           {empFormBody}
           <div className="mi-form-actions">
             <button className="btn btn-primary" onClick={handleEmpSave}>حفظ الموظف</button>
-            <button className="btn btn-ghost" onClick={clearEmpForm}>إلغاء</button>
+            <button className="btn btn-ghost"   onClick={clearEmpForm}>إلغاء</button>
           </div>
         </div>
       )}
@@ -241,7 +319,7 @@ export default function Employees() {
             <div className="mi-modal-body">{empFormBody}</div>
             <div className="mi-modal-footer">
               <button className="btn btn-primary" onClick={handleEmpSave}>حفظ التعديلات</button>
-              <button className="btn btn-ghost" onClick={clearEmpForm}>إلغاء</button>
+              <button className="btn btn-ghost"   onClick={clearEmpForm}>إلغاء</button>
             </div>
           </div>
         </div>
@@ -260,11 +338,11 @@ export default function Employees() {
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
-              <tr><th>اسم الموظف</th><th>رقم الهاتف</th><th>الإجراءات</th></tr>
+              <tr><th>اسم الموظف</th><th>رقم الهاتف</th><th>اليومية (₪/يوم)</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
               {employees.length === 0 ? (
-                <tr><td colSpan={3} className="mi-empty-row">لا يوجد موظفون</td></tr>
+                <tr><td colSpan={4} className="mi-empty-row">لا يوجد موظفون</td></tr>
               ) : employees.map((emp, i) => (
                 <tr key={emp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsEmp(emp)}>
@@ -275,10 +353,11 @@ export default function Employees() {
                       : <span style={{ color: '#9ca3af' }}>—</span>
                     }
                   </td>
+                  <td className="mi-amount">{emp.dailyWage.toLocaleString('en-US')} ₪</td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn btn-sm-outline" onClick={() => openEmpEdit(emp)}>تعديل</button>
-                      <button className="btn btn-danger-sm" onClick={() => setDeleteEmp(emp)}>حذف</button>
+                      <button className="btn btn-danger-sm"  onClick={() => setDeleteEmp(emp)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -295,7 +374,7 @@ export default function Employees() {
           {salaryFormBody}
           <div className="mi-form-actions">
             <button className="btn btn-primary" onClick={handleSalarySave}>حفظ الدفعة</button>
-            <button className="btn btn-ghost" onClick={clearSalaryForm}>إلغاء</button>
+            <button className="btn btn-ghost"   onClick={clearSalaryForm}>إلغاء</button>
           </div>
         </div>
       )}
@@ -311,7 +390,7 @@ export default function Employees() {
             <div className="mi-modal-body">{salaryFormBody}</div>
             <div className="mi-modal-footer">
               <button className="btn btn-primary" onClick={handleSalarySave}>حفظ التعديلات</button>
-              <button className="btn btn-ghost" onClick={clearSalaryForm}>إلغاء</button>
+              <button className="btn btn-ghost"   onClick={clearSalaryForm}>إلغاء</button>
             </div>
           </div>
         </div>
@@ -320,8 +399,8 @@ export default function Employees() {
       {/* ════ Stats ════ */}
       <div className="stats-grid">
         <div className="stat-card">
-          <span className="stat-label">إجمالي الرواتب المدفوعة</span>
-          <span className="stat-value outgoing">{totalSalaries.toLocaleString('ar-EG')} ₪</span>
+          <span className="stat-label">إجمالي الرواتب المدفوعة (الصافي)</span>
+          <span className="stat-value outgoing">{totalSalaries.toLocaleString('en-US')} ₪</span>
         </div>
       </div>
 
@@ -361,22 +440,35 @@ export default function Employees() {
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
-              <tr><th>الموظف</th><th>المبلغ المدفوع ₪</th><th>تاريخ الدفعة</th><th>ملاحظات</th><th>الإجراءات</th></tr>
+              <tr>
+                <th>الموظف</th>
+                <th>اليومية (وقت الدفعة)</th>
+                <th>الأيام</th>
+                <th>بونص ₪</th>
+                <th>خصم ₪</th>
+                <th>الصافي ₪</th>
+                <th>تاريخ الدفعة</th>
+                <th>الإجراءات</th>
+              </tr>
             </thead>
             <tbody>
               {filteredSalaries.length === 0 ? (
-                <tr><td colSpan={5} className="mi-empty-row">لا توجد رواتب تطابق البحث</td></tr>
+                <tr><td colSpan={8} className="mi-empty-row">لا توجد رواتب تطابق البحث</td></tr>
               ) : filteredSalaries.map((rec, i) => (
                 <tr key={rec.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsSalary(rec)}>
                   <td>{empName(rec.employeeId)}</td>
-                  <td className="mi-amount">{rec.amount.toLocaleString('ar-EG')} ₪</td>
+                  <td className="mi-amount">{rec.dailyWageSnapshot.toLocaleString('en-US')} ₪</td>
+                  <td>{rec.daysWorked}</td>
+                  <td className="mi-amount">{rec.bonus.toLocaleString('en-US')} ₪</td>
+                  <td className="mi-amount">{rec.deduction.toLocaleString('en-US')} ₪</td>
+                  <td className="mi-amount" style={{ fontWeight: 700 }}>{rec.amount.toLocaleString('en-US')} ₪</td>
                   <td>{rec.date}</td>
-                  <td>{rec.notes || '—'}</td>
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-sm-green"   onClick={() => handlePrintSalary(rec)}>طباعة</button>
                       <button className="btn btn-sm-outline" onClick={() => openSalaryEdit(rec)}>تعديل</button>
-                      <button className="btn btn-danger-sm" onClick={() => setDeleteSalary(rec)}>حذف</button>
+                      <button className="btn btn-danger-sm"  onClick={() => setDeleteSalary(rec)}>حذف</button>
                     </div>
                   </td>
                 </tr>
@@ -407,10 +499,14 @@ export default function Employees() {
                     : <span style={{ color: '#9ca3af' }}>—</span>
                   }
                 </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">اليومية الحالية</span>
+                  <span className="mi-amount">{detailsEmp.dailyWage.toLocaleString('en-US')} ₪/يوم</span>
+                </div>
                 <div className="mi-detail-item mi-detail-full">
-                  <span className="mi-detail-label">إجمالي الرواتب المدفوعة</span>
+                  <span className="mi-detail-label">إجمالي الرواتب المدفوعة (الصافي)</span>
                   <span className="mi-amount">
-                    {salaries.filter(s => s.employeeId === detailsEmp.id).reduce((sum, s) => sum + s.amount, 0).toLocaleString('ar-EG')} ₪
+                    {salaries.filter(s => s.employeeId === detailsEmp.id).reduce((sum, s) => sum + s.amount, 0).toLocaleString('en-US')} ₪
                   </span>
                 </div>
               </div>
@@ -444,12 +540,26 @@ export default function Employees() {
                   }
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المبلغ المدفوع</span>
-                  <span className="mi-amount">{detailsSalary.amount.toLocaleString('ar-EG')} ₪</span>
+                  <span className="mi-detail-label">اليومية (وقت الدفعة)</span>
+                  <span className="mi-amount">{detailsSalary.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">تاريخ الدفعة</span>
-                  <span>{detailsSalary.date}</span>
+                  <span className="mi-detail-label">عدد أيام الدوام</span>
+                  <span>{detailsSalary.daysWorked} يوم</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">بونص</span>
+                  <span className="cl-amount-in">+{detailsSalary.bonus.toLocaleString('en-US')} ₪</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">خصم</span>
+                  <span className="cl-amount-out">−{detailsSalary.deduction.toLocaleString('en-US')} ₪</span>
+                </div>
+                <div className="mi-detail-item mi-detail-full" style={{ borderTop: '2px solid #27ae60', paddingTop: '12px' }}>
+                  <span className="mi-detail-label">الصافي النهائي</span>
+                  <span className="mi-amount" style={{ fontSize: '18px', color: '#27ae60', fontWeight: 700 }}>
+                    {detailsSalary.amount.toLocaleString('en-US')} ₪
+                  </span>
                 </div>
                 {detailsSalary.notes && (
                   <div className="mi-detail-item mi-detail-full">
@@ -457,6 +567,10 @@ export default function Employees() {
                     <span>{detailsSalary.notes}</span>
                   </div>
                 )}
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">تاريخ الدفعة</span>
+                  <span>{detailsSalary.date}</span>
+                </div>
               </div>
             </div>
             <div className="mi-modal-footer">

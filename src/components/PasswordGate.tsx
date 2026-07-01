@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { APP_PASSWORD } from '../utils/auth'
+import PasswordInput from './PasswordInput'
 
 /* ════════════════════════════════════════
    PasswordGate — shown before the whole app
@@ -25,13 +26,12 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
       <form style={card} onSubmit={handleSubmit}>
         <div style={logo}>كراج</div>
         <p style={subtitle}>الرجاء إدخال كلمة السر للدخول</p>
-        <input
-          type="password"
-          autoFocus
+        <PasswordInput
           value={password}
-          onChange={e => { setPassword(e.target.value); setError('') }}
+          onChange={v => { setPassword(v); setError('') }}
           placeholder="كلمة السر"
-          style={{ ...input, ...(error ? inputErr : null) }}
+          autoFocus
+          inputStyle={{ ...inputBase, ...(error ? inputErr : undefined) }}
         />
         {error && <span style={errorText}>{error}</span>}
         <button type="submit" style={button}>دخول</button>
@@ -63,7 +63,7 @@ const subtitle: React.CSSProperties = {
   textAlign: 'center', margin: '0 0 0.5rem',
 }
 
-const input: React.CSSProperties = {
+const inputBase: React.CSSProperties = {
   fontFamily: 'inherit', fontSize: '1rem', padding: '0.7rem 0.9rem',
   border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8,
   background: '#fff', color: '#222', outline: 'none', direction: 'rtl',

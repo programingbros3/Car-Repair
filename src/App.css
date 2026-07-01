@@ -51,8 +51,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  position: sticky;
-  top: 0;
+  overflow: hidden;
 }
 
 .sidebar-logo {
@@ -67,6 +66,19 @@
   flex: 1;
   padding: 1rem 0;
   list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  width: 4px;
+}
+.sidebar-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
 }
 
 .sidebar-nav li a {
@@ -102,6 +114,21 @@
   color: rgba(255, 255, 255, 0.45);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   text-align: center;
+}
+
+@media (max-height: 800px) {
+  .sidebar-logo {
+    padding: 1rem 1.25rem 0.7rem;
+    font-size: 1.35rem;
+  }
+  .sidebar-nav li a {
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+  .sidebar-date {
+    padding: 0.65rem 1.25rem;
+    font-size: 0.76rem;
+  }
 }
 
 /* ── Page header ── */
@@ -1011,4 +1038,63 @@
   font-weight: 600;
   color: #1E2A38;
   letter-spacing: 0.3px;
+}
+
+/* ══════════════════════════════════════
+   Password Input component (pwd-*)
+══════════════════════════════════════ */
+.pwd-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.pwd-input-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.pwd-input {
+  font-family: inherit;
+  font-size: 0.92rem;
+  padding: 0.5rem 0.75rem 0.5rem 2.5rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #222;
+  outline: none;
+  transition: border-color 0.15s;
+  direction: rtl;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pwd-input:focus { border-color: #3498DB; background: #fff; }
+
+.pwd-toggle-btn {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem;
+  color: #888;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+.pwd-toggle-btn:hover { color: #333; }
+
+.pwd-capslock-warning {
+  font-size: 0.78rem;
+  color: #92400E;
+  background: #FEF3C7;
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  margin-top: 0.3rem;
+  font-weight: 500;
 }
