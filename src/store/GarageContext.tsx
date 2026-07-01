@@ -6,6 +6,10 @@ import { dbService } from '../services/db'
 ════════════════════════════════════════ */
 export type PayMethod = 'cash' | 'check' | 'visa' | 'debt'
 
+/* خصم على مستوى الفاتورة (صيانة/بيع مباشر):
+   undefined = غير معروف/لا تغيير (شاشات لا تحمل الخصم)، null = بدون خصم */
+export type DiscountType = 'fixed' | 'percentage'
+
 export type PaymentRow = {
   id: number
   method: PayMethod
@@ -26,7 +30,8 @@ export type CarRecord = {
   id: number; invoiceNumber?: string; customerName: string; phone: string; carPlate: string
   carType: string; carColor: string; dateReceived: string
   status: 'in_progress' | 'delivered'; deliveredDate?: string
-  notes: string; total: number; amountPaid?: number; amountRemaining?: number; items: CarItem[]
+  notes: string; discountType?: DiscountType | null; discountValue?: number
+  total: number; amountPaid?: number; amountRemaining?: number; items: CarItem[]
 }
 
 /* ── Direct Sales ── */
@@ -36,8 +41,8 @@ export type SaleItem = {
 export type SaleStatus = 'paid' | 'partial_debt' | 'full_debt'
 export type SaleRecord = {
   id: number; invoiceNumber?: string; customerName: string; phone: string; saleDate: string
-  warranty: string; notes: string; total: number
-  amountPaid: number; amountRemaining: number; status: SaleStatus
+  warranty: string; notes: string; discountType?: DiscountType | null; discountValue?: number
+  total: number; amountPaid: number; amountRemaining: number; status: SaleStatus
   items: SaleItem[]; payments: PaymentRow[]
 }
 

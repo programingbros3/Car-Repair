@@ -32,6 +32,7 @@ import type {
 
 import type {
   PaymentInput, PaymentMethod,
+  DiscountType as DiscountTypeDb,
   InvoiceItemInput, InvoiceItemRow,
   MaintenanceInvoiceInput, MaintenanceInvoiceRow,
   DirectSaleInput, DirectSaleRow,
@@ -191,6 +192,8 @@ export function carToDbInput(car: CarRecord, payments: PaymentRow[] = []): Maint
     car_color: car.carColor || undefined,
     date_received: car.dateReceived,
     notes: car.notes || undefined,
+    discount_type: car.discountType ?? null,
+    discount_value: car.discountType ? (car.discountValue ?? 0) : 0,
     items: car.items.map(carItemToDbInput),
     payments: payments.map(paymentRowToDbInput),
   }
@@ -205,6 +208,9 @@ export interface MaintenanceUpdateInput {
   car_color?: string
   date_received: string
   notes?: string
+  // undefined = المستدعي لا يحمل الخصم (SalesInvoices/PendingDebts) → يبقى المخزَّن كما هو
+  discount_type?: DiscountTypeDb | null
+  discount_value?: number
   items: InvoiceItemInput[]
 }
 
@@ -218,6 +224,8 @@ export function carToUpdateInput(car: CarRecord): MaintenanceUpdateInput {
     car_color: car.carColor || undefined,
     date_received: car.dateReceived,
     notes: car.notes || undefined,
+    discount_type: car.discountType === undefined ? undefined : car.discountType,
+    discount_value: car.discountType === undefined ? undefined : (car.discountValue ?? 0),
     items: car.items.map(carItemToDbInput),
   }
 }
@@ -236,6 +244,8 @@ export function dbRowToCarRecord(row: MaintenanceInvoiceRow, items: InvoiceItemR
     status: row.status,
     deliveredDate: row.date_released ?? undefined,
     notes: row.notes ?? '',
+    discountType: row.discount_type ?? null,
+    discountValue: row.discount_value ?? 0,
     total: row.total_amount,
     amountPaid: row.amount_paid,
     amountRemaining: row.amount_remaining,
@@ -254,6 +264,9 @@ export function saleToDbInput(sale: SaleRecord, payments: PaymentRow[] = sale.pa
     sale_date: sale.saleDate,
     warranty: sale.warranty || undefined,
     notes: sale.notes || undefined,
+    // undefined = المستدعي لا يحمل الخصم (SalesInvoices/PendingDebts) → يبقى المخزَّن كما هو
+    discount_type: sale.discountType === undefined ? undefined : sale.discountType,
+    discount_value: sale.discountType === undefined ? undefined : (sale.discountValue ?? 0),
     items: sale.items.map(saleItemToDbInput),
     payments: payments.map(paymentRowToDbInput),
   }
@@ -273,6 +286,8 @@ export function dbRowToSaleRecord(
     saleDate: row.sale_date,
     warranty: row.warranty ?? '',
     notes: row.notes ?? '',
+    discountType: row.discount_type ?? null,
+    discountValue: row.discount_value ?? 0,
     total: row.total_amount,
     amountPaid: row.amount_paid,
     amountRemaining: row.amount_remaining,

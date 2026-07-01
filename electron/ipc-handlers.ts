@@ -20,7 +20,8 @@ import {
   releaseMaintenanceCar, getMaintenanceInvoices, getMaintenanceInvoice, getCarHistory,
 } from '../src/db/maintenance'
 import {
-  addDirectSaleInvoice, updateDirectSaleItems, getDirectSaleInvoices, getDirectSaleInvoice,
+  addDirectSaleInvoice, updateDirectSaleItems, recalcDirectSaleTotals,
+  getDirectSaleInvoices, getDirectSaleInvoice,
 } from '../src/db/direct-sale'
 import {
   addSupplierInvoice, addSupplierPayment, addSupplierDebtPayment,
@@ -47,7 +48,7 @@ import {
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
-  PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput,
+  PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput, DiscountType,
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
   DailyExpenseInput, EmployeeInput, SalaryInput,
   SupplierDirectoryInput, WarrantyInput, AutoLockSettings,
@@ -144,7 +145,9 @@ export function registerIpcHandlers(db: DB): void {
   on('maintenance:update', (id: number, updates: {
     customer_name?: string; customer_phone?: string; car_plate?: string
     car_type?: string; car_color?: string; date_received?: string
-    warranty?: string; notes?: string; items?: InvoiceItemInput[]
+    warranty?: string; notes?: string
+    discount_type?: DiscountType | null; discount_value?: number
+    items?: InvoiceItemInput[]
   }) => {
     db.transaction(() => {
       updateMaintenanceInvoice(id, updates)
@@ -186,12 +189,19 @@ export function registerIpcHandlers(db: DB): void {
         input.customer_name, input.customer_phone ?? null, input.sale_date,
         input.warranty ?? null, input.notes ?? null, id,
       )
+      // undefined = المستدعي لا يعرف الخصم (SalesInvoices/PendingDebts) → يبقى المخزَّن كما هو
+      if (input.discount_type !== undefined || input.discount_value !== undefined) {
+        db.prepare(
+          `UPDATE direct_sale_invoices SET discount_type=?, discount_value=? WHERE id=?`,
+        ).run(input.discount_type ?? null, input.discount_value ?? 0, id)
+        recalcDirectSaleTotals(id)
+      }
       syncWarrantiesForDirectSale(db, id)
     })()
     logActivity(db, 'update', 'direct_sale_invoice', id, `تعديل فاتورة بيع مباشر #${id} — ${input.customer_name}`)
   })
-  on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[]) =>
-    updateDirectSaleItems(invoiceId, items))
+  on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[], discount?: { type: DiscountType | null; value: number }) =>
+    updateDirectSaleItems(invoiceId, items, discount))
   on('directSale:addPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
     addPayment(invoiceId, 'direct_sale', payments, date))
   on('directSale:delete', (id: number) => {

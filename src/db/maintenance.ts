@@ -1,7 +1,9 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
+import { applyDiscount } from './discount'
 import type {
+  DiscountType,
   MaintenanceInvoiceInput,
   MaintenanceInvoiceRow,
   MaintenanceInvoiceDetail,
@@ -103,7 +105,9 @@ function insertPayments(
 export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
   const db = getDB()
 
-  const total_amount = calcTotal(input.items)
+  const discount_type = input.discount_type ?? null
+  const discount_value = discount_type ? (input.discount_value ?? 0) : 0
+  const total_amount = applyDiscount(calcTotal(input.items), discount_type, discount_value)
   const amount_paid = calcPaid(input.payments)
   const amount_remaining = total_amount - amount_paid
 
@@ -112,10 +116,12 @@ export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO maintenance_invoices
         (invoice_number, customer_name, customer_phone, car_plate, car_type, car_color,
-         date_received, warranty, notes, total_amount, amount_paid, amount_remaining)
+         date_received, warranty, notes, discount_type, discount_value,
+         total_amount, amount_paid, amount_remaining)
       VALUES
         (@invoice_number, @customer_name, @customer_phone, @car_plate, @car_type, @car_color,
-         @date_received, @warranty, @notes, @total_amount, @amount_paid, @amount_remaining)
+         @date_received, @warranty, @notes, @discount_type, @discount_value,
+         @total_amount, @amount_paid, @amount_remaining)
     `).run({
       invoice_number,
       customer_name: input.customer_name,
@@ -126,6 +132,8 @@ export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
       date_received: input.date_received,
       warranty: input.warranty ?? null,
       notes: input.notes ?? null,
+      discount_type,
+      discount_value,
       total_amount,
       amount_paid,
       amount_remaining,
@@ -155,6 +163,8 @@ export function updateMaintenanceInvoice(
     date_received?: string
     warranty?: string
     notes?: string
+    discount_type?: DiscountType | null   // undefined = لا تغيير على الخصم المخزَّن
+    discount_value?: number
     items?: InvoiceItemInput[]   // إذا موجودة، تُستبدل كل البنود ويُعاد حساب الإجمالي/المتبقّي
   },
 ): void {
@@ -173,26 +183,38 @@ export function updateMaintenanceInvoice(
     if (updates.date_received  !== undefined) { fields.push('date_received = ?');  values.push(updates.date_received) }
     if (updates.warranty       !== undefined) { fields.push('warranty = ?');       values.push(updates.warranty ?? null) }
     if (updates.notes          !== undefined) { fields.push('notes = ?');          values.push(updates.notes ?? null) }
+    if (updates.discount_type  !== undefined) { fields.push('discount_type = ?');  values.push(updates.discount_type) }
+    if (updates.discount_value !== undefined) { fields.push('discount_value = ?'); values.push(updates.discount_value ?? 0) }
 
     if (fields.length > 0) {
       values.push(invoiceId)
       db.prepare(`UPDATE maintenance_invoices SET ${fields.join(', ')} WHERE id = ?`).run(...values)
     }
 
-    // ── 2) استبدال البنود وإعادة حساب الإجمالي/المتبقّي (فقط إذا مُرِّرت البنود) ──
+    // ── 2) استبدال البنود (فقط إذا مُرِّرت) ──
     if (updates.items !== undefined) {
       db.prepare(
         `DELETE FROM invoice_items WHERE invoice_id = ? AND invoice_type = 'maintenance'`
       ).run(invoiceId)
 
       insertItems(invoiceId, updates.items)
+    }
 
-      const total_amount = calcTotal(updates.items)
+    // ── 3) إعادة حساب الإجمالي (بعد الخصم) والمتبقّي إذا تغيّرت البنود أو الخصم ──
+    const discountTouched = updates.discount_type !== undefined || updates.discount_value !== undefined
+    if (updates.items !== undefined || discountTouched) {
+      const itemRows = db.prepare(
+        `SELECT quantity, unit_price, customer_owned FROM invoice_items WHERE invoice_id = ? AND invoice_type = 'maintenance'`
+      ).all(invoiceId) as { quantity: number; unit_price: number; customer_owned: number }[]
+      const subtotal = itemRows.reduce(
+        (sum, r) => r.customer_owned ? sum : sum + r.quantity * r.unit_price, 0)
+
       const current = db.prepare(
-        `SELECT amount_paid FROM maintenance_invoices WHERE id = ?`
-      ).get(invoiceId) as { amount_paid: number } | undefined
-      const amount_paid = current?.amount_paid ?? 0
-      const amount_remaining = total_amount - amount_paid
+        `SELECT amount_paid, discount_type, discount_value FROM maintenance_invoices WHERE id = ?`
+      ).get(invoiceId) as { amount_paid: number; discount_type: DiscountType | null; discount_value: number } | undefined
+
+      const total_amount = applyDiscount(subtotal, current?.discount_type, current?.discount_value)
+      const amount_remaining = total_amount - (current?.amount_paid ?? 0)
 
       db.prepare(`
         UPDATE maintenance_invoices
