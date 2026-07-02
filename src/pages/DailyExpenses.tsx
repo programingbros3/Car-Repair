@@ -172,7 +172,7 @@ export default function DailyExpenses() {
       <label className="mi-field">
         <span>التاريخ</span>
         <input type="date" value={form.date} max={today()}
-          onChange={e => setField('date', e.target.value)} />
+          onChange={e => setField('date', e.target.value > today() ? today() : e.target.value)} />
       </label>
       <label className="mi-field mi-field-full">
         <span>ملاحظات</span>
@@ -248,12 +248,12 @@ export default function DailyExpenses() {
             <div className="mi-filter-field">
               <span className="mi-filter-label">من تاريخ</span>
               <input type="date" className="mi-date-input" value={filterFrom} max={today()}
-                onChange={e => setFilterFrom(e.target.value)} />
+                onChange={e => setFilterFrom(e.target.value > today() ? today() : e.target.value)} />
             </div>
             <div className="mi-filter-field">
               <span className="mi-filter-label">إلى تاريخ</span>
               <input type="date" className="mi-date-input" value={filterTo} max={today()}
-                onChange={e => setFilterTo(e.target.value)} />
+                onChange={e => setFilterTo(e.target.value > today() ? today() : e.target.value)} />
             </div>
             <div className="mi-filter-field">
               <span className="mi-filter-label">من مبلغ ₪</span>

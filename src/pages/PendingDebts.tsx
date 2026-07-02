@@ -414,7 +414,7 @@ export default function PendingDebts() {
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
                   <span>تاريخ الدفعة</span>
-                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value)} />
+                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value > today() ? today() : e.target.value)} />
                 </label>
                 <label className="mi-field">
                   <span>ملاحظات</span>
@@ -450,7 +450,7 @@ export default function PendingDebts() {
                           onChange={e => updatePaymentRow(row.id, { bankName: e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الإصدار</span>
                         <input type="date" className="mi-td-input" value={row.issueDate} max={today()}
-                          onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value })} /></label>
+                          onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span>
                         <input type="date" className="mi-td-input" value={row.clearDate}
                           onChange={e => updatePaymentRow(row.id, { clearDate: e.target.value })} /></label>
@@ -535,7 +535,7 @@ export default function PendingDebts() {
                 <label className="mi-field">
                   <span>التاريخ</span>
                   <input type="date" value={editForm.date} max={today()}
-                    onChange={e => setEditForm(f => f && { ...f, date: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, date: e.target.value > today() ? today() : e.target.value })} />
                 </label>
                 <label className="mi-field">
                   <span>نمرة السيارة</span>

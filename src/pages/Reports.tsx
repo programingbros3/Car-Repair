@@ -503,7 +503,7 @@ export default function Reports() {
                 <div className="mi-filter-field">
                   <span className="mi-filter-label">اختر اليوم</span>
                   <input type="date" className="mi-date-input" value={day} max={today()}
-                    onChange={e => setDay(e.target.value)} />
+                    onChange={e => setDay(e.target.value > today() ? today() : e.target.value)} />
                 </div>
               )}
 

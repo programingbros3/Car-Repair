@@ -422,7 +422,7 @@ export default function DirectSales() {
         </label>
         <label className="mi-field">
           <span>التاريخ</span>
-          <input type="date" value={form.saleDate} max={today()} onChange={e => setField('saleDate', e.target.value)} />
+          <input type="date" value={form.saleDate} max={today()} onChange={e => setField('saleDate', e.target.value > today() ? today() : e.target.value)} />
         </label>
         <label className="mi-field">
           <span>الكفالة</span>
@@ -538,7 +538,7 @@ export default function DirectSales() {
                 <div className="pay-row-extra">
                   <label className="mi-field"><span>رقم الشيك</span><input type="text" className="mi-td-input" value={row.checkNumber} onChange={e => updateFormPayRow(row.id, { checkNumber: e.target.value })} /></label>
                   <label className="mi-field"><span>اسم البنك</span><input type="text" className="mi-td-input" value={row.bankName} onChange={e => updateFormPayRow(row.id, { bankName: e.target.value })} /></label>
-                  <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updateFormPayRow(row.id, { issueDate: e.target.value })} /></label>
+                  <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updateFormPayRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
                   <label className="mi-field"><span>تاريخ الصرف</span><input type="date" className="mi-td-input" value={row.clearDate} onChange={e => updateFormPayRow(row.id, { clearDate: e.target.value })} /></label>
                 </div>
               )}
@@ -783,7 +783,7 @@ export default function DirectSales() {
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
                   <span>تاريخ الدفعة</span>
-                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value)} />
+                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value > today() ? today() : e.target.value)} />
                 </label>
                 <label className="mi-field">
                   <span>ملاحظات</span>
@@ -809,7 +809,7 @@ export default function DirectSales() {
                     <div className="pay-row-extra">
                       <label className="mi-field"><span>رقم الشيك</span><input type="text" className="mi-td-input" value={row.checkNumber} onChange={e => updatePaymentRow(row.id, { checkNumber: e.target.value })} /></label>
                       <label className="mi-field"><span>اسم البنك</span><input type="text" className="mi-td-input" value={row.bankName} onChange={e => updatePaymentRow(row.id, { bankName: e.target.value })} /></label>
-                      <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value })} /></label>
+                      <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span><input type="date" className="mi-td-input" value={row.clearDate} onChange={e => updatePaymentRow(row.id, { clearDate: e.target.value })} /></label>
                     </div>
                   )}

@@ -472,7 +472,7 @@ export default function SalesInvoices() {
                 <div className="mi-form-field">
                   <label className="mi-form-label">التاريخ</label>
                   <input type="date" className="mi-form-input" value={editForm.date} max={today()}
-                    onChange={e => setEditForm(f => f && { ...f, date: e.target.value })} />
+                    onChange={e => setEditForm(f => f && { ...f, date: e.target.value > today() ? today() : e.target.value })} />
                 </div>
                 <div className="mi-form-field">
                   <label className="mi-form-label">نوع الفاتورة</label>
@@ -600,7 +600,7 @@ export default function SalesInvoices() {
                         <div className="mi-form-field">
                           <label className="mi-form-label">تاريخ الصرف</label>
                           <input type="date" className="mi-form-input" value={row.clearDate} max={today()}
-                            onChange={e => updatePayRow(row.id, 'clearDate', e.target.value)} />
+                            onChange={e => updatePayRow(row.id, 'clearDate', e.target.value > today() ? today() : e.target.value)} />
                         </div>
                         <div className="mi-form-field">
                           <label className="mi-form-label">اسم البنك</label>

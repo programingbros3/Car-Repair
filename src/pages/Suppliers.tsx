@@ -438,7 +438,7 @@ export default function Suppliers() {
         <label className="mi-field">
           <span>تاريخ الشراء</span>
           <input type="date" value={form.purchaseDate} max={today()}
-            onChange={e => setField('purchaseDate', e.target.value)} />
+            onChange={e => setField('purchaseDate', e.target.value > today() ? today() : e.target.value)} />
         </label>
         <label className="mi-field mi-field-full">
           <span>ملاحظات</span>
@@ -521,7 +521,7 @@ export default function Suppliers() {
                   onChange={e => updatePaymentRow(row.id, { bankName: e.target.value })} /></label>
               <label className="mi-field"><span>تاريخ الإصدار</span>
                 <input type="date" className="mi-td-input" value={row.issueDate} max={today()}
-                  onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value })} /></label>
+                  onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
               <label className="mi-field"><span>تاريخ الصرف</span>
                 <input type="date" className="mi-td-input" value={row.clearDate}
                   onChange={e => updatePaymentRow(row.id, { clearDate: e.target.value })} /></label>
@@ -885,7 +885,7 @@ export default function Suppliers() {
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
                   <span>تاريخ الدفعة</span>
-                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value)} />
+                  <input type="date" value={payDate} max={today()} onChange={e => setPayDate(e.target.value > today() ? today() : e.target.value)} />
                 </label>
                 <label className="mi-field">
                   <span>ملاحظات</span>
@@ -921,7 +921,7 @@ export default function Suppliers() {
                           onChange={e => updatePayRow(row.id, { bankName: e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الإصدار</span>
                         <input type="date" className="mi-td-input" value={row.issueDate} max={today()}
-                          onChange={e => updatePayRow(row.id, { issueDate: e.target.value })} /></label>
+                          onChange={e => updatePayRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span>
                         <input type="date" className="mi-td-input" value={row.clearDate}
                           onChange={e => updatePayRow(row.id, { clearDate: e.target.value })} /></label>

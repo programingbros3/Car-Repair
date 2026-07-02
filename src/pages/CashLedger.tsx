@@ -350,7 +350,7 @@ export default function CashLedger() {
               className="mi-date-input"
               value={selectedDate}
               max={todayStr()}
-              onChange={e => setSelectedDate(e.target.value)}
+              onChange={e => { const v = e.target.value; setSelectedDate(v > todayStr() ? todayStr() : v) }}
             />
           </div>
           {selectedDate !== todayStr() && (

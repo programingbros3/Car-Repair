@@ -449,9 +449,9 @@ export default function MaintenanceInvoices() {
       </div>
       <div className="mi-date-range">
         <div className="mi-filter-field"><span className="mi-filter-label">من تاريخ</span>
-          <input type="date" className="mi-date-input" value={from} max={today()} onChange={e => setFrom(e.target.value)} /></div>
+          <input type="date" className="mi-date-input" value={from} max={today()} onChange={e => setFrom(e.target.value > today() ? today() : e.target.value)} /></div>
         <div className="mi-filter-field"><span className="mi-filter-label">إلى تاريخ</span>
-          <input type="date" className="mi-date-input" value={to} max={today()} onChange={e => setTo(e.target.value)} /></div>
+          <input type="date" className="mi-date-input" value={to} max={today()} onChange={e => setTo(e.target.value > today() ? today() : e.target.value)} /></div>
       </div>
       <div className="mi-date-range">
         <div className="mi-filter-field"><span className="mi-filter-label">من مبلغ ₪</span>
@@ -515,7 +515,7 @@ export default function MaintenanceInvoices() {
             </label>
             <label className="mi-field">
               <span>تاريخ الاستلام</span>
-              <input type="date" value={form.dateReceived} max={today()} onChange={e => setField('dateReceived', e.target.value)} />
+              <input type="date" value={form.dateReceived} max={today()} onChange={e => setField('dateReceived', e.target.value > today() ? today() : e.target.value)} />
             </label>
             <label className="mi-field mi-field-full">
               <span>ملاحظات عامة</span>
@@ -855,7 +855,7 @@ export default function MaintenanceInvoices() {
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
                   <span>تاريخ التسليم</span>
-                  <input type="date" value={deliveryDate} max={today()} onChange={e => setDeliveryDate(e.target.value)} />
+                  <input type="date" value={deliveryDate} max={today()} onChange={e => setDeliveryDate(e.target.value > today() ? today() : e.target.value)} />
                 </label>
               </div>
               <div className="pay-section-title">طريقة الدفع</div>
@@ -877,7 +877,7 @@ export default function MaintenanceInvoices() {
                     <div className="pay-row-extra">
                       <label className="mi-field"><span>رقم الشيك</span><input type="text" className="mi-td-input" value={row.checkNumber} onChange={e => updatePaymentRow(row.id, { checkNumber: e.target.value })} /></label>
                       <label className="mi-field"><span>اسم البنك</span><input type="text" className="mi-td-input" value={row.bankName} onChange={e => updatePaymentRow(row.id, { bankName: e.target.value })} /></label>
-                      <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value })} /></label>
+                      <label className="mi-field"><span>تاريخ الإصدار</span><input type="date" className="mi-td-input" value={row.issueDate} max={today()} onChange={e => updatePaymentRow(row.id, { issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span><input type="date" className="mi-td-input" value={row.clearDate} onChange={e => updatePaymentRow(row.id, { clearDate: e.target.value })} /></label>
                     </div>
                   )}

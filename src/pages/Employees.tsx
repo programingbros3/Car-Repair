@@ -296,7 +296,7 @@ export default function Employees() {
       <label className="mi-field">
         <span>تاريخ الدفعة</span>
         <input type="date" value={salaryForm.date} max={today()}
-          onChange={e => setSalaryField('date', e.target.value)} />
+          onChange={e => setSalaryField('date', e.target.value > today() ? today() : e.target.value)} />
       </label>
       <label className="mi-field mi-field-full">
         <span>ملاحظات</span>
@@ -446,12 +446,12 @@ export default function Employees() {
             <div className="mi-filter-field">
               <span className="mi-filter-label">من تاريخ</span>
               <input type="date" className="mi-date-input" value={filterFrom} max={today()}
-                onChange={e => setFilterFrom(e.target.value)} />
+                onChange={e => setFilterFrom(e.target.value > today() ? today() : e.target.value)} />
             </div>
             <div className="mi-filter-field">
               <span className="mi-filter-label">إلى تاريخ</span>
               <input type="date" className="mi-date-input" value={filterTo} max={today()}
-                onChange={e => setFilterTo(e.target.value)} />
+                onChange={e => setFilterTo(e.target.value > today() ? today() : e.target.value)} />
             </div>
             {hasFilters && (
               <button className="btn btn-ghost mi-clear-btn" onClick={clearFilters}>مسح الفلتر</button>

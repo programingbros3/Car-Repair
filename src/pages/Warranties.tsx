@@ -219,7 +219,7 @@ export default function Warranties() {
       <label className="mi-field">
         <span>تاريخ البداية</span>
         <input type="date" value={form.startDate} max={today()}
-          onChange={e => setField('startDate', e.target.value)} />
+          onChange={e => setField('startDate', e.target.value > today() ? today() : e.target.value)} />
       </label>
       <label className="mi-field">
         <span>المدة</span>
@@ -288,12 +288,12 @@ export default function Warranties() {
             <div className="mi-filter-field">
               <span className="mi-filter-label">من تاريخ</span>
               <input type="date" className="mi-date-input" value={filterFrom} max={today()}
-                onChange={e => setFilterFrom(e.target.value)} />
+                onChange={e => setFilterFrom(e.target.value > today() ? today() : e.target.value)} />
             </div>
             <div className="mi-filter-field">
               <span className="mi-filter-label">إلى تاريخ</span>
               <input type="date" className="mi-date-input" value={filterTo} max={today()}
-                onChange={e => setFilterTo(e.target.value)} />
+                onChange={e => setFilterTo(e.target.value > today() ? today() : e.target.value)} />
             </div>
           </div>
           {hasFilters && (
