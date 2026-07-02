@@ -178,13 +178,14 @@ export default function SalesInvoices() {
   const editNameErr  = editForm && !editForm.customerName.trim() ? 'اسم الزبون مطلوب' : ''
   const editPhoneErr = editForm && !editForm.phone.trim() ? 'رقم الهاتف مطلوب' : ''
   const editPlateErr = editForm && editForm.type === 'maintenance' && !editForm.carPlate.trim() ? 'نمرة السيارة مطلوبة' : ''
+  const editPaidErr  = editForm && Number(editForm.paid) > Number(editForm.total) + 0.001 ? 'المدفوع لا يمكن أن يتجاوز الإجمالي' : ''
 
   const closeEdit = () => { setEditInv(null); setEditForm(null); setEditSubmitted(false) }
 
   const saveEdit = async () => {
     if (!editInv || !editForm) return
     setEditSubmitted(true)
-    if (editNameErr || editPhoneErr || editPlateErr) return
+    if (editNameErr || editPhoneErr || editPlateErr || editPaidErr) return
     const total = Number(editForm.total) || 0
     const paid  = Math.min(Number(editForm.paid) || 0, total)
     const phone = editForm.phone.trim()
@@ -470,62 +471,63 @@ export default function SalesInvoices() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-form-grid">
-                <div className="mi-form-field">
-                  <label className="mi-form-label">التاريخ</label>
-                  <input type="date" className="mi-form-input" value={editForm.date} max={today()}
+                <label className="mi-field">
+                  <span>التاريخ</span>
+                  <input type="date" value={editForm.date} max={today()}
                     onChange={e => setEditForm(f => f && { ...f, date: e.target.value > today() ? today() : e.target.value })} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">نوع الفاتورة</label>
-                  <select className="mi-form-input" value={editForm.type}
+                </label>
+                <label className="mi-field">
+                  <span>نوع الفاتورة</span>
+                  <select value={editForm.type}
                     onChange={e => setEditForm(f => f && { ...f, type: e.target.value as SaleInvoiceType })}>
                     <option value="maintenance">صيانة</option>
                     <option value="direct_sale">بيع مباشر</option>
                   </select>
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">اسم الزبون <span className="mi-required">*</span></label>
-                  <input type="text" className={'mi-form-input' + (editSubmitted && editNameErr ? ' mi-input-err' : '')} value={editForm.customerName}
+                </label>
+                <label className="mi-field">
+                  <span>اسم الزبون <span className="mi-required">*</span></span>
+                  <input type="text" className={editSubmitted && editNameErr ? 'mi-input-err' : ''} value={editForm.customerName}
                     onChange={e => setEditForm(f => f && { ...f, customerName: e.target.value })} />
                   {editSubmitted && editNameErr && <span className="mi-err">{editNameErr}</span>}
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">رقم الهاتف <span className="mi-required">*</span></label>
-                  <input type="text" className={'mi-form-input' + (editSubmitted && editPhoneErr ? ' mi-input-err' : '')} value={editForm.phone}
+                </label>
+                <label className="mi-field">
+                  <span>رقم الهاتف <span className="mi-required">*</span></span>
+                  <input type="text" className={editSubmitted && editPhoneErr ? 'mi-input-err' : ''} value={editForm.phone}
                     placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
                   {editSubmitted && editPhoneErr && <span className="mi-err">{editPhoneErr}</span>}
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">الإجمالي ₪</label>
-                  <input type="number" min={0} className="mi-form-input" value={editForm.total}
+                </label>
+                <label className="mi-field">
+                  <span>الإجمالي ₪</span>
+                  <input type="number" min={0} value={editForm.total}
                     onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
                     onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
                     onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">المدفوع ₪</label>
-                  <input type="number" min={0} className="mi-form-input" value={editForm.paid}
+                </label>
+                <label className="mi-field">
+                  <span>المدفوع ₪</span>
+                  <input type="number" min={0} className={editSubmitted && editPaidErr ? 'mi-input-err' : ''} value={editForm.paid}
                     onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
                     onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
                     onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">نمرة السيارة {editForm.type === 'maintenance' && <span className="mi-required">*</span>}</label>
-                  <input type="text" className={'mi-form-input' + (editSubmitted && editPlateErr ? ' mi-input-err' : '')} value={editForm.carPlate}
+                  {editSubmitted && editPaidErr && <span className="mi-err">{editPaidErr}</span>}
+                </label>
+                <label className="mi-field">
+                  <span>نمرة السيارة {editForm.type === 'maintenance' && <span className="mi-required">*</span>}</span>
+                  <input type="text" className={editSubmitted && editPlateErr ? 'mi-input-err' : ''} value={editForm.carPlate}
                     onChange={e => setEditForm(f => f && { ...f, carPlate: e.target.value })} />
                   {editSubmitted && editPlateErr && <span className="mi-err">{editPlateErr}</span>}
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">نوع السيارة</label>
-                  <input type="text" className="mi-form-input" value={editForm.carType}
+                </label>
+                <label className="mi-field">
+                  <span>نوع السيارة</span>
+                  <input type="text" value={editForm.carType}
                     onChange={e => setEditForm(f => f && { ...f, carType: e.target.value })} />
-                </div>
-                <div className="mi-form-field mi-form-field-full">
-                  <label className="mi-form-label">التفاصيل</label>
-                  <textarea className="mi-form-input mi-form-textarea" value={editForm.details}
+                </label>
+                <label className="mi-field mi-field-full">
+                  <span>التفاصيل</span>
+                  <textarea rows={3} value={editForm.details}
                     onChange={e => setEditForm(f => f && { ...f, details: e.target.value })} />
-                </div>
+                </label>
               </div>
             </div>
             <div className="mi-modal-footer">

@@ -442,50 +442,50 @@ export default function PurchaseInvoices() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-form-grid">
-                <div className="mi-form-field">
-                  <label className="mi-form-label">التاريخ</label>
-                  <input type="date" className="mi-form-input" value={editForm.date} max={today()}
+                <label className="mi-field">
+                  <span>التاريخ</span>
+                  <input type="date" value={editForm.date} max={today()}
                     onChange={e => setEditForm(f => f && { ...f, date: e.target.value > today() ? today() : e.target.value })} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">النوع</label>
-                  <select className="mi-form-input" value={editForm.type}
+                </label>
+                <label className="mi-field">
+                  <span>النوع</span>
+                  <select value={editForm.type}
                     onChange={e => setEditForm(f => f && { ...f, type: e.target.value as PurchaseType })}>
                     <option value="supplier">مورد</option>
                     <option value="expense">مصروف يومي</option>
                     <option value="salary">راتب</option>
                   </select>
-                </div>
-                <div className="mi-form-field mi-form-field-full">
-                  <label className="mi-form-label">الوصف / المورد</label>
-                  <input type="text" className="mi-form-input" value={editForm.description}
+                </label>
+                <label className="mi-field mi-field-full">
+                  <span>الوصف / المورد</span>
+                  <input type="text" value={editForm.description}
                     onChange={e => setEditForm(f => f && { ...f, description: e.target.value })} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">رقم الهاتف</label>
-                  <input type="text" className="mi-form-input" value={editForm.phone}
+                </label>
+                <label className="mi-field">
+                  <span>رقم الهاتف</span>
+                  <input type="text" value={editForm.phone}
                     placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">الإجمالي ₪</label>
-                  <input type="number" min={0} className="mi-form-input" value={editForm.total}
+                </label>
+                <label className="mi-field">
+                  <span>الإجمالي ₪</span>
+                  <input type="number" min={0} value={editForm.total}
                     onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
                     onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
                     onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
-                </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">المدفوع ₪</label>
-                  <input type="number" min={0} className="mi-form-input" value={editForm.paid}
+                </label>
+                <label className="mi-field">
+                  <span>المدفوع ₪</span>
+                  <input type="number" min={0} value={editForm.paid}
                     onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
                     onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
                     onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
-                </div>
-                <div className="mi-form-field mi-form-field-full">
-                  <label className="mi-form-label">التفاصيل</label>
-                  <textarea className="mi-form-input mi-form-textarea" value={editForm.details}
+                </label>
+                <label className="mi-field mi-field-full">
+                  <span>التفاصيل</span>
+                  <textarea rows={3} value={editForm.details}
                     onChange={e => setEditForm(f => f && { ...f, details: e.target.value })} />
-                </div>
+                </label>
               </div>
             </div>
             <div className="mi-modal-footer">
