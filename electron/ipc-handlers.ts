@@ -395,6 +395,10 @@ export function registerIpcHandlers(db: DB): void {
     return Number(info.lastInsertRowid)
   })
 
+  on('cashAudit:delete', (id: number) =>
+    db.prepare(`DELETE FROM daily_cash_audits WHERE id = ?`).run(id)
+  )
+
   /* ─────────────── الكفالات ─────────────── */
   on('warranty:getAll', () => db.prepare(`SELECT * FROM warranties ORDER BY start_date DESC, id DESC`).all())
   on('warranty:update', (id: number, input: WarrantyInput) => {

@@ -4,6 +4,7 @@ import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { LedgerRow, CashAuditRow } from '../db/types'
 import type { UpcomingCheque, UpcomingChequeSource } from '../store/GarageContext'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 /* ════════════════════════════════════════
    Types
@@ -95,6 +96,12 @@ export default function CashLedger() {
   /* ── Details modal ── */
   const [detailsTx, setDetailsTx] = useState<DisplayRow | null>(null)
 
+  /* ── Audit edit / delete ── */
+  const [editAudit, setEditAudit]         = useState<CashAuditRow | null>(null)
+  const [editActual, setEditActual]       = useState('')
+  const [editSaving, setEditSaving]       = useState(false)
+  const [deleteAudit, setDeleteAudit]     = useState<CashAuditRow | null>(null)
+
   /* ── Upcoming cheques ── */
   const [chequeDays, setChequeDays]       = useState<7 | 14 | 30>(14)
   const [cheques, setCheques]             = useState<UpcomingCheque[]>([])
@@ -181,6 +188,45 @@ export default function CashLedger() {
     if (isNaN(actual)) return
     await handleSaveAudit(dailyNet, actual, 0)
     setMatchOk(false)
+  }
+
+  /* ─── Edit audit record ─── */
+  const openEditAudit = (rec: CashAuditRow) => {
+    setEditAudit(rec)
+    setEditActual(String(rec.actual_amount))
+  }
+
+  const handleEditAuditSave = async () => {
+    if (!editAudit) return
+    const actual = parseFloat(editActual)
+    if (isNaN(actual) || actual < 0) return
+    const diff = actual - editAudit.system_total
+    setEditSaving(true)
+    try {
+      await dbService.cashAudit.save({
+        audit_date: editAudit.audit_date,
+        system_total: editAudit.system_total,
+        actual_amount: actual,
+        difference: diff,
+      })
+      await loadAudits()
+      setEditAudit(null)
+    } catch (err) {
+      showError('تعذّر تحديث السجل', err)
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  /* ─── Delete audit record ─── */
+  const handleDeleteAudit = async (rec: CashAuditRow) => {
+    try {
+      await dbService.cashAudit.delete(rec.id)
+      await loadAudits()
+      setDeleteAudit(null)
+    } catch (err) {
+      showError('تعذّر حذف السجل', err)
+    }
   }
 
   /* ─── Print audit row ─── */
@@ -484,7 +530,7 @@ export default function CashLedger() {
                 <th>المبلغ الفعلي ₪</th>
                 <th>الفرق ₪</th>
                 <th>الحالة</th>
-                <th>طباعة</th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -501,7 +547,13 @@ export default function CashLedger() {
                     {rec.difference > 0 ? '+' : rec.difference < 0 ? '−' : ''}{fmt(rec.difference)} ₪
                   </td>
                   <td>{auditBadge(rec.difference)}</td>
-                  <td><button className="btn btn-secondary btn-sm-outline" onClick={() => handlePrintAudit(rec)}>طباعة</button></td>
+                  <td>
+                    <div className="mi-actions">
+                      <button className="btn btn-secondary btn-sm-outline" onClick={() => handlePrintAudit(rec)}>طباعة</button>
+                      <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEditAudit(rec)}>تعديل</button>
+                      <button className="btn btn-danger-sm" onClick={() => setDeleteAudit(rec)}>حذف</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -557,6 +609,60 @@ export default function CashLedger() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Edit Audit Modal ════ */}
+      {editAudit && (
+        <div className="mi-modal-overlay" onClick={() => setEditAudit(null)}>
+          <div className="mi-modal mi-modal-sm" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تعديل إحصاء {editAudit.audit_date}</h3>
+              <button className="mi-modal-close" onClick={() => setEditAudit(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-form-grid">
+                <div className="mi-field">
+                  <span>إجمالي النظام ₪</span>
+                  <div style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontWeight: 600 }}>
+                    {fmt(editAudit.system_total)} ₪
+                  </div>
+                </div>
+                <label className="mi-field">
+                  <span>المبلغ الفعلي في الصندوق ₪</span>
+                  <input type="number" min={0} step="0.01"
+                    value={editActual}
+                    onChange={e => setEditActual(e.target.value)}
+                    className="mi-td-input"
+                    autoFocus />
+                </label>
+                {editActual.trim() && !isNaN(parseFloat(editActual)) && (
+                  <div className="mi-field mi-field-full">
+                    <span>الفرق</span>
+                    <div style={{ fontWeight: 700, color: diffColor(parseFloat(editActual) - editAudit.system_total) }}>
+                      {(() => { const d = parseFloat(editActual) - editAudit.system_total; return `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmt(d)} ₪` })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" disabled={editSaving} onClick={handleEditAuditSave}>
+                {editSaving ? 'جارٍ الحفظ...' : 'حفظ التعديل'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setEditAudit(null)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Delete Audit Confirm ════ */}
+      {deleteAudit && (
+        <ConfirmDialog
+          title="تأكيد الحذف"
+          message={`هل أنت متأكد من حذف سجل إحصاء يوم ${deleteAudit.audit_date}؟`}
+          onConfirm={() => handleDeleteAudit(deleteAudit)}
+          onCancel={() => setDeleteAudit(null)}
+        />
       )}
 
       {/* ════ Difference Modal ════ */}

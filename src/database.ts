@@ -43,6 +43,8 @@ export function initDB(): void {
     `ALTER TABLE maintenance_invoices ADD COLUMN discount_value REAL DEFAULT 0`,
     `ALTER TABLE direct_sale_invoices ADD COLUMN discount_type TEXT`,
     `ALTER TABLE direct_sale_invoices ADD COLUMN discount_value REAL DEFAULT 0`,
+    `ALTER TABLE invoice_items ADD COLUMN warranty TEXT`,
+    `ALTER TABLE invoice_items ADD COLUMN part_type TEXT NOT NULL DEFAULT 'part'`,
   ]
   for (const sql of migrations) {
     try { db.exec(sql) }

@@ -11,7 +11,7 @@ import type { VatSettings } from '../db/types'
    Local Types
 ════════════════════════════════════════ */
 type FormPartType = 'part' | 'service'
-type FormPart    = { id: number; partType: FormPartType; name: string; qty: number; unitPrice: number; warrantyValue: string; warrantyUnit: WarrantyPeriodUnit | ''; notes: string }
+type FormPart    = { id: number; partType: FormPartType; name: string; qty: number | string; unitPrice: number | string; warrantyValue: string; warrantyUnit: WarrantyPeriodUnit | ''; notes: string }
 type FormPartErr = { nameErr: string; qtyErr: string }
 
 const UNIT_OPTIONS: [WarrantyPeriodUnit, string][] = [['week', 'أسبوع'], ['month', 'شهر'], ['year', 'سنة']]
@@ -86,15 +86,15 @@ const emptyForm = () => ({
 })
 
 const newFormPart = (): FormPart => ({
-  id: nextPartId++, partType: 'part', name: '', qty: 1, unitPrice: 0, warrantyValue: '1', warrantyUnit: '', notes: '',
+  id: nextPartId++, partType: 'part', name: '', qty: '' as unknown as number, unitPrice: '' as unknown as number, warrantyValue: '', warrantyUnit: '', notes: '',
 })
 
 const newFormService = (): FormPart => ({
-  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: 0, warrantyValue: '1', warrantyUnit: '', notes: '',
+  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: '' as unknown as number, warrantyValue: '', warrantyUnit: '', notes: '',
 })
 
 const emptyPayRow = (): PaymentRow => ({
-  id: nextPayId++, method: 'cash', amount: 0,
+  id: nextPayId++, method: 'cash', amount: '' as unknown as number,
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
 })
 
@@ -248,7 +248,7 @@ export default function MaintenanceInvoices() {
         ? record.items.map(item => {
             const w = parseWarrantyJson(item.warranty)
             return { id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
-              unitPrice: item.unitPrice, warrantyValue: w ? String(w.value) : '1', warrantyUnit: w ? w.unit : '' as WarrantyPeriodUnit | '', notes: item.notes }
+              unitPrice: item.unitPrice, warrantyValue: w ? String(w.value) : '', warrantyUnit: w ? w.unit : '' as WarrantyPeriodUnit | '', notes: item.notes }
           })
         : []
       setParts(ep); setSubmitAttempted(false); setShowForm(true)
@@ -267,12 +267,12 @@ export default function MaintenanceInvoices() {
   }
 
   /* Validation */
-  const formTotal = parts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
+  const formTotal = parts.reduce((s, p) => s + Number(p.qty || 0) * Number(p.unitPrice || 0), 0)
   const nameErr   = validateName(form.customerName)
   const plateErr  = validatePlate(form.carPlate)
   const phoneErr  = validatePhone(form.phone)
   const partsErrMap: Record<number, FormPartErr> = {}
-  for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: p.qty >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
+  for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: Number(p.qty) >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
 
   /* ── خصم الفاتورة + العرض الحي للإجمالي بعد الخصم ── */
   const discountValueNum = Number(form.discountValue || 0)
@@ -292,8 +292,8 @@ export default function MaintenanceInvoices() {
     setSubmitAttempted(true)
     if (hasErrors) return
     const newItems: CarItem[] = parts.map(p => ({
-      name: p.name, quantity: p.partType === 'service' ? 1 : p.qty, unitPrice: p.unitPrice,
-      warranty: p.warrantyUnit ? JSON.stringify({ value: Math.max(1, parseInt(p.warrantyValue) || 1), unit: p.warrantyUnit }) : '',
+      name: p.name, quantity: p.partType === 'service' ? 1 : Number(p.qty || 1), unitPrice: Number(p.unitPrice || 0),
+      warranty: p.warrantyUnit ? JSON.stringify({ value: Math.max(1, parseInt(p.warrantyValue || '1') || 1), unit: p.warrantyUnit }) : '',
       partType: p.partType, notes: p.notes,
     }))
     const phone = form.phone.trim()
@@ -329,13 +329,20 @@ export default function MaintenanceInvoices() {
   const updatePaymentRow  = (id: number, u: Partial<Omit<PaymentRow, 'id'>>) =>
     setPaymentRows(prev => prev.map(r => r.id !== id ? r : { ...r, ...u }))
 
-  const invoiceTotal = deliveryCar?.total ?? 0
-  const totalPaid    = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
-  const remaining    = invoiceTotal - totalPaid
+  const invoiceTotal   = deliveryCar?.total ?? 0
+  const alreadyPaid    = deliveryCar?.amountPaid ?? 0
+  const invoiceRemaining = deliveryCar ? Math.max(0, invoiceTotal - alreadyPaid) : 0
+  const totalPaid      = paymentRows.reduce((s, r) => s + Number(r.amount || 0), 0)
+  const remaining      = invoiceRemaining - totalPaid
+  const deliveryExceeds = totalPaid > invoiceRemaining + 0.001
 
   const handleDeliverySave = async () => {
     if (!deliveryCar) return
-    const rows = paymentRows.filter(r => r.amount > 0)
+    if (deliveryExceeds) {
+      showError(`مجموع الدفعة (${fmt(totalPaid)} ₪) يتجاوز المتبقي (${fmt(invoiceRemaining)} ₪)`, null)
+      return
+    }
+    const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows)
       await reload()
@@ -543,10 +550,10 @@ export default function MaintenanceInvoices() {
                       {showPartErr(part.id, 'nameErr')}
                     </td>
                     <td>
-                      <input type="number" min={1} value={part.partType === 'service' ? 1 : part.qty}
+                      <input type="number" min={1} value={part.partType === 'service' ? 1 : (part.qty === '' || part.qty === 0 ? '' : part.qty)}
                         disabled={part.partType === 'service'}
                         className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!partsErrMap[part.id]?.qtyErr)}
-                        onChange={e => updatePart(part.id, 'qty', Math.max(1, Number(e.target.value)))} />
+                        onChange={e => updatePart(part.id, 'qty', e.target.value === '' ? '' : Math.max(1, parseFloat(e.target.value) || 1))} />
                       {showPartErr(part.id, 'qtyErr')}
                     </td>
                     <td>
@@ -563,7 +570,8 @@ export default function MaintenanceInvoices() {
                           {UNIT_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
                         </select>
                         {part.warrantyUnit && (
-                          <input type="number" min={1} max={99} value={part.warrantyValue}
+                          <input type="number" max={99} value={part.warrantyValue}
+                            placeholder="1"
                             className="mi-td-input mi-td-num" style={{ width: 55 }}
                             onChange={e => updatePart(part.id, 'warrantyValue', e.target.value)} />
                         )}
@@ -859,9 +867,9 @@ export default function MaintenanceInvoices() {
                         <option key={val} value={val}>{PAY_LABELS[val]}</option>
                       ))}
                     </select>
-                    <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
+                    <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount === 0 || row.amount === ('' as unknown as number) ? '' : row.amount}
                       className="mi-td-input pay-amount"
-                      onChange={e => updatePaymentRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
+                      onChange={e => updatePaymentRow(row.id, { amount: e.target.value === '' ? ('' as unknown as number) : Math.max(0, Number(e.target.value)) })}
                       onBlur={(e) => { if (!e.target.value) updatePaymentRow(row.id, { amount: 0 }) }} />
                     <button className="btn btn-danger-sm" disabled={paymentRows.length === 1} onClick={() => removePaymentRow(row.id)}>حذف</button>
                   </div>
@@ -882,17 +890,20 @@ export default function MaintenanceInvoices() {
                 </div>
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
+              {deliveryExceeds && <p className="pd-pay-error">مجموع الدفعة ({fmt(totalPaid)} ₪) يتجاوز المتبقي ({fmt(invoiceRemaining)} ₪)</p>}
               <div className="pay-summary">
                 <div className="pay-summary-row"><span>إجمالي الفاتورة</span><strong>{fmt(invoiceTotal)} ₪</strong></div>
-                <div className="pay-summary-row"><span>إجمالي المدفوع</span><strong className="pay-paid">{fmt(totalPaid)} ₪</strong></div>
+                {alreadyPaid > 0 && <div className="pay-summary-row"><span>المدفوع سابقاً</span><strong className="pay-paid">{fmt(alreadyPaid)} ₪</strong></div>}
+                <div className="pay-summary-row"><span>المتبقي قبل هذه الدفعة</span><strong className="pay-due">{fmt(invoiceRemaining)} ₪</strong></div>
+                <div className="pay-summary-row"><span>إجمالي هذه الدفعة</span><strong className="pay-paid">{fmt(totalPaid)} ₪</strong></div>
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي</span>
-                  <strong className={remaining === 0 ? 'pay-ok' : remaining > 0 ? 'pay-due' : 'pay-over'}>{fmt(remaining)} ₪</strong>
+                  <span>المتبقي بعد الدفعة</span>
+                  <strong className={remaining <= 0 ? 'pay-ok' : deliveryExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, remaining))} ₪</strong>
                 </div>
               </div>
             </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-primary" onClick={handleDeliverySave}>تأكيد التسليم</button>
+              <button className="btn btn-primary" onClick={handleDeliverySave} disabled={deliveryExceeds}>تأكيد التسليم</button>
               <button className="btn btn-ghost" onClick={() => setDeliveryCar(null)}>إلغاء</button>
             </div>
           </div>

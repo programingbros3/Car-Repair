@@ -23,6 +23,14 @@ export function addPayment(
   const { table, label, refType } = invoiceMeta(invoiceType)
 
   const run = db.transaction(() => {
+    // التحقق من عدم تجاوز المبلغ المدفوع للمتبقي
+    const invoice = db.prepare(`SELECT amount_remaining FROM ${table} WHERE id = ?`).get(invoiceId) as { amount_remaining: number } | undefined
+    if (!invoice) throw new Error('الفاتورة غير موجودة')
+    const totalNew = payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
+    if (totalNew > invoice.amount_remaining + 0.001) {
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+    }
+
     for (const p of payments) {
       if (p.amount <= 0 || p.method === 'debt') continue
 

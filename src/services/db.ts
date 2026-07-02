@@ -272,6 +272,7 @@ export const dbService = {
   cashAudit: {
     getAll: () => invoke<CashAuditRow[]>('cashAudit:getAll'),
     save: (input: CashAuditInput) => invoke<number>('cashAudit:save', input),
+    delete: (id: number) => invoke<void>('cashAudit:delete', id),
   },
 
   /* ─────────────── دفعات الفواتير (للطباعة) ─────────────── */

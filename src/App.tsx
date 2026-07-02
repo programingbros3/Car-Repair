@@ -1,9 +1,10 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { GarageProvider, useGarage } from './store/GarageContext'
 import { useAutoLock } from './utils/useAutoLock'
 import PasswordGate from './components/PasswordGate'
 import Sidebar from './components/Sidebar'
+import ErrorToast from './components/ErrorToast'
 import CashLedger from './pages/CashLedger'
 import MaintenanceInvoices from './pages/MaintenanceInvoices'
 import DirectSales from './pages/DirectSales'
@@ -56,7 +57,29 @@ function AppShell() {
   )
 }
 
+/* يمنع إدخال تواريخ مستقبلية عبر الكيبورد في جميع حقول التاريخ التي لها max */
+function useDateClampGuard() {
+  useEffect(() => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    const clamp = (e: Event) => {
+      const input = e.target as HTMLInputElement
+      if (input.type !== 'date' || !input.max || !input.value) return
+      if (input.value > input.max) {
+        setter?.call(input, input.max)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+    }
+    document.addEventListener('change', clamp, true)
+    document.addEventListener('blur', clamp, true)
+    return () => {
+      document.removeEventListener('change', clamp, true)
+      document.removeEventListener('blur', clamp, true)
+    }
+  }, [])
+}
+
 export default function App() {
+  useDateClampGuard()
   const [isUnlocked, setIsUnlocked] = useState(false)
   const lock = useCallback(() => setIsUnlocked(false), [])
 
@@ -67,6 +90,7 @@ export default function App() {
   return (
     <GarageProvider>
       <AppShell />
+      <ErrorToast />
     </GarageProvider>
   )
 }

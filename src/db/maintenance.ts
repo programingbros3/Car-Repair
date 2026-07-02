@@ -234,10 +234,16 @@ export function releaseMaintenanceCar(input: ReleaseCarInput): void {
 
   const run = db.transaction(() => {
     const invoice = db.prepare(
-      `SELECT id FROM maintenance_invoices WHERE id = ? AND status = 'in_progress'`
-    ).get(input.invoiceId) as { id: number } | undefined
+      `SELECT id, amount_remaining FROM maintenance_invoices WHERE id = ? AND status = 'in_progress'`
+    ).get(input.invoiceId) as { id: number; amount_remaining: number } | undefined
 
     if (!invoice) throw new Error('الفاتورة غير موجودة أو تم تسليم السيارة مسبقاً')
+
+    // التحقق من عدم تجاوز المبلغ المدفوع للمتبقي
+    const totalNew = input.payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
+    if (totalNew > invoice.amount_remaining + 0.001) {
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+    }
 
     db.prepare(`
       UPDATE maintenance_invoices

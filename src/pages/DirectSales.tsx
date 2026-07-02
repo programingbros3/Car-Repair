@@ -10,7 +10,7 @@ import type { VatSettings } from '../db/types'
 /* ════════════════════════════════════════
    Local Types
 ════════════════════════════════════════ */
-type FormItem    = { id: number; name: string; qty: number; unitPrice: number; notes: string }
+type FormItem    = { id: number; name: string; qty: number | string; unitPrice: number | string; notes: string }
 type FormItemErr = { nameErr: string; qtyErr: string }
 
 /* ════════════════════════════════════════
@@ -79,19 +79,18 @@ function vatBreakdown(base: number, vat: VatSettings | null): VatBreakdown | nul
 }
 
 const emptyForm = () => ({
-  customerName: '', phone: '', saleDate: today(), warrantyValue: '1', warrantyUnit: '' as WarrantyPeriodUnit | '', generalNotes: '',
+  customerName: '', phone: '', saleDate: today(), warrantyValue: '', warrantyUnit: '' as WarrantyPeriodUnit | '', generalNotes: '',
   discountType: '' as '' | DiscountType, discountValue: '',
 })
 
-const newFormItem  = (): FormItem    => ({ id: nextItemId++, name: '', qty: 1, unitPrice: 0, notes: '' })
-const emptyPayRow  = (): PaymentRow  => ({ id: nextPayId++, method: 'cash', amount: 0, checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '' })
+const newFormItem  = (): FormItem    => ({ id: nextItemId++, name: '', qty: '', unitPrice: '', notes: '' })
+const emptyPayRow  = (): PaymentRow  => ({ id: nextPayId++, method: 'cash', amount: '' as unknown as number, checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '' })
 
 const blockDigits     = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
 const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault() }
 const validateName    = (v: string) => v.trim() ? '' : 'اسم الزبون مطلوب'
 
-const PAY_LABELS:     Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
-const ALL_PAY_LABELS: Record<PayMethod, string>                  = { cash: 'كاش', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 const STATUS_LABELS: Record<SaleStatus, string> = { paid: 'مدفوع', partial_debt: 'دين جزئي', full_debt: 'دين كامل' }
 const STATUS_CLS:    Record<SaleStatus, string> = { paid: 'mi-badge-green', partial_debt: 'mi-badge-yellow', full_debt: 'mi-badge-red' }
 
@@ -206,13 +205,13 @@ export default function DirectSales() {
       const wParsed = parseWarrantyJsonDS(record.warranty)
       setForm({ customerName: record.customerName, phone: record.phone === '0000' ? '' : record.phone,
         saleDate: record.saleDate,
-        warrantyValue: wParsed ? String(wParsed.value) : '1',
+        warrantyValue: wParsed ? String(wParsed.value) : '',
         warrantyUnit: wParsed ? wParsed.unit : '' as WarrantyPeriodUnit | '',
         generalNotes: record.notes,
         discountType: record.discountType ?? '',
         discountValue: record.discountType ? String(record.discountValue ?? 0) : '' })
       const editItems: FormItem[] = record.items.length > 0
-        ? record.items.map(it => ({ id: nextItemId++, name: it.name, qty: it.quantity, unitPrice: it.unitPrice, notes: it.notes }))
+        ? record.items.map(it => ({ id: nextItemId++, name: it.name, qty: it.quantity, unitPrice: it.unitPrice !== 0 ? it.unitPrice : '', notes: it.notes }))
         : [newFormItem()]
       setItems(editItems); setSubmitAttempted(false); setShowForm(true)
     } catch (err) {
@@ -230,14 +229,10 @@ export default function DirectSales() {
   }
 
   /* Validation */
-  const formTotal = items.reduce((s, it) => s + it.qty * it.unitPrice, 0)
+  const formTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.unitPrice || 0), 0)
   const nameErr   = validateName(form.customerName)
   const itemsErrMap: Record<number, FormItemErr> = {}
-  for (const it of items) itemsErrMap[it.id] = { nameErr: it.name.trim() ? '' : 'اسم الصنف مطلوب', qtyErr: it.qty >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
-  const formPayErr = !editingInvoice && !formPayRows.some(r => r.amount > 0 || r.method === 'debt')
-    ? 'يجب تحديد طريقة دفع وإدخال مبلغ'
-    : ''
-
+  for (const it of items) itemsErrMap[it.id] = { nameErr: it.name.trim() ? '' : 'اسم الصنف مطلوب', qtyErr: Number(it.qty) >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
   /* ── خصم الفاتورة + العرض الحي للإجمالي بعد الخصم ── */
   const discountValueNum = Number(form.discountValue || 0)
   const discountErr = !form.discountType ? ''
@@ -250,16 +245,21 @@ export default function DirectSales() {
     : 0
   const formTotalAfterDiscount = formTotal - discountAmount
 
-  const hasErrors = !!nameErr || !!discountErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr) || !!formPayErr
+  // الدفع اختياري — لكن لا يمكن أن يتجاوز إجمالي الفاتورة
+  const formPayTotal   = !editingInvoice ? formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0) : 0
+  const formPayExceedsErr = !editingInvoice && formPayTotal > formTotalAfterDiscount + 0.001
+    ? `المبلغ المُدفع (${formPayTotal.toLocaleString('en-US')} ₪) يتجاوز إجمالي الفاتورة (${formTotalAfterDiscount.toLocaleString('en-US')} ₪)` : ''
+
+  const hasErrors = !!nameErr || !!discountErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr) || !!formPayExceedsErr
 
   const handleSave = async () => {
     setSubmitAttempted(true)
     if (hasErrors) return
-    const newItems: SaleItem[] = items.map((it, i) => ({ id: i + 1, name: it.name, quantity: it.qty, unitPrice: it.unitPrice, notes: it.notes }))
+    const newItems: SaleItem[] = items.map((it, i) => ({ id: i + 1, name: it.name, quantity: Number(it.qty || 1), unitPrice: Number(it.unitPrice || 0), notes: it.notes }))
     const phone = form.phone.trim() || '0000'
     const isNew = !editingInvoice
-    const actualPayRows = isNew ? formPayRows.filter(r => r.method !== 'debt' && r.amount > 0) : []
-    const amountPaid    = isNew ? actualPayRows.reduce((s, r) => s + r.amount, 0) : (editingInvoice?.amountPaid ?? 0)
+    const actualPayRows = isNew ? formPayRows.filter(r => r.method !== 'debt' && Number(r.amount) > 0) : []
+    const amountPaid    = isNew ? actualPayRows.reduce((s, r) => s + Number(r.amount), 0) : (editingInvoice?.amountPaid ?? 0)
     const amountRemaining = formTotalAfterDiscount - amountPaid
     const status: SaleStatus = amountPaid >= formTotalAfterDiscount - 0.001 ? 'paid' : amountPaid <= 0.001 ? 'full_debt' : 'partial_debt'
     const warrantyJson = form.warrantyUnit
@@ -313,13 +313,13 @@ export default function DirectSales() {
   const invTotal      = payInvoice?.total ?? 0
   const invPaid       = payInvoice?.amountPaid ?? 0
   const invRemaining  = payInvoice?.amountRemaining ?? 0
-  const thisPayTotal  = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
+  const thisPayTotal  = paymentRows.reduce((s, r) => s + Number(r.amount || 0), 0)
   const afterRemaining = invRemaining - thisPayTotal
-  const payExceeds    = thisPayTotal > invRemaining
+  const payExceeds    = thisPayTotal > invRemaining + 0.001
 
   const handlePaySave = async () => {
     if (thisPayTotal <= 0 || payExceeds || !payInvoice) return
-    const rows = paymentRows.filter(r => r.amount > 0)
+    const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       await dbService.directSale.addPayment(payInvoice.id, rows, payDate)
       await reload()
@@ -433,7 +433,8 @@ export default function DirectSales() {
               {UNIT_OPTIONS_DS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
             </select>
             {form.warrantyUnit && (
-              <input type="number" min={1} max={99} value={form.warrantyValue}
+              <input type="number" max={99} value={form.warrantyValue}
+                placeholder="1"
                 className="mi-td-input mi-td-num" style={{ width: 70 }}
                 onChange={e => setField('warrantyValue', e.target.value)} />
             )}
@@ -462,12 +463,12 @@ export default function DirectSales() {
                   {showItemErr(item.id, 'nameErr')}
                 </td>
                 <td>
-                  <input type="number" min={1} value={item.qty}
+                  <input type="number" min={1} value={item.qty === '' || item.qty === 0 ? '' : item.qty}
                     className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!itemsErrMap[item.id]?.qtyErr)}
-                    onChange={e => updateItem(item.id, 'qty', Math.max(1, Number(e.target.value)))} />
+                    onChange={e => updateItem(item.id, 'qty', e.target.value === '' ? '' : Math.max(1, parseFloat(e.target.value) || 1))} />
                   {showItemErr(item.id, 'qtyErr')}
                 </td>
-                <td><input type="number" min={0} value={item.unitPrice || ''} className="mi-td-input mi-td-num" onChange={e => updateItem(item.id, 'unitPrice', Math.max(0, Number(e.target.value)))} onBlur={(e) => { if (!e.target.value) updateItem(item.id, 'unitPrice', 0) }} /></td>
+                <td><input type="number" min={0} value={item.unitPrice === '' || item.unitPrice === 0 ? '' : item.unitPrice} className="mi-td-input mi-td-num" onChange={e => updateItem(item.id, 'unitPrice', e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))} onBlur={(e) => { if (!e.target.value) updateItem(item.id, 'unitPrice', 0) }} /></td>
                 <td><input type="text" placeholder="ملاحظة..." value={item.notes} className="mi-td-input" onChange={e => updateItem(item.id, 'notes', e.target.value)} /></td>
                 <td className="mi-td-center"><button className="btn btn-danger-sm" disabled={items.length === 1} onClick={() => removeItem(item.id)}>حذف</button></td>
               </tr>
@@ -515,23 +516,21 @@ export default function DirectSales() {
       {!editingInvoice && (
         <>
           <div className="pay-section-title" style={{ marginTop: '1.25rem' }}>
-            طريقة الدفع <span className="mi-required">*</span>
+            طريقة الدفع <span style={{ fontSize: '0.8rem', color: '#888', fontWeight: 400 }}>(اختياري — المتبقي يُسجَّل ديناً تلقائياً)</span>
           </div>
           {formPayRows.map(row => (
             <div key={row.id} className="pay-row">
               <div className="pay-row-main">
                 <select className="pay-select" value={row.method}
                   onChange={e => updateFormPayRow(row.id, { method: e.target.value as PayMethod })}>
-                  {(Object.entries(ALL_PAY_LABELS) as [PayMethod, string][]).map(([val, label]) => (
+                  {(Object.entries(PAY_LABELS) as [Exclude<PayMethod, 'debt'>, string][]).map(([val, label]) => (
                     <option key={val} value={val}>{label}</option>
                   ))}
                 </select>
-                {row.method !== 'debt' && (
-                  <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
-                    className="mi-td-input pay-amount"
-                    onChange={e => updateFormPayRow(row.id, { amount: Math.max(0, Number(e.target.value)) })}
-                    onBlur={e => { if (!e.target.value) updateFormPayRow(row.id, { amount: 0 }) }} />
-                )}
+                <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount === 0 || row.amount === ('' as unknown as number) ? '' : row.amount}
+                  className="mi-td-input pay-amount"
+                  onChange={e => updateFormPayRow(row.id, { amount: e.target.value === '' ? ('' as unknown as number) : Math.max(0, Number(e.target.value)) })}
+                  onBlur={e => { if (!e.target.value) updateFormPayRow(row.id, { amount: 0 }) }} />
                 <button className="btn btn-danger-sm" disabled={formPayRows.length === 1}
                   onClick={() => removeFormPayRow(row.id)}>حذف</button>
               </div>
@@ -552,6 +551,9 @@ export default function DirectSales() {
             </div>
           ))}
           <button className="btn btn-secondary pay-add-btn" onClick={addFormPayRow}>+ إضافة طريقة دفع</button>
+          {submitAttempted && formPayExceedsErr && (
+            <div className="mi-err" style={{ marginTop: '0.5rem', fontWeight: 600 }}>{formPayExceedsErr}</div>
+          )}
           <div className="pay-summary" style={{ marginTop: '0.75rem' }}>
             <div className="pay-summary-row">
               <span>إجمالي الفاتورة {discountAmount > 0 ? '(بعد الخصم)' : ''}</span>
@@ -560,17 +562,16 @@ export default function DirectSales() {
             <div className="pay-summary-row">
               <span>إجمالي المدفوع</span>
               <strong className="pay-paid">
-                {fmt(formPayRows.filter(r => r.method !== 'debt').reduce((s, r) => s + (r.amount || 0), 0))} ₪
+                {fmt(formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0))} ₪
               </strong>
             </div>
             <div className="pay-summary-row pay-summary-last">
-              <span>المتبقي</span>
+              <span>المتبقي (يُسجَّل ديناً تلقائياً)</span>
               <strong className="pay-due">
-                {fmt(Math.max(0, formTotalAfterDiscount - formPayRows.filter(r => r.method !== 'debt').reduce((s, r) => s + (r.amount || 0), 0)))} ₪
+                {fmt(Math.max(0, formTotalAfterDiscount - formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0)))} ₪
               </strong>
             </div>
           </div>
-          {submitAttempted && formPayErr && <p className="mi-err" style={{ marginTop: '0.5rem' }}>{formPayErr}</p>}
         </>
       )}
     </>
@@ -655,7 +656,7 @@ export default function DirectSales() {
                   <td>{inv.saleDate}</td>
                   <td className="mi-amount">{fmt(inv.total)} ₪</td>
                   <td className="pd-paid">{fmt(inv.amountPaid)} ₪</td>
-                  <td className={inv.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(inv.amountRemaining)} ₪</td>
+                  <td className={inv.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(Math.max(0, inv.amountRemaining))} ₪</td>
                   <td><span className={STATUS_CLS[inv.status]}>{STATUS_LABELS[inv.status]}</span></td>
                   <td>
                     <div className="mi-actions">
@@ -697,7 +698,7 @@ export default function DirectSales() {
                 <div className="mi-detail-item"><span className="mi-detail-label">الحالة</span><span className={STATUS_CLS[detailsInvoice.status]}>{STATUS_LABELS[detailsInvoice.status]}</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsInvoice.total)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsInvoice.amountPaid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className={detailsInvoice.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(detailsInvoice.amountRemaining)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className={detailsInvoice.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(Math.max(0, detailsInvoice.amountRemaining))} ₪</span></div>
                 {detailsInvoice.notes && <div className="mi-detail-item mi-detail-full"><span className="mi-detail-label">ملاحظات</span><span>{detailsInvoice.notes}</span></div>}
               </div>
               <h4 className="mi-modal-subtitle">البنود</h4>
