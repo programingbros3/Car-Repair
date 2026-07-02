@@ -72,7 +72,7 @@ export default function ConfirmDialog({
           <button className="mi-modal-close" onClick={onCancel}>✕</button>
         </div>
         <div className="mi-modal-body">
-          <p style={{ fontSize: '0.95rem', color: '#444', margin: askPassword ? '0 0 1rem' : 0 }}>{message}</p>
+          <p style={{ fontSize: '0.95rem', color: '#444', margin: askPassword ? '0 0 1rem' : 0, whiteSpace: 'pre-line' }}>{message}</p>
           {askPassword && (
             <label className="mi-field">
               <span>أدخل كلمة السر للتأكيد</span>

@@ -229,9 +229,10 @@ export default function SalesInvoices() {
     setPaymentRows(r => r.map(row => row.id !== id ? row : { ...row, [field]: val }))
 
   const totalBeingPaid = paymentRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  const payExceedsDebt = !!payInvoice && totalBeingPaid > payInvoice.remaining + 0.001
 
   const submitPayment = async () => {
-    if (!payInvoice || totalBeingPaid <= 0) return
+    if (!payInvoice || totalBeingPaid <= 0 || payExceedsDebt) return
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       // دفعة على دين فاتورة بيع (صيانة/بيع مباشر) عبر قناة الديون الموحّدة
@@ -560,87 +561,67 @@ export default function SalesInvoices() {
                 </div>
               </div>
 
-              {/* Payment rows */}
-              <div className="pay-rows-section">
-                {paymentRows.map((row, idx) => (
-                  <div key={row.id} className="pay-row-block">
-                    <div className="pay-row-header">
-                      <span className="pay-row-num">دفعة {idx + 1}</span>
-                      {paymentRows.length > 1 && (
-                        <button className="btn btn-ghost-sm" onClick={() => removePayRow(row.id)}>حذف</button>
-                      )}
-                    </div>
-                    <div className="pay-row-fields">
-                      <div className="mi-form-field">
-                        <label className="mi-form-label">طريقة الدفع</label>
-                        <select className="mi-form-input" value={row.method}
-                          onChange={e => updatePayRow(row.id, 'method', e.target.value)}>
-                          <option value="cash">كاش</option>
-                          <option value="check">شيك</option>
-                          <option value="visa">فيزا</option>
-                        </select>
-                      </div>
-                      <div className="mi-form-field">
-                        <label className="mi-form-label">المبلغ ₪</label>
-                        <input type="number" min={0} className="mi-form-input" value={row.amount || ''}
-                          onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))}
-                          onBlur={e => { if (!e.target.value) updatePayRow(row.id, 'amount', 0) }} />
-                      </div>
-                      {row.method === 'check' && (<>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">رقم الشيك</label>
-                          <input type="text" className="mi-form-input" value={row.checkNumber}
-                            onChange={e => updatePayRow(row.id, 'checkNumber', e.target.value)} />
-                        </div>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">تاريخ الإصدار</label>
-                          <input type="date" className="mi-form-input" value={row.issueDate}
-                            onChange={e => updatePayRow(row.id, 'issueDate', e.target.value)} />
-                        </div>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">تاريخ الصرف</label>
-                          <input type="date" className="mi-form-input" value={row.clearDate} max={today()}
-                            onChange={e => updatePayRow(row.id, 'clearDate', e.target.value > today() ? today() : e.target.value)} />
-                        </div>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">اسم البنك</label>
-                          <input type="text" className="mi-form-input" value={row.bankName}
-                            onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} />
-                        </div>
-                      </>)}
-                      {row.method === 'visa' && (<>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">اسم البنك</label>
-                          <input type="text" className="mi-form-input" value={row.bankName}
-                            onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} />
-                        </div>
-                        <div className="mi-form-field">
-                          <label className="mi-form-label">رقم الحركة</label>
-                          <input type="text" className="mi-form-input" value={row.transactionNum}
-                            onChange={e => updatePayRow(row.id, 'transactionNum', e.target.value)} />
-                        </div>
-                      </>)}
-                    </div>
-                  </div>
-                ))}
-                <button className="btn btn-ghost" style={{ marginTop: '0.5rem' }} onClick={addPayRow}>
-                  + إضافة طريقة دفع أخرى
-                </button>
+              {/* Payment date & notes */}
+              <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1rem' }}>
+                <label className="mi-field">
+                  <span>تاريخ الدفع</span>
+                  <input type="date" value={payDate} max={today()}
+                    onChange={e => setPayDate(e.target.value > today() ? today() : e.target.value)} />
+                </label>
+                <label className="mi-field">
+                  <span>ملاحظات</span>
+                  <input type="text" value={payNotes} placeholder="ملاحظة اختيارية..."
+                    onChange={e => setPayNotes(e.target.value)} />
+                </label>
               </div>
 
-              {/* Payment date & notes */}
-              <div className="mi-form-grid" style={{ marginTop: '1rem' }}>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">تاريخ الدفع</label>
-                  <input type="date" className="mi-form-input" value={payDate} max={today()}
-                    onChange={e => setPayDate(e.target.value)} />
+              {/* Payment rows */}
+              <div className="pay-section-title">طريقة الدفع</div>
+              {paymentRows.map(row => (
+                <div key={row.id} className="pay-row">
+                  <div className="pay-row-main">
+                    <select className="pay-select" value={row.method}
+                      onChange={e => updatePayRow(row.id, 'method', e.target.value)}>
+                      <option value="cash">كاش</option>
+                      <option value="check">شيك</option>
+                      <option value="visa">فيزا</option>
+                    </select>
+                    <input type="number" min={0} placeholder="المبلغ ₪" value={row.amount || ''}
+                      className="mi-td-input pay-amount"
+                      onChange={e => updatePayRow(row.id, 'amount', Number(e.target.value))}
+                      onBlur={e => { if (!e.target.value) updatePayRow(row.id, 'amount', 0) }} />
+                    <button className="btn btn-danger-sm" disabled={paymentRows.length === 1}
+                      onClick={() => removePayRow(row.id)}>حذف</button>
+                  </div>
+                  {row.method === 'check' && (
+                    <div className="pay-row-extra">
+                      <label className="mi-field"><span>رقم الشيك</span>
+                        <input type="text" className="mi-td-input" value={row.checkNumber}
+                          onChange={e => updatePayRow(row.id, 'checkNumber', e.target.value)} /></label>
+                      <label className="mi-field"><span>اسم البنك</span>
+                        <input type="text" className="mi-td-input" value={row.bankName}
+                          onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} /></label>
+                      <label className="mi-field"><span>تاريخ الإصدار</span>
+                        <input type="date" className="mi-td-input" value={row.issueDate}
+                          onChange={e => updatePayRow(row.id, 'issueDate', e.target.value)} /></label>
+                      <label className="mi-field"><span>تاريخ الصرف</span>
+                        <input type="date" className="mi-td-input" value={row.clearDate} max={today()}
+                          onChange={e => updatePayRow(row.id, 'clearDate', e.target.value > today() ? today() : e.target.value)} /></label>
+                    </div>
+                  )}
+                  {row.method === 'visa' && (
+                    <div className="pay-row-extra">
+                      <label className="mi-field"><span>اسم البنك</span>
+                        <input type="text" className="mi-td-input" value={row.bankName}
+                          onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} /></label>
+                      <label className="mi-field"><span>رقم الحركة</span>
+                        <input type="text" className="mi-td-input" value={row.transactionNum}
+                          onChange={e => updatePayRow(row.id, 'transactionNum', e.target.value)} /></label>
+                    </div>
+                  )}
                 </div>
-                <div className="mi-form-field">
-                  <label className="mi-form-label">ملاحظات</label>
-                  <input type="text" className="mi-form-input" value={payNotes}
-                    onChange={e => setPayNotes(e.target.value)} />
-                </div>
-              </div>
+              ))}
+              <button className="btn btn-secondary pay-add-btn" onClick={addPayRow}>+ إضافة طريقة دفع</button>
 
               {totalBeingPaid > 0 && (
                 <div className="pay-total-row">
@@ -648,10 +629,13 @@ export default function SalesInvoices() {
                   <span className="mi-amount">{fmt(totalBeingPaid)} ₪</span>
                 </div>
               )}
+              {payExceedsDebt && payInvoice && (
+                <p className="pd-pay-error">مجموع الدفعة ({fmt(totalBeingPaid)} ₪) يتجاوز المتبقي ({fmt(payInvoice.remaining)} ₪)</p>
+              )}
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-primary" onClick={submitPayment}
-                disabled={totalBeingPaid <= 0}>تأكيد الدفع</button>
+                disabled={totalBeingPaid <= 0 || payExceedsDebt}>تأكيد الدفع</button>
               <button className="btn btn-ghost" onClick={() => setPayInvoice(null)}>إلغاء</button>
             </div>
           </div>

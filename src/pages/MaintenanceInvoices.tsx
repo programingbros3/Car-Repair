@@ -171,12 +171,13 @@ export default function MaintenanceInvoices() {
   const [submitAttempted, setSubmitAttempted] = useState(false)
 
   /* modals */
-  const [detailsCar, setDetailsCar]     = useState<CarRecord | null>(null)
-  const [warnCar, setWarnCar]           = useState<CarRecord | null>(null)
-  const [deliveryCar, setDeliveryCar]   = useState<CarRecord | null>(null)
-  const [deliveryDate, setDeliveryDate] = useState(today())
-  const [paymentRows, setPaymentRows]   = useState<PaymentRow[]>([])
-  const [deleteCar, setDeleteCar]       = useState<CarRecord | null>(null)
+  const [detailsCar, setDetailsCar]           = useState<CarRecord | null>(null)
+  const [warnCar, setWarnCar]                 = useState<CarRecord | null>(null)
+  const [deliveryCar, setDeliveryCar]         = useState<CarRecord | null>(null)
+  const [deliveryDate, setDeliveryDate]       = useState(today())
+  const [paymentRows, setPaymentRows]         = useState<PaymentRow[]>([])
+  const [deleteCar, setDeleteCar]             = useState<CarRecord | null>(null)
+  const [confirmDeliveryDebt, setConfirmDeliveryDebt] = useState(false)
 
   /* In-progress filters */
   const [ipSearch, setIpSearch] = useState(''); const [ipPhone, setIpPhone] = useState('')
@@ -336,16 +337,26 @@ export default function MaintenanceInvoices() {
   const remaining      = invoiceRemaining - totalPaid
   const deliveryExceeds = totalPaid > invoiceRemaining + 0.001
 
-  const handleDeliverySave = async () => {
+  const handleDeliverySave = () => {
     if (!deliveryCar) return
     if (deliveryExceeds) {
       showError(`مجموع الدفعة (${fmt(totalPaid)} ₪) يتجاوز المتبقي (${fmt(invoiceRemaining)} ₪)`, null)
       return
     }
+    if (remaining > 0.009) {
+      setConfirmDeliveryDebt(true)
+      return
+    }
+    doDeliverConfirmed()
+  }
+
+  const doDeliverConfirmed = async () => {
+    if (!deliveryCar) return
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows)
       await reload()
+      setConfirmDeliveryDebt(false)
       setDeliveryCar(null)
     } catch (err) {
       showError('تعذّر تسليم السيارة', err)
@@ -908,6 +919,17 @@ export default function MaintenanceInvoices() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ════ Delivery with unpaid debt confirmation ════ */}
+      {confirmDeliveryDebt && deliveryCar && (
+        <ConfirmDialog
+          title="⚠️ تسليم بدون سداد كامل"
+          message={`الزبون "${deliveryCar.customerName}" (${deliveryCar.carPlate}) مدين بمبلغ ${fmt(remaining)} ₪ لم يُسدَّد بعد.\n\nهل أنت متأكد من تسليم السيارة وهو مدين بهذا المبلغ؟`}
+          onConfirm={doDeliverConfirmed}
+          onCancel={() => setConfirmDeliveryDebt(false)}
+          requirePassword={false}
+        />
       )}
 
       {/* ════ Delete Confirm ════ */}
