@@ -3,6 +3,7 @@ import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { DebtRecord, DebtType, CarRecord, SaleRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -240,8 +241,9 @@ export default function PendingDebts() {
   ════════════════════════════════════════ */
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header mi-page-header">
         <h1 className="page-title">الديون المعلقة</h1>
+        <AddSalesInvoiceButton label="+ إضافة دين" />
       </div>
 
       {/* ── Stats ── */}

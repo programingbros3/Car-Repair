@@ -3,6 +3,7 @@ import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense, SupplierRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import AddPurchaseInvoiceButton from '../components/AddPurchaseInvoiceButton'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -237,8 +238,9 @@ export default function PurchaseInvoices() {
   ════════════════════════════════════════ */
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header mi-page-header">
         <h1 className="page-title">فواتير الشراء</h1>
+        <AddPurchaseInvoiceButton />
       </div>
 
       <div className="mi-card">

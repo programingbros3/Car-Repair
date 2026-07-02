@@ -1,20 +1,16 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Fuse from 'fuse.js'
-import { useGarage, CarRecord, CarItem, PayMethod, PaymentRow, WarrantyPeriodUnit, DiscountType } from '../store/GarageContext'
+import { useGarage, CarRecord, PayMethod, PaymentRow, WarrantyPeriodUnit, DiscountType } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import MaintenanceForm, { hasMaintenanceDraft, clearMaintenanceDraft, type MaintenanceFormHandle } from '../components/forms/MaintenanceForm'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
-   Local Types
+   Local helpers
 ════════════════════════════════════════ */
-type FormPartType = 'part' | 'service'
-type FormPart    = { id: number; partType: FormPartType; name: string; qty: number | string; unitPrice: number | string; warrantyValue: string; warrantyUnit: WarrantyPeriodUnit | ''; notes: string }
-type FormPartErr = { nameErr: string; qtyErr: string }
-
-const UNIT_OPTIONS: [WarrantyPeriodUnit, string][] = [['week', 'أسبوع'], ['month', 'شهر'], ['year', 'سنة']]
 const UNIT_AR: Record<string, string> = { week: 'أسبوع', month: 'شهر', year: 'سنة' }
 
 function parseWarrantyJson(raw: string): { value: number; unit: WarrantyPeriodUnit } | null {
@@ -71,27 +67,11 @@ function vatBreakdown(base: number, vat: VatSettings | null): VatBreakdown | nul
 /* ════════════════════════════════════════
    Module-level helpers
 ════════════════════════════════════════ */
-const DRAFT_KEY = 'garage-mi-draft-v2'
-const today     = () => new Date().toISOString().slice(0, 10)
-let nextPartId  = 100
-let nextPayId   = 100
+const today   = () => new Date().toISOString().slice(0, 10)
+let nextPayId = 100
 
 const normalizeAr = (s: string) =>
   s.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/\s+/g, '').toLowerCase()
-
-const emptyForm = () => ({
-  customerName: '', phone: '', carPlate: '', carType: '', carColor: '',
-  dateReceived: today(), generalNotes: '',
-  discountType: '' as '' | DiscountType, discountValue: '',
-})
-
-const newFormPart = (): FormPart => ({
-  id: nextPartId++, partType: 'part', name: '', qty: '' as unknown as number, unitPrice: '' as unknown as number, warrantyValue: '', warrantyUnit: '', notes: '',
-})
-
-const newFormService = (): FormPart => ({
-  id: nextPartId++, partType: 'service', name: '', qty: 1, unitPrice: '' as unknown as number, warrantyValue: '', warrantyUnit: '', notes: '',
-})
 
 const emptyPayRow = (): PaymentRow => ({
   id: nextPayId++, method: 'cash', amount: '' as unknown as number,
@@ -99,12 +79,6 @@ const emptyPayRow = (): PaymentRow => ({
 })
 
 const daysInShop = (d: string) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000))
-
-const blockDigits     = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && /\d/.test(e.key)) e.preventDefault() }
-const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault() }
-const validateName    = (v: string) => v.trim() ? '' : 'اسم الزبون مطلوب'
-const validatePlate   = (v: string) => v.trim() ? '' : 'نمرة السيارة مطلوبة'
-const validatePhone   = (v: string) => v.trim() ? '' : 'رقم الهاتف مطلوب'
 
 const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 
@@ -163,12 +137,11 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
 export default function MaintenanceInvoices() {
   const { maintenanceCars: cars, reload } = useGarage()
 
-  /* form */
-  const [showForm, setShowForm]               = useState(false)
-  const [editingCar, setEditingCar]           = useState<CarRecord | null>(null)
-  const [form, setForm]                       = useState(emptyForm)
-  const [parts, setParts]                     = useState<FormPart[]>([])
-  const [submitAttempted, setSubmitAttempted] = useState(false)
+  /* form (add inline + edit modal via shared MaintenanceForm) */
+  const [showAddForm, setShowAddForm] = useState(hasMaintenanceDraft())
+  const [editCar, setEditCar]         = useState<CarRecord | null>(null)
+  const formRef = useRef<MaintenanceFormHandle>(null)
+  const showForm = showAddForm || !!editCar
 
   /* modals */
   const [detailsCar, setDetailsCar]           = useState<CarRecord | null>(null)
@@ -211,117 +184,27 @@ export default function MaintenanceInvoices() {
   const [vat, setVat] = useState<VatSettings | null>(null)
   useEffect(() => { dbService.vat.getSettings().then(setVat).catch(() => { /* تجاهل — تبقى الضريبة مخفية */ }) }, [])
 
-  /* Draft */
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY)
-      if (!raw) return
-      const { form: f, parts: p } = JSON.parse(raw) as { form: typeof form; parts: FormPart[] }
-      setShowForm(true); setForm(f); setParts(p)
-      nextPartId = Math.max(100, ...p.map(x => x.id)) + 1
-    } catch { localStorage.removeItem(DRAFT_KEY) }
-  }, [])
+  /* Edit flow — يجلب البنود الكاملة ثم يفتح نموذج التعديل المشترك */
+  const openEdit = (car: CarRecord) => setWarnCar(car)
 
-  useEffect(() => {
-    if (showForm && !editingCar) localStorage.setItem(DRAFT_KEY, JSON.stringify({ form, parts }))
-  }, [showForm, editingCar, form, parts])
-
-  /* Form helpers */
-  const setField    = (f: string, v: string) => setForm(prev => ({ ...prev, [f]: v }))
-  const addPart     = () => setParts(prev => [...prev, newFormPart()])
-  const addService  = () => setParts(prev => [...prev, newFormService()])
-  const removePart  = (id: number) => setParts(prev => prev.filter(p => p.id !== id))
-  const updatePart  = (id: number, field: keyof FormPart, value: string | number) =>
-    setParts(prev => prev.map(p => p.id !== id ? p : { ...p, [field]: value }))
-
-  const doOpenEdit = async (car: CarRecord) => {
-    localStorage.removeItem(DRAFT_KEY)
+  const confirmEditCar = async () => {
+    if (!warnCar) return
+    const car = warnCar
+    setWarnCar(null)
+    clearMaintenanceDraft()
     try {
       const full = await dbService.maintenance.getOne(car.id)
-      const record = full ?? car
-      setEditingCar(record)
-      setForm({ customerName: record.customerName, phone: record.phone === '0000' ? '' : record.phone,
-        carPlate: record.carPlate, carType: record.carType, carColor: record.carColor,
-        dateReceived: record.dateReceived, generalNotes: record.notes,
-        discountType: record.discountType ?? '',
-        discountValue: record.discountType ? String(record.discountValue ?? 0) : '' })
-      const ep: FormPart[] = record.items.length > 0
-        ? record.items.map(item => {
-            const w = parseWarrantyJson(item.warranty)
-            return { id: nextPartId++, partType: item.partType, name: item.name, qty: item.quantity,
-              unitPrice: item.unitPrice, warrantyValue: w ? String(w.value) : '', warrantyUnit: w ? w.unit : '' as WarrantyPeriodUnit | '', notes: item.notes }
-          })
-        : []
-      setParts(ep); setSubmitAttempted(false); setShowForm(true)
-      window.scrollTo({ top: 0, behavior: 'smooth' })
+      setEditCar(full ?? car)
     } catch (err) {
       showError('تعذّر تحميل بيانات الفاتورة', err)
     }
   }
 
-  const openEdit = (car: CarRecord) => setWarnCar(car)
-
-  const confirmEditCar = () => {
-    if (!warnCar) return
-    doOpenEdit(warnCar)
-    setWarnCar(null)
-  }
-
-  /* Validation */
-  const formTotal = parts.reduce((s, p) => s + Number(p.qty || 0) * Number(p.unitPrice || 0), 0)
-  const nameErr   = validateName(form.customerName)
-  const plateErr  = validatePlate(form.carPlate)
-  const phoneErr  = validatePhone(form.phone)
-  const partsErrMap: Record<number, FormPartErr> = {}
-  for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: Number(p.qty) >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
-
-  /* ── خصم الفاتورة + العرض الحي للإجمالي بعد الخصم ── */
-  const discountValueNum = Number(form.discountValue || 0)
-  const discountErr = !form.discountType ? ''
-    : discountValueNum < 0 ? 'قيمة الخصم لا يمكن أن تكون سالبة'
-    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم يجب أن تكون بين 0 و 100'
-    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم لا يمكن أن تتجاوز مجموع البنود'
-    : ''
-  const discountAmount = form.discountType && !discountErr
-    ? (form.discountType === 'percentage' ? formTotal * discountValueNum / 100 : discountValueNum)
-    : 0
-  const formTotalAfterDiscount = formTotal - discountAmount
-
-  const hasErrors = !!nameErr || !!plateErr || !!phoneErr || !!discountErr || Object.values(partsErrMap).some(e => e.nameErr || e.qtyErr)
-
-  const handleSave = async () => {
-    setSubmitAttempted(true)
-    if (hasErrors) return
-    const newItems: CarItem[] = parts.map(p => ({
-      name: p.name, quantity: p.partType === 'service' ? 1 : Number(p.qty || 1), unitPrice: Number(p.unitPrice || 0),
-      warranty: p.warrantyUnit ? JSON.stringify({ value: Math.max(1, parseInt(p.warrantyValue || '1') || 1), unit: p.warrantyUnit }) : '',
-      partType: p.partType, notes: p.notes,
-    }))
-    const phone = form.phone.trim()
-    const carData: CarRecord = {
-      id: editingCar?.id ?? 0,
-      customerName: form.customerName, phone, carPlate: form.carPlate,
-      carType: form.carType, carColor: form.carColor, dateReceived: form.dateReceived,
-      status: editingCar?.status ?? 'in_progress', deliveredDate: editingCar?.deliveredDate,
-      notes: form.generalNotes,
-      discountType: form.discountType || null,
-      discountValue: form.discountType ? discountValueNum : 0,
-      total: formTotalAfterDiscount, items: newItems,
-    }
-    try {
-      if (editingCar) await dbService.maintenance.update(carData)
-      else            await dbService.maintenance.add(carData)
-      await reload()
-      clearForm()
-    } catch (err) {
-      showError('تعذّر حفظ فاتورة الصيانة', err)
-    }
-  }
-
-  const clearForm = () => {
-    localStorage.removeItem(DRAFT_KEY); setShowForm(false); setSubmitAttempted(false)
-    setForm(emptyForm()); setParts([]); setEditingCar(null)
-  }
+  const openAddForm = () => { setEditCar(null); setShowAddForm(true) }
+  const closeAddForm = () => { clearMaintenanceDraft(); setShowAddForm(false) }
+  const closeEditForm = () => setEditCar(null)
+  const onAddSaved  = () => setShowAddForm(false)
+  const onEditSaved = () => setEditCar(null)
 
   /* Delivery modal */
   const openDelivery      = (car: CarRecord) => { setDeliveryCar(car); setDeliveryDate(today()); setPaymentRows([emptyPayRow()]) }
@@ -364,10 +247,7 @@ export default function MaintenanceInvoices() {
   }
 
   /* UI helpers */
-  const showErr     = (msg: string) => submitAttempted && msg ? <span className="mi-err">{msg}</span> : null
-  const showPartErr = (id: number, f: keyof FormPartErr) => submitAttempted && partsErrMap[id]?.[f] ? <span className="mi-err">{partsErrMap[id][f]}</span> : null
-  const errCls      = (bad: boolean) => bad ? ' mi-input-err' : ''
-  const fmt         = (n: number) => n.toLocaleString('en-US')
+  const fmt = (n: number) => n.toLocaleString('en-US')
 
   const handlePrintCar = async (car: CarRecord) => {
     try {
@@ -482,160 +362,39 @@ export default function MaintenanceInvoices() {
       <div className="page-header mi-page-header">
         <h1 className="page-title">سيارات الصيانة</h1>
         {!showForm && (
-          <button className="btn btn-primary" onClick={() => { setEditingCar(null); setShowForm(true) }}>
+          <button className="btn btn-primary" onClick={openAddForm}>
             + إضافة سيارة جديدة
           </button>
         )}
       </div>
 
-      {/* ════ Form ════ */}
-      {showForm && (
-        <div className={`mi-card mi-form-card${editingCar ? ' mi-form-card-edit' : ''}`}>
-          <h2 className="mi-section-title">
-            {editingCar ? `تعديل بيانات السيارة — ${editingCar.carPlate}` : 'بيانات السيارة'}
-          </h2>
-          <div className="mi-form-grid">
-            <label className="mi-field">
-              <span>اسم الزبون <span className="mi-required">*</span></span>
-              <input type="text" value={form.customerName} onKeyDown={blockDigits}
-                onChange={e => setField('customerName', e.target.value)} placeholder="اسم الزبون"
-                className={errCls(submitAttempted && !!nameErr)} />
-              {showErr(nameErr)}
-            </label>
-            <label className="mi-field">
-              <span>رقم الهاتف <span className="mi-required">*</span></span>
-              <input type="text" value={form.phone} onKeyDown={allowPhoneChars}
-                onChange={e => setField('phone', e.target.value)} placeholder="05XXXXXXXX"
-                className={errCls(submitAttempted && !!phoneErr)} />
-              {showErr(phoneErr)}
-            </label>
-            <label className="mi-field">
-              <span>نمرة السيارة <span className="mi-required">*</span></span>
-              <input type="text" value={form.carPlate}
-                onChange={e => setField('carPlate', e.target.value)} placeholder="أ ب ج 123"
-                className={errCls(submitAttempted && !!plateErr)} />
-              {showErr(plateErr)}
-            </label>
-            <label className="mi-field">
-              <span>نوع السيارة</span>
-              <input type="text" value={form.carType} onChange={e => setField('carType', e.target.value)} placeholder="تويوتا كامري" />
-            </label>
-            <label className="mi-field">
-              <span>لون السيارة</span>
-              <input type="text" value={form.carColor} onChange={e => setField('carColor', e.target.value)} placeholder="أبيض" />
-            </label>
-            <label className="mi-field">
-              <span>تاريخ الاستلام</span>
-              <input type="date" value={form.dateReceived} max={today()} onChange={e => setField('dateReceived', e.target.value > today() ? today() : e.target.value)} />
-            </label>
-            <label className="mi-field mi-field-full">
-              <span>ملاحظات عامة</span>
-              <textarea rows={3} value={form.generalNotes} onChange={e => setField('generalNotes', e.target.value)} placeholder="أي ملاحظات إضافية..." />
-            </label>
-          </div>
-
-          <div className="mi-parts-header">
-            <h2 className="mi-section-title">القطع والخدمات</h2>
-            <div className="mi-actions">
-              <button className="btn btn-secondary" onClick={addPart}>+ إضافة قطعة</button>
-              <button className="btn btn-sm-green" onClick={addService}>+ إضافة خدمة</button>
-            </div>
-          </div>
-          <div className="mi-parts-table-wrap">
-            <table className="mi-parts-table">
-              <thead>
-                <tr><th>النوع</th><th>اسم القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الكفالة</th><th>ملاحظات</th><th></th></tr>
-              </thead>
-              <tbody>
-                {parts.map(part => (
-                  <tr key={part.id}>
-                    <td className="mi-td-center">
-                      {part.partType === 'service'
-                        ? <span className="mi-badge-blue">خدمة</span>
-                        : <span className="mi-badge-orange">قطعة</span>}
-                    </td>
-                    <td>
-                      <input type="text" placeholder="اسم القطعة أو الخدمة" value={part.name}
-                        className={'mi-td-input' + errCls(submitAttempted && !!partsErrMap[part.id]?.nameErr)}
-                        onChange={e => updatePart(part.id, 'name', e.target.value)} />
-                      {showPartErr(part.id, 'nameErr')}
-                    </td>
-                    <td>
-                      <input type="number" min={1} value={part.partType === 'service' ? 1 : (part.qty === '' || part.qty === 0 ? '' : part.qty)}
-                        disabled={part.partType === 'service'}
-                        className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!partsErrMap[part.id]?.qtyErr)}
-                        onChange={e => updatePart(part.id, 'qty', e.target.value === '' ? '' : Math.max(1, parseFloat(e.target.value) || 1))} />
-                      {showPartErr(part.id, 'qtyErr')}
-                    </td>
-                    <td>
-                      <input type="number" min={0} value={part.unitPrice || ''} className="mi-td-input mi-td-num"
-                        onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))}
-                        onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'unitPrice', 0) }} />
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
-                        <select className="pay-select" style={{ flex: '1 1 0', minWidth: 70 }}
-                          value={part.warrantyUnit}
-                          onChange={e => updatePart(part.id, 'warrantyUnit', e.target.value)}>
-                          <option value="">لا كفالة</option>
-                          {UNIT_OPTIONS.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-                        </select>
-                        {part.warrantyUnit && (
-                          <input type="number" max={99} value={part.warrantyValue}
-                            placeholder="1"
-                            className="mi-td-input mi-td-num" style={{ width: 55 }}
-                            onChange={e => updatePart(part.id, 'warrantyValue', e.target.value)} />
-                        )}
-                      </div>
-                    </td>
-                    <td><input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input" onChange={e => updatePart(part.id, 'notes', e.target.value)} /></td>
-                    <td className="mi-td-center">
-                      <button className="btn btn-danger-sm" onClick={() => removePart(part.id)}>حذف</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mi-total-row">المجموع قبل الخصم: <strong>{fmt(formTotal)} ₪</strong></div>
-          <div className="mi-form-grid" style={{ marginTop: '0.5rem' }}>
-            <label className="mi-field">
-              <span>الخصم</span>
-              <select className="pay-select" value={form.discountType || ''}
-                onChange={e => setForm(prev => ({ ...prev, discountType: e.target.value as '' | DiscountType, discountValue: e.target.value ? prev.discountValue : '' }))}>
-                <option value="">بدون خصم</option>
-                <option value="fixed">مبلغ ثابت (₪)</option>
-                <option value="percentage">نسبة مئوية (%)</option>
-              </select>
-            </label>
-            {form.discountType && (
-              <label className="mi-field">
-                <span>{form.discountType === 'percentage' ? 'نسبة الخصم (%)' : 'قيمة الخصم (₪)'}</span>
-                <input type="number" min={0} max={form.discountType === 'percentage' ? 100 : undefined}
-                  value={form.discountValue} placeholder="0"
-                  className={errCls(submitAttempted && !!discountErr)}
-                  onChange={e => setField('discountValue', e.target.value)} />
-                {showErr(discountErr)}
-              </label>
-            )}
-            <div className="mi-field">
-              <span>الإجمالي بعد الخصم</span>
-              <div style={{
-                padding: '8px 12px', background: '#f0fdf4', border: '1px solid #27ae60',
-                borderRadius: '6px', fontWeight: 700, fontSize: '16px', color: '#27ae60',
-              }}>
-                {fmt(formTotalAfterDiscount)} ₪
-                {discountAmount > 0 && (
-                  <span style={{ fontSize: '11px', fontWeight: 400, color: '#888', marginRight: '8px' }}>
-                    (الخصم: −{fmt(discountAmount)} ₪)
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+      {/* ════ Add Form (inline — نموذج الإضافة المشترك بقي داخل الصفحة) ════ */}
+      {showAddForm && (
+        <div className="mi-card mi-form-card">
+          <h2 className="mi-section-title">بيانات السيارة</h2>
+          <MaintenanceForm ref={formRef} key="new" editingCar={null} useDraft onSaved={onAddSaved} />
           <div className="mi-form-actions">
-            <button className="btn btn-primary" onClick={handleSave}>{editingCar ? 'حفظ التعديلات' : 'حفظ الفاتورة'}</button>
-            <button className="btn btn-ghost" onClick={clearForm}>إلغاء</button>
+            <button className="btn btn-primary" onClick={() => formRef.current?.save()}>حفظ الفاتورة</button>
+            <button className="btn btn-ghost" onClick={closeAddForm}>إلغاء</button>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Edit Form (modal popup — لكل فواتير الصيانة: قيد الصيانة والمُسلَّمة) ════ */}
+      {editCar && (
+        <div className="mi-modal-overlay" onClick={closeEditForm}>
+          <div className="mi-modal mi-modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تعديل بيانات السيارة — {editCar.carPlate}</h3>
+              <button className="mi-modal-close" onClick={closeEditForm}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <MaintenanceForm ref={formRef} key={editCar.id} editingCar={editCar} onSaved={onEditSaved} />
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" onClick={() => formRef.current?.save()}>حفظ التعديلات</button>
+              <button className="btn btn-secondary" onClick={closeEditForm}>إلغاء</button>
+            </div>
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { WarrantyRecord, WarrantyPeriodUnit } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -249,6 +250,7 @@ export default function Warranties() {
     <div>
       <div className="page-header mi-page-header">
         <h1 className="page-title">الكفالات</h1>
+        <AddSalesInvoiceButton label="+ إضافة كفالة" />
       </div>
 
       {/* ════ Edit Modal ════ */}

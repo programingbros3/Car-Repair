@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useGarage } from '../store/GarageContext'
 import type { Employee, SalaryRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import SalaryForm, { type SalaryFormHandle } from '../components/forms/SalaryForm'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -18,10 +19,7 @@ const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key.length === 1 && !/[\d+\-() ]/.test(e.key)) e.preventDefault()
 }
 
-const emptyEmpForm    = () => ({ name: '', phone: '', dailyWage: '' })
-const emptySalaryForm = () => ({
-  employeeId: '', daysWorked: '', bonus: '0', deduction: '0', date: today(), notes: '',
-})
+const emptyEmpForm = () => ({ name: '', phone: '', dailyWage: '' })
 
 /* ════════════════════════════════════════
    Component
@@ -38,8 +36,7 @@ export default function Employees() {
   /* salary form */
   const [showSalaryForm,  setShowSalaryForm]  = useState(false)
   const [editingSalary,   setEditingSalary]   = useState<SalaryRecord | null>(null)
-  const [salaryForm,      setSalaryForm]      = useState(emptySalaryForm)
-  const [salarySubmitted, setSalarySubmitted] = useState(false)
+  const salaryFormRef = useRef<SalaryFormHandle>(null)
 
   /* details modals */
   const [detailsEmp,    setDetailsEmp]    = useState<Employee | null>(null)
@@ -60,13 +57,6 @@ export default function Employees() {
 
   const empName  = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
   const empPhone = (id: number) => employees.find(e => e.id === id)?.phone ?? ''
-
-  /* ── Live net salary calculation ── */
-  const selectedEmp = employees.find(e => e.id === Number(salaryForm.employeeId))
-  const liveWage    = editingSalary ? editingSalary.dailyWageSnapshot : (selectedEmp?.dailyWage ?? 0)
-  const liveNet     = liveWage * Number(salaryForm.daysWorked || 0)
-                    + Number(salaryForm.bonus || 0)
-                    - Number(salaryForm.deduction || 0)
 
   /* ── Print salary receipt ── */
   const handlePrintSalary = (rec: SalaryRecord) => {
@@ -153,67 +143,20 @@ export default function Employees() {
   }
 
   /* ── Salary form ── */
-  const setSalaryField = (field: string, value: string) => setSalaryForm(prev => ({ ...prev, [field]: value }))
-
-  const doOpenSalaryEdit = (rec: SalaryRecord) => {
-    setEditingSalary(rec)
-    setSalaryForm({
-      employeeId: String(rec.employeeId),
-      daysWorked: String(rec.daysWorked),
-      bonus:      String(rec.bonus),
-      deduction:  String(rec.deduction),
-      date:       rec.date,
-      notes:      rec.notes,
-    })
-    setSalarySubmitted(false)
-    setShowSalaryForm(true)
-  }
-
   const openSalaryEdit = (rec: SalaryRecord) => setWarnSalary(rec)
 
   const confirmSalaryEdit = () => {
     if (!warnSalary) return
-    doOpenSalaryEdit(warnSalary)
+    setEditingSalary(warnSalary)
+    setShowSalaryForm(true)
     setWarnSalary(null)
   }
 
-  const salaryEmpErr    = salaryForm.employeeId ? '' : 'يجب اختيار الموظف'
-  const salaryDaysErr   = Number(salaryForm.daysWorked) > 0 ? '' : 'عدد الأيام يجب أن يكون أكبر من صفر'
-  const salaryBonusErr  = Number(salaryForm.bonus) >= 0 ? '' : 'البونص يجب أن يكون صفرًا أو أكبر'
-  const salaryDeductErr = Number(salaryForm.deduction) >= 0 ? '' : 'الخصم يجب أن يكون صفرًا أو أكبر'
-  const salaryHasError  = !!salaryEmpErr || !!salaryDaysErr || !!salaryBonusErr || !!salaryDeductErr
+  const clearSalaryForm  = () => { setShowSalaryForm(false); setEditingSalary(null) }
+  const onSalarySaved    = () => { setShowSalaryForm(false); setEditingSalary(null) }
 
-  const handleSalarySave = async () => {
-    setSalarySubmitted(true)
-    if (salaryHasError) return
-    const salData: SalaryRecord = {
-      id:               editingSalary?.id ?? 0,
-      employeeId:       Number(salaryForm.employeeId),
-      amount:           0,   // computed on backend
-      dailyWageSnapshot: editingSalary?.dailyWageSnapshot ?? 0,  // not used on add
-      daysWorked:       Number(salaryForm.daysWorked),
-      bonus:            Number(salaryForm.bonus || 0),
-      deduction:        Number(salaryForm.deduction || 0),
-      date:             salaryForm.date,
-      notes:            salaryForm.notes,
-    }
-    try {
-      if (editingSalary) await dbService.salary.update(editingSalary.id, salData)
-      else               await dbService.salary.add(salData)
-      await reload()
-      clearSalaryForm()
-    } catch (err) {
-      showError('تعذّر حفظ دفعة الراتب', err)
-    }
-  }
-
-  const clearSalaryForm = () => {
-    setShowSalaryForm(false); setSalarySubmitted(false); setSalaryForm(emptySalaryForm()); setEditingSalary(null)
-  }
-
-  const showEmpErr    = (msg: string) => empSubmitted    && msg ? <span className="mi-err">{msg}</span> : null
-  const showSalaryErr = (msg: string) => salarySubmitted && msg ? <span className="mi-err">{msg}</span> : null
-  const errCls        = (bad: boolean) => bad ? ' mi-input-err' : ''
+  const showEmpErr = (msg: string) => empSubmitted && msg ? <span className="mi-err">{msg}</span> : null
+  const errCls     = (bad: boolean) => bad ? ' mi-input-err' : ''
 
   /* Shared employee form body */
   const empFormBody = (
@@ -240,69 +183,6 @@ export default function Employees() {
           onBlur={e  => { if (!e.target.value) setEmpField('dailyWage', '0') }}
           className={errCls(empSubmitted && !!empDailyWageErr)} />
         {showEmpErr(empDailyWageErr)}
-      </label>
-    </div>
-  )
-
-  /* Shared salary form body */
-  const salaryFormBody = (
-    <div className="mi-form-grid">
-      <label className="mi-field">
-        <span>الموظف <span className="mi-required">*</span></span>
-        <select value={salaryForm.employeeId} disabled={!!editingSalary}
-          onChange={e => setSalaryField('employeeId', e.target.value)}
-          className={'pay-select' + errCls(salarySubmitted && !!salaryEmpErr)}>
-          <option value="">— اختر الموظف —</option>
-          {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-        </select>
-        {showSalaryErr(salaryEmpErr)}
-      </label>
-      <label className="mi-field">
-        <span>عدد أيام الدوام <span className="mi-required">*</span></span>
-        <input type="number" min={0.5} step="0.5" value={salaryForm.daysWorked}
-          onChange={e => setSalaryField('daysWorked', e.target.value)} placeholder="0"
-          onFocus={e => { if (e.target.value === '0') setSalaryField('daysWorked', '') }}
-          className={errCls(salarySubmitted && !!salaryDaysErr)} />
-        {showSalaryErr(salaryDaysErr)}
-      </label>
-      <label className="mi-field">
-        <span>بونص (₪)</span>
-        <input type="number" min={0} step="0.01" value={salaryForm.bonus}
-          onChange={e => setSalaryField('bonus', e.target.value)} placeholder="0"
-          className={errCls(salarySubmitted && !!salaryBonusErr)} />
-        {showSalaryErr(salaryBonusErr)}
-      </label>
-      <label className="mi-field">
-        <span>خصم (₪)</span>
-        <input type="number" min={0} step="0.01" value={salaryForm.deduction}
-          onChange={e => setSalaryField('deduction', e.target.value)} placeholder="0"
-          className={errCls(salarySubmitted && !!salaryDeductErr)} />
-        {showSalaryErr(salaryDeductErr)}
-      </label>
-      <div className="mi-field">
-        <span>صافي الراتب</span>
-        <div style={{
-          padding: '8px 12px', background: '#f0fdf4', border: '1px solid #27ae60',
-          borderRadius: '6px', fontWeight: 700, fontSize: '16px', color: '#27ae60',
-        }}>
-          {liveNet.toLocaleString('en-US')} ₪
-          {editingSalary && (
-            <span style={{ fontSize: '11px', fontWeight: 400, color: '#888', marginRight: '8px' }}>
-              (اليومية المحفوظة: {editingSalary.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم)
-            </span>
-          )}
-        </div>
-      </div>
-      <label className="mi-field">
-        <span>تاريخ الدفعة</span>
-        <input type="date" value={salaryForm.date} max={today()}
-          onChange={e => setSalaryField('date', e.target.value > today() ? today() : e.target.value)} />
-      </label>
-      <label className="mi-field mi-field-full">
-        <span>ملاحظات</span>
-        <textarea rows={3} value={salaryForm.notes}
-          onChange={e => setSalaryField('notes', e.target.value)}
-          placeholder="أي ملاحظات إضافية..." />
       </label>
     </div>
   )
@@ -391,9 +271,9 @@ export default function Employees() {
       {showSalaryForm && !editingSalary && (
         <div className="mi-card mi-form-card">
           <h2 className="mi-section-title">تسجيل راتب</h2>
-          {salaryFormBody}
+          <SalaryForm ref={salaryFormRef} key="new" editingSalary={null} onSaved={onSalarySaved} />
           <div className="mi-form-actions">
-            <button className="btn btn-primary" onClick={handleSalarySave}>حفظ الدفعة</button>
+            <button className="btn btn-primary" onClick={() => salaryFormRef.current?.save()}>حفظ الدفعة</button>
             <button className="btn btn-ghost"   onClick={clearSalaryForm}>إلغاء</button>
           </div>
         </div>
@@ -407,9 +287,11 @@ export default function Employees() {
               <h3>تعديل دفعة راتب — {empName(editingSalary.employeeId)}</h3>
               <button className="mi-modal-close" onClick={clearSalaryForm}>✕</button>
             </div>
-            <div className="mi-modal-body">{salaryFormBody}</div>
+            <div className="mi-modal-body">
+              <SalaryForm ref={salaryFormRef} key={editingSalary.id} editingSalary={editingSalary} onSaved={onSalarySaved} />
+            </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-primary" onClick={handleSalarySave}>حفظ التعديلات</button>
+              <button className="btn btn-primary" onClick={() => salaryFormRef.current?.save()}>حفظ التعديلات</button>
               <button className="btn btn-ghost"   onClick={clearSalaryForm}>إلغاء</button>
             </div>
           </div>
