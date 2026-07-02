@@ -217,11 +217,14 @@ export default function SalesInvoices() {
   }
 
   /* ── Payment flow ── */
+  const [paySubmitted, setPaySubmitted] = useState(false)
+
   const openPay = (inv: SaleInvoice) => {
     setPayInvoice(inv)
     setPaymentRows([blankRow()])
     setPayDate(today())
     setPayNotes('')
+    setPaySubmitted(false)
   }
 
   const addPayRow    = () => setPaymentRows(r => [...r, blankRow()])
@@ -229,10 +232,12 @@ export default function SalesInvoices() {
   const updatePayRow = (id: number, field: keyof PaymentRow, val: string | number) =>
     setPaymentRows(r => r.map(row => row.id !== id ? row : { ...row, [field]: val }))
 
-  const totalBeingPaid = paymentRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
-  const payExceedsDebt = !!payInvoice && totalBeingPaid > payInvoice.remaining + 0.001
+  const totalBeingPaid  = paymentRows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  const payExceedsDebt  = !!payInvoice && totalBeingPaid > payInvoice.remaining + 0.001
+  const remainingAfter  = payInvoice ? payInvoice.remaining - totalBeingPaid : 0
 
   const submitPayment = async () => {
+    setPaySubmitted(true)
     if (!payInvoice || totalBeingPaid <= 0 || payExceedsDebt) return
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
@@ -541,32 +546,22 @@ export default function SalesInvoices() {
       {/* ════ Payment Modal ════ */}
       {payInvoice && (
         <div className="mi-modal-overlay" onClick={() => setPayInvoice(null)}>
-          <div className="mi-modal mi-modal-lg" onClick={e => e.stopPropagation()}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
               <h3>إضافة دفعة — {payInvoice.customerName}</h3>
               <button className="mi-modal-close" onClick={() => setPayInvoice(null)}>✕</button>
             </div>
             <div className="mi-modal-body">
-              {/* Summary */}
-              <div className="pay-summary-row">
-                <div className="pay-summary-item">
-                  <span className="pay-summary-label">الإجمالي</span>
-                  <span className="pay-summary-val mi-amount">{fmt(payInvoice.total)} ₪</span>
-                </div>
-                <div className="pay-summary-item">
-                  <span className="pay-summary-label">المدفوع</span>
-                  <span className="pay-summary-val pd-paid">{fmt(payInvoice.paid)} ₪</span>
-                </div>
-                <div className="pay-summary-item">
-                  <span className="pay-summary-label">المتبقي</span>
-                  <span className="pay-summary-val pd-remaining">{fmt(payInvoice.remaining)} ₪</span>
-                </div>
+              <div className="mi-detail-grid pd-debt-summary">
+                <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{payInvoice.customerName}</strong></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">إجمالي الفاتورة</span><span className="mi-amount">{fmt(payInvoice.total)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المدفوع حتى الآن</span><span className="pd-paid">{fmt(payInvoice.paid)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(payInvoice.remaining)} ₪</span></div>
               </div>
 
-              {/* Payment date & notes */}
-              <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1rem' }}>
+              <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
-                  <span>تاريخ الدفع</span>
+                  <span>تاريخ الدفعة</span>
                   <input type="date" value={payDate} max={today()}
                     onChange={e => setPayDate(e.target.value > today() ? today() : e.target.value)} />
                 </label>
@@ -577,7 +572,6 @@ export default function SalesInvoices() {
                 </label>
               </div>
 
-              {/* Payment rows */}
               <div className="pay-section-title">طريقة الدفع</div>
               {paymentRows.map(row => (
                 <div key={row.id} className="pay-row">
@@ -604,11 +598,11 @@ export default function SalesInvoices() {
                         <input type="text" className="mi-td-input" value={row.bankName}
                           onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} /></label>
                       <label className="mi-field"><span>تاريخ الإصدار</span>
-                        <input type="date" className="mi-td-input" value={row.issueDate}
-                          onChange={e => updatePayRow(row.id, 'issueDate', e.target.value)} /></label>
+                        <input type="date" className="mi-td-input" value={row.issueDate} max={today()}
+                          onChange={e => updatePayRow(row.id, 'issueDate', e.target.value > today() ? today() : e.target.value)} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span>
-                        <input type="date" className="mi-td-input" value={row.clearDate} max={today()}
-                          onChange={e => updatePayRow(row.id, 'clearDate', e.target.value > today() ? today() : e.target.value)} /></label>
+                        <input type="date" className="mi-td-input" value={row.clearDate}
+                          onChange={e => updatePayRow(row.id, 'clearDate', e.target.value)} /></label>
                     </div>
                   )}
                   {row.method === 'visa' && (
@@ -625,19 +619,30 @@ export default function SalesInvoices() {
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPayRow}>+ إضافة طريقة دفع</button>
 
-              {totalBeingPaid > 0 && (
-                <div className="pay-total-row">
-                  <span>إجمالي هذه الدفعة:</span>
-                  <span className="mi-amount">{fmt(totalBeingPaid)} ₪</span>
-                </div>
+              {paySubmitted && totalBeingPaid <= 0 && (
+                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
               )}
-              {payExceedsDebt && payInvoice && (
+              {payExceedsDebt && (
                 <p className="pd-pay-error">مجموع الدفعة ({fmt(totalBeingPaid)} ₪) يتجاوز المتبقي ({fmt(payInvoice.remaining)} ₪)</p>
               )}
+
+              <div className="pay-summary">
+                <div className="pay-summary-row">
+                  <span>إجمالي هذه الدفعة</span>
+                  <strong className="pay-paid">{fmt(totalBeingPaid)} ₪</strong>
+                </div>
+                <div className="pay-summary-row pay-summary-last">
+                  <span>المتبقي بعدها</span>
+                  <strong className={remainingAfter <= 0 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
+                    {fmt(Math.max(0, remainingAfter))} ₪
+                  </strong>
+                </div>
+              </div>
             </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-primary" onClick={submitPayment}
-                disabled={totalBeingPaid <= 0 || payExceedsDebt}>تأكيد الدفع</button>
+              <button className="btn btn-primary" onClick={submitPayment} disabled={payExceedsDebt}>
+                تأكيد الدفعة
+              </button>
               <button className="btn btn-ghost" onClick={() => setPayInvoice(null)}>إلغاء</button>
             </div>
           </div>

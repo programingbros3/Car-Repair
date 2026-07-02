@@ -562,11 +562,11 @@ export default function PurchaseInvoices() {
                         <input type="text" className="mi-td-input" value={row.bankName}
                           onChange={e => updatePayRow(row.id, 'bankName', e.target.value)} /></label>
                       <label className="mi-field"><span>تاريخ الإصدار</span>
-                        <input type="date" className="mi-td-input" value={row.issueDate}
-                          onChange={e => updatePayRow(row.id, 'issueDate', e.target.value)} /></label>
+                        <input type="date" className="mi-td-input" value={row.issueDate} max={today()}
+                          onChange={e => updatePayRow(row.id, 'issueDate', e.target.value > today() ? today() : e.target.value)} /></label>
                       <label className="mi-field"><span>تاريخ الصرف</span>
-                        <input type="date" className="mi-td-input" value={row.clearDate} max={today()}
-                          onChange={e => updatePayRow(row.id, 'clearDate', e.target.value > today() ? today() : e.target.value)} /></label>
+                        <input type="date" className="mi-td-input" value={row.clearDate}
+                          onChange={e => updatePayRow(row.id, 'clearDate', e.target.value)} /></label>
                     </div>
                   )}
                   {row.method === 'visa' && (
