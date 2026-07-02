@@ -24,7 +24,7 @@ function getArabicDate(): string {
 export default function Sidebar() {
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">كراج التل الأخضر</div>
+      <div className="sidebar-logo">كراج الخط الأخضر</div>
 
       <ul className="sidebar-nav">
         {navItems.map(({ to, icon, label }) => (

@@ -177,6 +177,8 @@ export default function Warranties() {
         <div class="detail-item"><label>اسم الزبون</label><span>${w.customerName}</span></div>
         <div class="detail-item"><label>رقم الهاتف</label><span>${w.phone || '—'}</span></div>
         <div class="detail-item"><label>نمرة السيارة</label><span>${w.carPlate || '—'}</span></div>
+        ${w.source === 'maintenance' && w.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${w.carType}</span></div>` : ''}
+        ${w.source === 'maintenance' && w.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${w.carColor}</span></div>` : ''}
         <div class="detail-item"><label>القطعة / الخدمة</label><span>${w.itemName}</span></div>
         <div class="detail-item"><label>تاريخ البداية</label><span>${w.startDate}</span></div>
         <div class="detail-item"><label>المدة</label><span>${periodLabel(w.periodValue, w.periodUnit)}</span></div>
@@ -407,6 +409,12 @@ export default function Warranties() {
                       : <span className="mi-badge-gray">غير معروف</span>}
                   </div>
                   <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span>{detailsWarranty.carPlate ? <span className="mi-plate">{detailsWarranty.carPlate}</span> : <span>—</span>}</div>
+                  {detailsWarranty.source === 'maintenance' && detailsWarranty.carType && (
+                    <div className="mi-detail-item"><span className="mi-detail-label">نوع السيارة</span><span>{detailsWarranty.carType}</span></div>
+                  )}
+                  {detailsWarranty.source === 'maintenance' && detailsWarranty.carColor && (
+                    <div className="mi-detail-item"><span className="mi-detail-label">لون السيارة</span><span>{detailsWarranty.carColor}</span></div>
+                  )}
                   <div className="mi-detail-item"><span className="mi-detail-label">نوع العملية</span><span className={SOURCE_CLS[detailsWarranty.source] ?? 'mi-badge-gray'}>{SOURCE_LABEL[detailsWarranty.source] ?? detailsWarranty.source}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">القطعة / الخدمة</span><span>{detailsWarranty.itemName}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">تاريخ البداية</span><span>{detailsWarranty.startDate}</span></div>

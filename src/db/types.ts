@@ -159,6 +159,10 @@ export interface PendingDebt {
   total_amount: number
   amount_paid: number
   amount_remaining: number
+  // إثراء التفاصيل: صيانة فقط لـ car_type/car_color (NULL لبيع مباشر)، notes لكليهما
+  car_type?: string | null
+  car_color?: string | null
+  notes?: string | null
 }
 
 export interface DebtFilters {
@@ -407,6 +411,8 @@ export interface WarrantyRow {
   customer_name: string
   customer_phone: string | null
   car_plate: string | null
+  car_type: string | null      // صيانة فقط (NULL لبيع مباشر ولليدوي القديم)
+  car_color: string | null     // صيانة فقط (NULL لبيع مباشر ولليدوي القديم)
   item_name: string
   start_date: string
   period_value: number
@@ -444,6 +450,9 @@ export interface SaleInvoiceRow {
   amount_remaining: number
   car_plate: string
   car_type: string
+  car_color: string                       // صيانة فقط ('' لبيع مباشر)
+  date_released: string | null            // صيانة فقط (تاريخ التسليم)
+  car_status: 'in_progress' | 'delivered' | null  // حالة الصيانة (NULL لبيع مباشر)
   details: string
 }
 

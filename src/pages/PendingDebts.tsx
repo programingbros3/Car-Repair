@@ -47,11 +47,14 @@ function printDebt(debt: DebtRecord): void {
       <div class="detail-item"><label>النوع</label><span>${debt.typeLabel}</span></div>
       <div class="detail-item"><label>التاريخ</label><span>${debt.date}</span></div>
       ${debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${debt.carPlate}</span></div>` : ''}
+      ${debt.type === 'maintenance' && debt.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${debt.carType}</span></div>` : ''}
+      ${debt.type === 'maintenance' && debt.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${debt.carColor}</span></div>` : ''}
     </div>
     <div class="detail-grid">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(debt.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(debt.amountPaid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
+      ${debt.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${debt.notes}</span></div>` : ''}
     </div>`
   printPdf('دين معلق', body)
 }
@@ -371,6 +374,18 @@ export default function PendingDebts() {
                     <span className="mi-plate">{detailsDebt.carPlate}</span>
                   </div>
                 )}
+                {detailsDebt.type === 'maintenance' && detailsDebt.carType && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">نوع السيارة</span>
+                    <span>{detailsDebt.carType}</span>
+                  </div>
+                )}
+                {detailsDebt.type === 'maintenance' && detailsDebt.carColor && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">لون السيارة</span>
+                    <span>{detailsDebt.carColor}</span>
+                  </div>
+                )}
                 <div className="mi-detail-item">
                   <span className="mi-detail-label">الإجمالي</span>
                   <span className="mi-amount">{fmt(detailsDebt.total)} ₪</span>
@@ -383,6 +398,12 @@ export default function PendingDebts() {
                   <span className="mi-detail-label">المتبقي</span>
                   <span className="pd-remaining">{fmt(detailsDebt.amountRemaining)} ₪</span>
                 </div>
+                {detailsDebt.notes && (
+                  <div className="mi-detail-item mi-detail-full">
+                    <span className="mi-detail-label">ملاحظات</span>
+                    <span>{detailsDebt.notes}</span>
+                  </div>
+                )}
               </div>
               <LinkedOpsSection phone={detailsDebt.phone} source="debt" id={detailsDebt.id} />
             </div>

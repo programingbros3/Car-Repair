@@ -56,7 +56,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   return (
     <div style={overlay}>
       <form style={card} onSubmit={handleSubmit}>
-        <div style={logo}>كراج</div>
+        <div style={logo}>كراج الخط الأخضر</div>
         <p style={subtitle}>الرجاء إدخال كلمة السر للدخول</p>
         <PasswordInput
           value={password}

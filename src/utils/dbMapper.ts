@@ -450,6 +450,9 @@ export function pendingDebtToRecord(d: PendingDebt, payments: PaymentRowDb[] = [
     total: d.total_amount,
     amountPaid: d.amount_paid,
     amountRemaining: d.amount_remaining,
+    carType: d.car_type ?? undefined,
+    carColor: d.car_color ?? undefined,
+    notes: d.notes ?? undefined,
     payments: payments.map(dbPaymentToRow),
   }
 }
@@ -504,6 +507,8 @@ export function dbRowToWarranty(r: WarrantyRow): WarrantyRecord {
     customerName: r.customer_name,
     phone: phoneToUi(r.customer_phone),
     carPlate: r.car_plate ?? '',
+    carType: r.car_type ?? undefined,
+    carColor: r.car_color ?? undefined,
     itemName: r.item_name,
     startDate: r.start_date,
     periodValue: r.period_value,
@@ -530,6 +535,9 @@ export function dbRowToSaleInvoice(r: SaleInvoiceRow): SaleInvoice {
     status: saleStatus(r.total_amount, r.amount_paid),
     carPlate: r.car_plate,
     carType: r.car_type,
+    carColor: r.car_color || undefined,
+    dateReleased: r.date_released ?? undefined,
+    carStatus: r.car_status ?? undefined,
     details: r.details,
     payments: [],
   }

@@ -1,10 +1,10 @@
-# ملخص مشروع كراج التل الأخضر
+# ملخص مشروع كراج الخط الأخضر
 
 ---
 
 ## 1. اسم المشروع والتقنيات المستخدمة
 
-**اسم المشروع:** كراج التل الأخضر — نظام إدارة ورشة سيارات
+**اسم المشروع:** كراج الخط الأخضر — نظام إدارة ورشة سيارات
 
 **نبذة:** تطبيق سطح مكتب (Desktop) لإدارة كراج سيارات يشمل: فواتير الصيانة، البيع المباشر، الموردين، المصاريف، الموظفين والرواتب، الديون، الصندوق، والكفالات.
 
@@ -71,7 +71,7 @@
 │   │
 │   ├── utils/
 │   │   ├── auth.ts          — DEFAULT_PASSWORD: بذرة كلمة السر لأول تشغيل فقط (المصدر الحقيقي: hash في app_settings عبر electron/auth.ts)
-│   │   ├── notify.ts        — showError(): يعرض alert() عند وقوع أخطاء
+│   │   ├── notify.ts        — showError(): يُطلق حدث `app-error` (toast) بدل `alert()` المجمِّد للتطبيق — راجع "رسائل الخطأ (Toast)" أدناه
 │   │   ├── printPdf.ts      — printPdf(title, bodyHtml): يفتح نافذة طباعة HTML
 │   │   ├── dbMapper.ts      — دوال التحويل بين أنواع DB (snake_case) وأنواع UI (camelCase)
 │   │   ├── warranty.ts      — calcEndDate() و daysRemaining(): دوال مشتركة لحساب الكفالة
@@ -81,9 +81,10 @@
 │   │
 │   ├── components/
 │   │   ├── Sidebar.tsx      — شريط التنقل الجانبي (12 رابط) + التاريخ العربي بأرقام لاتينية
-│   │   ├── ConfirmDialog.tsx — مودال تأكيد مع اختياري كلمة سر (يستخدم PasswordInput)
+│   │   ├── ConfirmDialog.tsx — مودال تأكيد مع اختياري كلمة سر (يستخدم PasswordInput) — الرسالة تدعم أسطراً متعددة (`whiteSpace: pre-line`)
 │   │   ├── PasswordGate.tsx — شاشة إدخال كلمة السر قبل فتح التطبيق (يستخدم PasswordInput)
-│   │   └── PasswordInput.tsx — حقل إدخال كلمة السر مع زر إظهار/إخفاء
+│   │   ├── PasswordInput.tsx — حقل إدخال كلمة السر مع زر إظهار/إخفاء
+│   │   └── ErrorToast.tsx   — يستمع لحدث `app-error` ويعرض رسائل الخطأ كـ toast غير مُجمِّد (بديل `alert()`) — راجع "رسائل الخطأ (Toast)" أدناه
 │   │
 │   └── pages/
 │       ├── CashLedger.tsx       — الصندوق الرئيسي: سجل الحركات + إحصاء نهاية اليوم (شاشة الهبوط الافتراضية عند "/")
@@ -266,7 +267,7 @@
 | notes | TEXT | |
 | created_at | TEXT | |
 
-**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه؛ و`discount_type`/`discount_value` في جدولي الصيانة والبيع المباشر، راجع "خصم الفاتورة" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
+**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه؛ و`discount_type`/`discount_value` في جدولي الصيانة والبيع المباشر، راجع "خصم الفاتورة" أدناه) و`invoice_items` (`warranty`, `part_type`) و`daily_cash_audits` (`actual_cash`, `actual_visa`, `actual_check` — راجع "إحصاء نهاية اليوم حسب طريقة الدفع" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
 
 #### ترقيم الفواتير (`invoice_number`) — منذ 2026-07-02
 
@@ -339,14 +340,19 @@
 يُسجَّل تلقائياً من `electron/auth.ts → logActivity()` عند نجاح أي عملية تعديل/حذف محمية بـ `ConfirmDialog` — راجع قسم "الأمان" ضمن الـ Backend أدناه لتفاصيل نطاق التسجيل. قراءة فقط من الواجهة (لا تعديل ولا حذف يدوي لسجلاته).
 
 #### `daily_cash_audits` — إحصاءات نهاية اليوم
-| العمود | النوع |
-|---|---|
-| id | INTEGER PK AUTOINCREMENT |
-| audit_date | TEXT UNIQUE (YYYY-MM-DD) |
-| system_total | REAL |
-| actual_amount | REAL |
-| difference | REAL |
-| created_at | TEXT |
+| العمود | النوع | الوصف |
+|---|---|---|
+| id | INTEGER PK AUTOINCREMENT | |
+| audit_date | TEXT UNIQUE (YYYY-MM-DD) | |
+| system_total | REAL | إجمالي النظام (كل الطرق مجتمعة) |
+| actual_amount | REAL | المبلغ الفعلي الكلي = actual_cash + actual_visa + actual_check |
+| actual_cash | REAL NOT NULL DEFAULT 0 | الفعلي كاش — أُضيف عبر migration |
+| actual_visa | REAL NOT NULL DEFAULT 0 | الفعلي فيزا — أُضيف عبر migration |
+| actual_check | REAL NOT NULL DEFAULT 0 | الفعلي شيك — أُضيف عبر migration |
+| difference | REAL | الفرق الكلي (فعلي − نظام) |
+| created_at | TEXT | |
+
+راجع قسم "إحصاء نهاية اليوم حسب طريقة الدفع" ضمن شاشة الصندوق أدناه.
 
 #### `suppliers` — دليل الموردين
 | العمود | النوع |
@@ -366,6 +372,8 @@
 | customer_name | TEXT NOT NULL | |
 | customer_phone | TEXT | |
 | car_plate | TEXT | |
+| car_type | TEXT | نوع السيارة — صيانة فقط، يُكتب عبر المزامنة من الفاتورة (NULL لبيع مباشر واليدوي القديم) — أُضيف عبر migration، راجع "تحديث 2026-07-02 (٦)" |
+| car_color | TEXT | لون السيارة — صيانة فقط (NULL لبيع مباشر واليدوي القديم) — أُضيف عبر migration |
 | item_name | TEXT NOT NULL | اسم القطعة أو 'كفالة شاملة' للبيع المباشر |
 | start_date | TEXT NOT NULL | تاريخ بداية الكفالة |
 | period_value | INTEGER NOT NULL | عدد الوحدات |
@@ -511,8 +519,10 @@ React Page
 #### إحصاء الصندوق
 | القناة | الوصف |
 |---|---|
-| `cashAudit:getAll` | ORDER BY audit_date DESC |
-| `cashAudit:save` | INSERT OR REPLACE (ON CONFLICT audit_date DO UPDATE) |
+| `cashAudit:getAll` | ORDER BY audit_date DESC (يشمل actual_cash/visa/check) |
+| `cashAudit:save` | INSERT OR REPLACE (ON CONFLICT audit_date DO UPDATE) — يحفظ التفصيل حسب الطريقة |
+| `cashAudit:delete` | حذف سجل إحصاء واحد بالـ id — منذ 2026-07-02 |
+| `cashAudit:getSystemBreakdown` | صافي حركات اليوم مقسّماً {cash, visa, cheque} = (وارد − صادر) لكل طريقة، محسوباً مباشرة من جداول الدفعات لا من `cash_ledger` — منذ 2026-07-02 |
 
 #### الكفالات
 | القناة | الوصف |
@@ -655,7 +665,7 @@ React Page
 - `getLedgerByDateRange(db, from, to)` — WHERE transaction_date BETWEEN
 
 #### `src/db/payments.ts`
-- `addPayment(db, invoiceId, invoiceType, payments, date)` — INSERT + تحديث amount_paid/remaining + Ledger
+- `addPayment(db, invoiceId, invoiceType, payments, date)` — INSERT + تحديث amount_paid/remaining + Ledger. **حماية تجاوز المتبقي (منذ 2026-07-02):** يرفض داخل الـ transaction أي مجموع دفعات (باستثناء طريقة `debt`) يتجاوز `amount_remaining` الحالي (بهامش تسامح `0.001`) ويرمي خطأً عربياً يبيّن مجموع الدفعة والمتبقي. نفس الحماية مطبّقة في `releaseMaintenanceCar` (دفعة التسليم) في `src/db/maintenance.ts`.
 - `addDebtPayment(db, invoiceId, invoiceType, payments, date)` — INSERT debt_payments + تحديث + Ledger
 - `getPendingDebts(db, filters)` — UNION maintenance+direct_sale WHERE amount_remaining > 0
 
@@ -700,17 +710,17 @@ React Page
 
    **ملاحظة إصلاح سابق:** كانت بطاقة "الفرق" قديماً تُعرض من `auditRecords[0]` (أحدث سجل إحصاء بالتاريخ الكلي عبر `ORDER BY audit_date DESC`) دون أي فلترة على `selectedDate`، فكانت تعرض قيمة إحصاء يوم آخر تماماً عند تصفّح تاريخ مختلف. أصبحت الآن جميع البطاقات الخمس مشتقّة من IIFE واحد بالكامل معتمد على `selectedDate` (عبر `rows`, `dailyNet`, `auditRecords.find(...)`, و`actualAmount`).
 
-2. **إحصاء نهاية اليوم:**
-   - حقل اختيار تاريخ (افتراضي: اليوم)
-   - يعرض إجمالي عمليات اليوم من Ledger
-   - حقل "المبلغ الفعلي في الصندوق" → زر "احسب الفرق"
-   - إذا مطابق: رسالة ✓ + زر "تثبيت في السجل"
-   - إذا يوجد فرق: مودال يعرض الفرق مع زر "تثبيت الرقم"
+2. **إحصاء نهاية اليوم حسب طريقة الدفع (مُحدَّث 2026-07-02):**
+   - حقل اختيار تاريخ (افتراضي: اليوم).
+   - **إجمالي النظام مقسّم إلى ثلاث طرق** (كاش/فيزا/شيك) يُجلب من `cashAudit:getSystemBreakdown(date)` — صافي (وارد − صادر) لكل طريقة محسوباً مباشرة من جداول الدفعات (`payments`/`debt_payments` وارد، `supplier_payments`/`supplier_debt_payments`/`daily_expenses`/`salary_payments` صادر) لا من `cash_ledger`. المصاريف اليومية والرواتب تُعامَل كاملة كـ**كاش صادر**.
+   - **ثلاثة حقول للمبلغ الفعلي** — كاش/فيزا/شيك منفصلة (`actualCash`/`actualVisa`/`actualCheck`)، وإجمالي الفعلي = مجموعها.
+   - المودال يعرض جدول مقارنة ثلاثي الأعمدة (نظام / فعلي / فرق) لكل طريقة على حدة بالإضافة إلى الإجمالي، مع تلوين الفرق (`diffColor`: أخضر مطابق / أحمر نقص / برتقالي زيادة).
+   - يُحفظ عبر `cashAudit:save` بكامل التفصيل (`actual_cash`/`actual_visa`/`actual_check` + `actual_amount` الكلي + `difference`).
 
 3. **سجل العمليات:** جدول الحركات لليوم المختار (يُحمَّل من `ledger:getByDateRange`)
    - الضغط على صف → مودال التفاصيل مع زر طباعة إيصال
 
-4. **سجل الإحصاءات اليومية:** جدول `daily_cash_audits` مع badge الحالة (مطابق/زيادة/نقص) وزر طباعة
+4. **سجل الإحصاءات اليومية:** جدول `daily_cash_audits` مع badge الحالة (مطابق/زيادة/نقص) وزر طباعة، **وأزرار تعديل** (يعيد فتح حقول الفعلي المفصّلة ويحفظ عبر `cashAudit:save`) **وحذف** (`cashAudit:delete` بعد تأكيد) — منذ 2026-07-02
 
 5. **الشيكات المستحقة قريباً** (منذ 2026-07-02، أسفل "سجل العمليات" مباشرة): بطاقة `mi-card` قراءة فقط، مصدرها `cheques:getUpcoming(daysAhead)`. فلتر أعلى الجدول بنمط `pd-type-tabs`/`pd-tab` (نفس تبويبات النوع في `PendingDebts.tsx`) لاختيار المدى: 7/14/30 يوماً (افتراضي 14). الجدول: الطرف | المصدر (badge: `mi-badge-orange` صيانة / `mi-badge-blue` بيع مباشر / `mi-badge-purple` مورد أو دين مورد) | رقم الشيك | البنك | المبلغ | تاريخ الاستحقاق | الأيام المتبقية (badge بنفس أصناف الكفالات: `mi-badge-red` عند ≤3 أيام، `mi-badge-yellow` عند ≤7 أيام، `mi-badge-green` غير ذلك — لا كلاسات CSS جديدة). لا إجراءات تعديل/حذف على هذه الشاشة؛ أي تعديل على شيك يتم من صفحته الأصلية (الصيانة/البيع المباشر/الموردين).
 
@@ -1116,7 +1126,7 @@ export function daysRemaining(endDate: string): number
 ### `src/components/Sidebar.tsx`
 - **12 رابط تنقل (بهذا الترتيب بالضبط):** الصندوق الرئيسي / فواتير البيع / البيع المباشر / سيارات الصيانة / فواتير الشراء / الموردون / المصاريف اليومية / الموظفون والرواتب / الديون المعلقة / الكفالات / التقارير / **الإعدادات** (أيقونة ⚙) *(أُعيد ترتيبها بتاريخ 2026-07-01)*
 - يعرض التاريخ الحالي بالعربي في الأسفل (`toLocaleDateString('ar-EG-u-nu-latn', ...)` — أرقام لاتينية)
-- شعار "**كراج التل الأخضر**" في الأعلى
+- شعار "**كراج الخط الأخضر**" في الأعلى
 - `.sidebar` يستخدم `overflow: hidden` (بدلاً من `position: sticky`)
 - `.sidebar-nav` يستخدم `overflow-y: auto` و`min-height: 0` للتمرير عند الشاشات الصغيرة
 
@@ -1343,7 +1353,7 @@ printPdf(title: string, bodyHtml: string): void
 ```
 - يفتح نافذة popup جديدة
 - يُضيف: خط Tajawal (400/700) + RTL layout + A4 print styles — الخط يُحقن كـ CSS نصّي مباشرة داخل الصفحة عبر استيراد Vite الخاص `@fontsource/tajawal/400.css?inline` و`700.css?inline` (مُعرَّف في `src/vite-env.d.ts`)، وليس رابط `<link>` لخادم خارجي، لذا تعمل الطباعة بدون اتصال إنترنت
-- الرأس: "**كراج التل الأخضر**" + العنوان
+- الرأس: "**كراج الخط الأخضر**" + العنوان
 - يُحقن `bodyHtml` في الجسم
 - يستخدم `toLocaleDateString('ar-EG-u-nu-latn', ...)` لتاريخ الطباعة (أرقام لاتينية)
 - يستدعي `window.print()` ثم يُغلق النافذة
@@ -1409,6 +1419,10 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **تبويب "أعمار الديون" في Reports.tsx:** قناة `report:debtsAging` (قراءة فقط) تصنّف كل الديون المعلقة (زبائن + موردين) إلى 4 شرائح عمرية حسب تاريخ الفاتورة الأصلي، مع بطاقات إحصاء لكل شريحة، جدول موحّد قابل للفرز حسب عدد الأيام، وطباعة/تصدير CSV بنفس نمط بقية تبويبات Reports.tsx
 - [x] **خصم على مستوى الفاتورة (صيانة + بيع مباشر):** `discount_type` (`fixed`/`percentage`/NULL) + `discount_value` عبر migration، منطق مركزي `applyDiscount` في `src/db/discount.ts` (يضمن ألا يصبح الإجمالي سالباً)، `total_amount` يُخزَّن بعد الخصم ويُعاد حساب `amount_remaining` منه، نموذج خصم + عرض حي للإجمالي بعد الخصم في `MaintenanceInvoices.tsx`/`DirectSales.tsx`، وعرض "المجموع قبل الخصم/الخصم/الإجمالي بعد الخصم" في مودالات التفاصيل والإيصالات المطبوعة
 - [x] **رقم فاتورة منسّق يظهر للزبون (`invoice_number`):** `INV-{سنة}-{تسلسل}` مشترك بين فواتير الصيانة والبيع المباشر (تسلسل واحد لضمان التفرّد بينهما بما أنهما يُعرضان مجتمعين)، و`PUR-{سنة}-{تسلسل}` مستقل لفواتير الموردين. عمود جديد + بحث Fuse.js + عنوان الإيصال المطبوع في `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`SalesInvoices.tsx`/`Suppliers.tsx`. مُضاف عبر migration `ALTER TABLE ... ADD COLUMN` + تعبئة رجعية للسجلات القديمة (`backfillInvoiceNumbers`) بترتيب زمني صرف حسب `created_at`؛ الـ `id` الداخلي لم يتغيّر ولم يُحذف.
+- [x] **إحصاء نهاية اليوم مقسّماً حسب طريقة الدفع (كاش/فيزا/شيك):** أعمدة `actual_cash`/`actual_visa`/`actual_check` عبر migration + قناة `cashAudit:getSystemBreakdown` (صافي كل طريقة من جداول الدفعات مباشرة) + جدول مقارنة ثلاثي + تعديل/حذف السجلات (`cashAudit:delete`) — راجع "تحديث 2026-07-02 (٥)"
+- [x] **رسائل خطأ Toast غير مُجمِّدة بدل `alert()`:** حدث `app-error` + مكوّن `ErrorToast.tsx` (اختفاء تلقائي 8 ثوانٍ) — راجع "رسائل الخطأ (Toast)"
+- [x] **حماية تجاوز المتبقي في الدفعات:** `addPayment`/`releaseMaintenanceCar` يرفضان أي دفعة تتجاوز `amount_remaining` داخل الـ transaction
+- [x] **منع إدخال تواريخ مستقبلية:** `useDateClampGuard` في `App.tsx` يقيّد أي `<input type="date">` له `max` عبر مستمع عام على مستوى التطبيق
 
 ### غير مكتمل / قيود معروفة
 
@@ -1568,3 +1582,34 @@ const dbPath = app.getPath('userData') + '/garage.db'
 5. **الواجهة:** في `MaintenanceInvoices.tsx`/`DirectSales.tsx` أسفل جدول البنود مباشرة: "المجموع قبل الخصم" + dropdown نوع الخصم + حقل قيمة + **عرض حي "الإجمالي بعد الخصم"** (نفس أسلوب صندوق "صافي الراتب" الأخضر في `Employees.tsx`)، مع validation (نسبة 0-100، ثابت ≤ مجموع البنود). ملخّص الدفع في البيع المباشر واشتقاق الحالة يعتمدان الإجمالي بعد الخصم.
 6. **العرض:** مودال التفاصيل والإيصال المطبوع في الصفحتين يعرضان عند وجود خصم تسلسل "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" (بدل "الإجمالي الكلي")؛ المجموع قبل الخصم يُشتق من البنود عند توفّرها (`getOne` في الطباعة) أو عكسياً من الإجمالي المخصوم (صفوف GarageContext لا تحمل البنود) عبر `discountBreakdown()`/`discountBreakdownDS()` المحليتين.
 7. **أنواع:** `DiscountType` جديد في `src/db/types.ts` و`GarageContext.tsx`؛ `discount_type`/`discount_value` في `MaintenanceInvoiceRow`/`DirectSaleRow` + المدخلات، و`discountType?`/`discountValue?` في `CarRecord`/`SaleRecord`، مع تحديث `dbMapper.ts` بالاتجاهين.
+
+**تحديث 2026-07-02 (٥) — إحصاء نهاية اليوم حسب طريقة الدفع + رسائل Toast + حمايات إدخال:** دفعة تحسينات على واجهة الاستخدام وسلامة البيانات، بلا كسر لأي بنية قائمة.
+
+1. **إحصاء نهاية اليوم مقسّماً كاش/فيزا/شيك (`daily_cash_audits` + `CashLedger.tsx`):**
+   - ثلاثة أعمدة جديدة `actual_cash`/`actual_visa`/`actual_check REAL NOT NULL DEFAULT 0` عبر `ALTER TABLE` في `src/database.ts` (نفس نمط migrations؛ السجلات القديمة تبقى بـ 0). `actual_amount` يبقى الإجمالي الكلي (= مجموع الثلاثة).
+   - قناة جديدة `cashAudit:getSystemBreakdown(date)` ترجع `{cash, visa, cheque}` كصافي (وارد − صادر) لكل طريقة محسوباً **مباشرة من جداول الدفعات** لا من `cash_ledger`: الوارد من `payments`+`debt_payments` حسب `method`، والصادر من `supplier_payments`+`supplier_debt_payments` حسب `method` إضافةً إلى `daily_expenses`+`salary_payments` (كلاهما يُعامَل كـ**كاش صادر** بالكامل). نوع جديد `CashSystemBreakdown` في `src/db/types.ts`.
+   - الواجهة: ثلاثة حقول فعلي منفصلة + جدول مقارنة ثلاثي (نظام/فعلي/فرق) لكل طريقة بالإضافة للإجمالي، مع تلوين الفرق.
+   - قناة جديدة `cashAudit:delete(id)` + أزرار **تعديل/حذف** في جدول سجل الإحصاءات اليومية.
+
+2. **رسائل الخطأ (Toast) بدل `alert()`:** `showError()` في `src/utils/notify.ts` صار يُطلق `window.dispatchEvent(new CustomEvent('app-error', {detail}))` بدل `alert()` الذي كان يُجمّد نافذة Electron. مكوّن جديد `src/components/ErrorToast.tsx` (مُركَّب في `App.tsx` داخل `GarageProvider`) يستمع للحدث ويعرض toasts حمراء أسفل الشاشة تختفي تلقائياً بعد 8 ثوانٍ (مع زر إغلاق يدوي) وتدعم أسطراً متعددة. `ConfirmDialog` صار كذلك يعرض رسائله بـ `whiteSpace: pre-line`.
+
+3. **حماية تجاوز المتبقي في الدفعات:** `addPayment` (كل الفواتير) و`releaseMaintenanceCar` (دفعة التسليم) يرفضان الآن — داخل الـ transaction — أي مجموع دفعات (عدا طريقة `debt`) يتجاوز `amount_remaining` الحالي (هامش تسامح `0.001`) ويرميان خطأً عربياً يبيّن مجموع الدفعة والمتبقي.
+
+4. **منع إدخال تواريخ مستقبلية (`useDateClampGuard` في `App.tsx`):** hook عام يُركَّب مرة واحدة على مستوى التطبيق، يلتقط أحداث `change`/`blur` (capture) لأي `<input type="date">` له `max`، فإن تجاوزت قيمته `max` يعيدها إلى `max` عبر setter الأصلي لـ `HTMLInputElement.value` ويُطلق حدث `input` — يحمي حقول التاريخ من الإدخال اليدوي (الكيبورد) لتاريخ لاحق دون الحاجة لتعديل كل شاشة على حدة.
+
+5. **migrations أخرى:** أُضيف أيضاً عبر `ALTER TABLE` في `src/database.ts` عمودا `invoice_items.warranty TEXT` و`invoice_items.part_type TEXT NOT NULL DEFAULT 'part'` (توثيق للأعمدة التي كان الكود يكتبها/يقرأها أصلاً وضماناً لوجودها في القواعد القديمة).
+
+**تحديث 2026-07-02 (٦) — إثراء تفاصيل الفواتير في الشاشات المجمّعة (ديون/كفالات/فواتير بيع/فواتير شراء):** تعديل **عرض بيانات فقط (read paths)** — لا كتابة، لا لمس لأي عمود موجود، لا تغيير على منطق التعديل/الحذف/ConfirmDialog. الشاشات التي تعرض بيانات مُجمَّعة (UNION) من عدة مصادر لم تكن تسحب كامل أعمدة الفاتورة المصدر في استعلامها، فمودالات تفاصيلها كانت تُخفي حقولاً موجودة أصلاً في القاعدة.
+
+**المبدأ المتَّبع — كل حقل حسب مصدره فقط (لا حقول وهمية):** الحقول تُعرض فقط عندما تكون منطقية للمصدر، وتُخفى تماماً (شرط `{field && …}`) لا تُعرض فارغة أو "—" حين لا تنطبق:
+- **maintenance (صيانة):** `car_type` / `car_color` / `notes` / `date_released` / `status` — كلها موجودة أصلاً في `maintenance_invoices`.
+- **direct_sale (بيع مباشر):** لا سيارة إطلاقاً — فقط `notes` (وحقول السيارة تُمرَّر `NULL`/`''` في فروع UNION المقابلة لتطابق الأعمدة كما تتطلب SQLite).
+- **supplier / expense / salary (فواتير الشراء):** `supplier_phone` و`notes` كانا **معروضين أصلاً** في `PurchaseInvoices.tsx` (عبر `phone` و`details`) — لذا لم تلزم أي تعديلات على هذه الشاشة.
+- **manual warranty (`source_id=0`):** تبقى `car_type`/`car_color` = `NULL` (لا مصدر فاتورة).
+
+1. **الديون المعلقة (`getPendingDebts` في `src/db/payments.ts` + `PendingDebts.tsx`):** أُضيف `car_type`/`car_color`/`notes` لكلا فرعي UNION (صيانة حقيقية، بيع مباشر `NULL` لحقول السيارة و`notes` حقيقية). أنواع: `PendingDebt` (اختيارية) + `DebtRecord` (`carType?`/`carColor?`/`notes?`) + `pendingDebtToRecord`. المودال والإيصال المطبوع يعرضان نوع/لون السيارة **فقط عند `type==='maintenance'`** والملاحظات بلا شرط نوع.
+2. **الكفالات (`warranties` + `Warranties.tsx`):** عمودان جديدان `car_type`/`car_color TEXT` في جدول `warranties` عبر `ALTER TABLE` في `src/database.ts` (نفس نمط migrations). `syncWarrantiesForMaintenance` يجلب `car_type`/`car_color` من الفاتورة ويكتبهما في كل سجل كفالة؛ `syncWarrantiesForDirectSale` يكتب `NULL` صراحةً؛ الكفالات اليدوية القديمة (`source_id=0`) تبقى `NULL` تلقائياً. **`warranty:update` لم يُعدَّل** (لا يمسّ العمودين فيُحافَظ عليهما عند تعديل الكفالة). أنواع: `WarrantyRow.car_type`/`car_color` + `WarrantyRecord.carType?`/`carColor?` + `dbRowToWarranty`. المودال والإيصال يعرضانهما عند `source==='maintenance'`.
+3. **فواتير البيع (`salesInvoice:getAll` في `electron/ipc-handlers.ts` + `SalesInvoices.tsx`):** أُضيف لفرعي UNION `car_color`، و`date_released`، و`status AS car_status` (بيع مباشر: `''`/`NULL`). (`car_plate`/`car_type`/`notes` كانت موجودة أصلاً؛ و`date_received` معروض أصلاً كحقل `date`.) أنواع: `SaleInvoiceRow` (`car_color`/`date_released`/`car_status`) + `SaleInvoice` (`carColor?`/`dateReleased?`/`carStatus?`) + `dbRowToSaleInvoice`. المودال والإيصال يعرضان لون السيارة/حالة الصيانة (badge أخضر مُسلَّم / أصفر قيد الصيانة)/تاريخ التسليم **فقط عند `type==='maintenance'`**.
+4. **فواتير الشراء (`PurchaseInvoices.tsx`):** لا تعديل — `supplier_phone` (عبر `phone`) و`notes` (عبر `details`) معروضان أصلاً في استعلام `purchaseInvoice:getAll` والمودال؛ لا حقول ناقصة تُضاف.
+
+**ملاحظة SQLite:** كل فروع UNION في الاستعلامات المعدَّلة تحمل نفس عدد/ترتيب الأعمدة (بتمرير `NULL`/`''` حيث لا ينطبق الحقل). `tsc --noEmit` ينجح بعد التعديلات.

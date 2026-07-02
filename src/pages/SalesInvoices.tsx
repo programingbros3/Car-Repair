@@ -42,6 +42,9 @@ function printInvoice(inv: SaleInvoice): void {
       <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
       ${inv.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${inv.carPlate}</span></div>` : ''}
       ${inv.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${inv.carType}</span></div>` : ''}
+      ${inv.type === 'maintenance' && inv.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${inv.carColor}</span></div>` : ''}
+      ${inv.type === 'maintenance' && inv.carStatus ? `<div class="detail-item"><label>حالة الصيانة</label><span>${inv.carStatus === 'delivered' ? 'تم التسليم' : 'قيد الصيانة'}</span></div>` : ''}
+      ${inv.type === 'maintenance' && inv.dateReleased ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${inv.dateReleased}</span></div>` : ''}
       ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${inv.details}</span></div>` : ''}
     </div>
     <div class="detail-grid">
@@ -422,6 +425,26 @@ export default function SalesInvoices() {
                   <div className="mi-detail-item">
                     <span className="mi-detail-label">نوع السيارة</span>
                     <span>{detailsInv.carType}</span>
+                  </div>
+                )}
+                {detailsInv.type === 'maintenance' && detailsInv.carColor && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">لون السيارة</span>
+                    <span>{detailsInv.carColor}</span>
+                  </div>
+                )}
+                {detailsInv.type === 'maintenance' && detailsInv.carStatus && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">حالة الصيانة</span>
+                    <span className={detailsInv.carStatus === 'delivered' ? 'mi-badge-green' : 'mi-badge-yellow'}>
+                      {detailsInv.carStatus === 'delivered' ? 'تم التسليم' : 'قيد الصيانة'}
+                    </span>
+                  </div>
+                )}
+                {detailsInv.type === 'maintenance' && detailsInv.dateReleased && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">تاريخ التسليم</span>
+                    <span>{detailsInv.dateReleased}</span>
                   </div>
                 )}
                 <div className="mi-detail-item">

@@ -53,6 +53,9 @@ export type SaleInvoice = {
   id: number; invoiceNumber: string; date: string; type: SaleInvoiceType; customerName: string
   phone: string; total: number; paid: number; remaining: number
   status: SaleInvoiceStatus; carPlate: string; carType: string; details: string
+  carColor?: string                                   // صيانة فقط
+  dateReleased?: string                               // صيانة فقط (تاريخ التسليم)
+  carStatus?: 'in_progress' | 'delivered'             // حالة الصيانة
   payments: PaymentRow[]
 }
 
@@ -97,6 +100,9 @@ export type DebtRecord = {
   id: number; type: DebtType; typeLabel: string; customerName: string
   phone: string; date: string; carPlate: string; total: number
   amountPaid: number; amountRemaining: number; payments: PaymentRow[]
+  carType?: string        // صيانة فقط
+  carColor?: string       // صيانة فقط
+  notes?: string          // صيانة + بيع مباشر
 }
 
 /* ── Warranties ── */
@@ -109,6 +115,8 @@ export type WarrantyRecord = {
   customerName: string
   phone: string
   carPlate: string          // فارغ لـ direct_sale
+  carType?: string          // صيانة فقط (فارغ لـ direct_sale واليدوي القديم)
+  carColor?: string         // صيانة فقط (فارغ لـ direct_sale واليدوي القديم)
   itemName: string          // اسم القطعة أو الخدمة
   startDate: string         // YYYY-MM-DD
   periodValue: number       // مثال: 3

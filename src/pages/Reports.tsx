@@ -153,7 +153,7 @@ export default function Reports() {
   }, [debtsAging, agingSort])
 
   /* ── Print report ── */
-  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
+  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج الخط الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
 
   const handlePrint = () => {
     if (tab === 'top_customers') {
@@ -171,7 +171,7 @@ export default function Reports() {
           <thead><tr><th>#</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>عدد الفواتير</th><th>إجمالي الإنفاق</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج التل الأخضر · أفضل ${topCustomers.length} زبون</div>`
+        <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج الخط الأخضر · أفضل ${topCustomers.length} زبون</div>`
       printPdf('تقرير أفضل الزبائن', body)
       return
     }

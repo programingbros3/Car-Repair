@@ -153,7 +153,10 @@ export function getPendingDebts(filters: DebtFilters = {}): PendingDebt[] {
           date_received AS invoice_date,
           total_amount,
           amount_paid,
-          amount_remaining
+          amount_remaining,
+          car_type,
+          car_color,
+          notes
         FROM maintenance_invoices
         ${where}
       `).all(...params) as PendingDebt[]
@@ -169,7 +172,10 @@ export function getPendingDebts(filters: DebtFilters = {}): PendingDebt[] {
           sale_date     AS invoice_date,
           total_amount,
           amount_paid,
-          amount_remaining
+          amount_remaining,
+          NULL          AS car_type,
+          NULL          AS car_color,
+          notes
         FROM direct_sale_invoices
         ${where}
       `).all(...params) as PendingDebt[]

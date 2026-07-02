@@ -60,7 +60,7 @@ type DB = Database.Database
 /* ── مزامنة الكفالات مع جدول warranties عند حفظ الفواتير ── */
 function syncWarrantiesForMaintenance(db: DB, invoiceId: number): void {
   const inv = db.prepare(
-    `SELECT customer_name, customer_phone, car_plate, date_received FROM maintenance_invoices WHERE id=?`,
+    `SELECT customer_name, customer_phone, car_plate, car_type, car_color, date_received FROM maintenance_invoices WHERE id=?`,
   ).get(invoiceId) as any
   if (!inv) return
   db.transaction(() => {
@@ -74,9 +74,10 @@ function syncWarrantiesForMaintenance(db: DB, invoiceId: number): void {
         const w = JSON.parse(item.warranty)
         if (!w.value || !w.unit) continue
         db.prepare(`
-          INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, item_name, start_date, period_value, period_unit, notes)
-          VALUES (?,?,?,?,?,?,?,?,?,?)
+          INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, car_type, car_color, item_name, start_date, period_value, period_unit, notes)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         `).run('maintenance', invoiceId, inv.customer_name, inv.customer_phone, inv.car_plate,
+               inv.car_type ?? null, inv.car_color ?? null,
                item.item_name, inv.date_received, Number(w.value), String(w.unit), null)
       } catch { /* JSON غير صالح، تخطّ */ }
     }
@@ -95,9 +96,10 @@ function syncWarrantiesForDirectSale(db: DB, invoiceId: number): void {
       const w = JSON.parse(inv.warranty)
       if (!w.value || !w.unit) return
       db.prepare(`
-        INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, item_name, start_date, period_value, period_unit, notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, car_type, car_color, item_name, start_date, period_value, period_unit, notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
       `).run('direct_sale', invoiceId, inv.customer_name, inv.customer_phone, null,
+             null, null,
              'كفالة شاملة', inv.sale_date, Number(w.value), String(w.unit), null)
     } catch { /* JSON غير صالح، تخطّ */ }
   })()
@@ -328,12 +330,14 @@ export function registerIpcHandlers(db: DB): void {
     db.prepare(`
       SELECT id, invoice_number, date_received AS date, 'maintenance' AS type, customer_name, customer_phone,
              total_amount, amount_paid, amount_remaining,
-             car_plate, COALESCE(car_type,'') AS car_type, COALESCE(notes,'') AS details
+             car_plate, COALESCE(car_type,'') AS car_type, COALESCE(car_color,'') AS car_color,
+             date_released, status AS car_status, COALESCE(notes,'') AS details
         FROM maintenance_invoices
       UNION ALL
       SELECT id, invoice_number, sale_date AS date, 'direct_sale' AS type, customer_name, customer_phone,
              total_amount, amount_paid, amount_remaining,
-             '' AS car_plate, '' AS car_type, COALESCE(notes,'') AS details
+             '' AS car_plate, '' AS car_type, '' AS car_color,
+             NULL AS date_released, NULL AS car_status, COALESCE(notes,'') AS details
         FROM direct_sale_invoices
       ORDER BY date DESC, id DESC
     `).all())
