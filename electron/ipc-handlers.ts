@@ -382,22 +382,68 @@ export function registerIpcHandlers(db: DB): void {
   on('cashAudit:getAll', () =>
     db.prepare(`SELECT * FROM daily_cash_audits ORDER BY audit_date DESC`).all()
   )
-  on('cashAudit:save', (input: { audit_date: string; system_total: number; actual_amount: number; difference: number }) => {
+  on('cashAudit:save', (input: { audit_date: string; system_total: number; actual_amount: number; actual_cash: number; actual_visa: number; actual_check: number; difference: number }) => {
     const info = db.prepare(`
-      INSERT INTO daily_cash_audits (audit_date, system_total, actual_amount, difference)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO daily_cash_audits (audit_date, system_total, actual_amount, actual_cash, actual_visa, actual_check, difference)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(audit_date) DO UPDATE SET
         system_total  = excluded.system_total,
         actual_amount = excluded.actual_amount,
+        actual_cash   = excluded.actual_cash,
+        actual_visa   = excluded.actual_visa,
+        actual_check  = excluded.actual_check,
         difference    = excluded.difference,
         created_at    = datetime('now','localtime')
-    `).run(input.audit_date, input.system_total, input.actual_amount, input.difference)
+    `).run(input.audit_date, input.system_total, input.actual_amount, input.actual_cash, input.actual_visa, input.actual_check, input.difference)
     return Number(info.lastInsertRowid)
   })
 
   on('cashAudit:delete', (id: number) =>
     db.prepare(`DELETE FROM daily_cash_audits WHERE id = ?`).run(id)
   )
+
+  on('cashAudit:getSystemBreakdown', (date: string) => {
+    const sum = (sql: string, ...p: unknown[]): number =>
+      ((db.prepare(sql).get(...p) as { v: number } | undefined)?.v ?? 0)
+
+    // كاش وارد: دفعات العملاء + سداد ديون العملاء
+    const cashIn =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM payments      WHERE payment_date=? AND method='cash'`,   date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM debt_payments WHERE payment_date=? AND method='cash'`,   date)
+
+    // فيزا وارد
+    const visaIn =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM payments      WHERE payment_date=? AND method='visa'`,   date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM debt_payments WHERE payment_date=? AND method='visa'`,   date)
+
+    // شيك وارد
+    const chequeIn =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM payments      WHERE payment_date=? AND method='cheque'`, date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM debt_payments WHERE payment_date=? AND method='cheque'`, date)
+
+    // كاش صادر: موردون + مصاريف يومية + رواتب (كلها كاش)
+    const cashOut =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_payments      WHERE payment_date=? AND method='cash'`,   date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_debt_payments WHERE payment_date=? AND method='cash'`,   date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM daily_expenses         WHERE expense_date=?`,                     date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM salary_payments        WHERE payment_date=?`,                     date)
+
+    // فيزا صادر
+    const visaOut =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_payments      WHERE payment_date=? AND method='visa'`,   date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_debt_payments WHERE payment_date=? AND method='visa'`,   date)
+
+    // شيك صادر
+    const chequeOut =
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_payments      WHERE payment_date=? AND method='cheque'`, date) +
+      sum(`SELECT COALESCE(SUM(amount),0) AS v FROM supplier_debt_payments WHERE payment_date=? AND method='cheque'`, date)
+
+    return {
+      cash:   cashIn   - cashOut,
+      visa:   visaIn   - visaOut,
+      cheque: chequeIn - chequeOut,
+    }
+  })
 
   /* ─────────────── الكفالات ─────────────── */
   on('warranty:getAll', () => db.prepare(`SELECT * FROM warranties ORDER BY start_date DESC, id DESC`).all())

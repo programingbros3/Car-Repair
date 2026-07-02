@@ -454,6 +454,9 @@ export interface CashAuditRow {
   audit_date: string
   system_total: number
   actual_amount: number
+  actual_cash: number
+  actual_visa: number
+  actual_check: number
   difference: number
   created_at: string
 }
@@ -462,7 +465,16 @@ export interface CashAuditInput {
   audit_date: string
   system_total: number
   actual_amount: number
+  actual_cash: number
+  actual_visa: number
+  actual_check: number
   difference: number
+}
+
+export interface CashSystemBreakdown {
+  cash:   number
+  visa:   number
+  cheque: number
 }
 
 // ── Aggregate purchase-invoices view (موردون + مصاريف + رواتب) ──────────────────

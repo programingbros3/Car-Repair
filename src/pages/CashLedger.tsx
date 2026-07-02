@@ -2,14 +2,15 @@ import { useEffect, useState, useCallback } from 'react'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
-import type { LedgerRow, CashAuditRow } from '../db/types'
-import type { UpcomingCheque, UpcomingChequeSource } from '../store/GarageContext'
+import type { LedgerRow, CashAuditRow, CashSystemBreakdown } from '../db/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 /* ════════════════════════════════════════
    Types
 ════════════════════════════════════════ */
 type TxType = 'incoming' | 'outgoing'
+
+type PaymentBreakdown = { method: string; amount: number }
 
 type DisplayRow = {
   id: number
@@ -19,6 +20,7 @@ type DisplayRow = {
   amount: number
   balanceAfter: number
   notes: string
+  breakdown: PaymentBreakdown[]
 }
 
 /* ════════════════════════════════════════
@@ -38,36 +40,74 @@ const REF_LABELS: Record<string, string> = {
 }
 const refLabel = (t: string) => REF_LABELS[t] ?? t
 
+const METHOD_LABELS: Record<string, string> = {
+  cash:   'كاش',
+  visa:   'فيزا',
+  cheque: 'شيك',
+  debt:   'دين',
+}
+const METHOD_COLORS: Record<string, string> = {
+  cash:   '#2ECC71',
+  visa:   '#3498DB',
+  cheque: '#9B59B6',
+  debt:   '#E74C3C',
+}
+
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const fmt      = (n: number) => Math.abs(n).toLocaleString('en-US')
 
-/* ════════════════════════════════════════
-   Upcoming cheques
-════════════════════════════════════════ */
-const CHEQUE_SOURCE_LABELS: Record<UpcomingChequeSource, string> = {
-  maintenance:   'صيانة',
-  direct_sale:   'بيع مباشر',
-  supplier:      'مورد',
-  supplier_debt: 'دين مورد',
+// يستخرج طريقة الدفع من الملاحظة (صيغة: "وصف #N — cash")
+const extractMethod = (notes: string | null): string => {
+  const m = (notes ?? '').match(/[—–-]\s*(cash|visa|cheque|debt)\s*$/i)
+  return m ? m[1].toLowerCase() : ''
 }
-const CHEQUE_SOURCE_CLS: Record<UpcomingChequeSource, string> = {
-  maintenance:   'mi-badge-orange',
-  direct_sale:   'mi-badge-blue',
-  supplier:      'mi-badge-purple',
-  supplier_debt: 'mi-badge-purple',
-}
-const chequeDaysCls = (days: number) =>
-  days <= 3 ? 'mi-badge-red' : days <= 7 ? 'mi-badge-yellow' : 'mi-badge-green'
 
-const toDisplay = (r: LedgerRow): DisplayRow => ({
-  id: r.id,
-  date: r.transaction_date,
-  type: r.amount_in > 0 ? 'incoming' : 'outgoing',
-  sourceLabel: refLabel(r.reference_type),
-  amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
-  balanceAfter: r.balance_after,
-  notes: r.notes ?? '',
-})
+const baseNote = (notes: string | null): string =>
+  (notes ?? '').replace(/\s*[—–-]\s*(cash|visa|cheque|debt)\s*$/i, '').trim()
+
+// مفتاح التجميع: التاريخ + نوع المرجع + رقم الفاتورة من الـ notes
+// (reference_id في اللِّيدجر هو payment_id وليس invoice_id)
+const groupKey = (e: LedgerRow): string => {
+  const m = (e.notes ?? '').match(/#(\d+)/)
+  const invoiceId = m ? m[1] : String(e.reference_id)
+  return `${e.transaction_date}|${e.reference_type}|${invoiceId}`
+}
+
+// يجمّع صفوف اللِّيدجر المتعلقة بنفس العملية في صف واحد
+const groupEntries = (entries: LedgerRow[]): DisplayRow[] => {
+  const groups = new Map<string, LedgerRow[]>()
+  for (const e of entries) {
+    const key = groupKey(e)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(e)
+  }
+
+  return Array.from(groups.values()).map(group => {
+    const first    = group[0]
+    const last     = group[group.length - 1]
+    const totalIn  = group.reduce((s, r) => s + r.amount_in,  0)
+    const totalOut = group.reduce((s, r) => s + r.amount_out, 0)
+    const type: TxType = totalIn > 0 ? 'incoming' : 'outgoing'
+
+    const breakdown: PaymentBreakdown[] = group
+      .map(r => ({
+        method: extractMethod(r.notes),
+        amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
+      }))
+      .filter(b => b.method && b.amount > 0)
+
+    return {
+      id:           first.id,
+      date:         first.transaction_date,
+      type,
+      sourceLabel:  refLabel(first.reference_type),
+      amount:       totalIn > 0 ? totalIn : totalOut,
+      balanceAfter: last.balance_after,
+      notes:        baseNote(first.notes),
+      breakdown,
+    }
+  })
+}
 
 /* ════════════════════════════════════════
    Component
@@ -83,11 +123,18 @@ export default function CashLedger() {
   /* ── Overall summary (removed — no longer used) ── */
 
   /* ── End-of-day audit ── */
-  const [dailyNet, setDailyNet]         = useState(0)
-  const [actualAmount, setActualAmount] = useState('')
-  const [matchOk, setMatchOk]           = useState(false)
-  const [diffModal, setDiffModal]       = useState<{ diff: number; systemTotal: number; actual: number } | null>(null)
-  const [saving, setSaving]             = useState(false)
+  const [dailyNet, setDailyNet]             = useState(0)
+  const [sysBreakdown, setSysBreakdown]     = useState<CashSystemBreakdown>({ cash: 0, visa: 0, cheque: 0 })
+  const [actualCash, setActualCash]         = useState('')
+  const [actualVisa, setActualVisa]         = useState('')
+  const [actualCheck, setActualCheck]       = useState('')
+  const [matchOk, setMatchOk]               = useState(false)
+  const [diffModal, setDiffModal]           = useState<{
+    sysCash: number; sysVisa: number; sysCheck: number
+    actCash: number; actVisa: number; actCheck: number
+    diffCash: number; diffVisa: number; diffCheck: number
+  } | null>(null)
+  const [saving, setSaving]                 = useState(false)
 
   /* ── Audit records ── */
   const [auditRecords, setAuditRecords]     = useState<CashAuditRow[]>([])
@@ -97,23 +144,12 @@ export default function CashLedger() {
   const [detailsTx, setDetailsTx] = useState<DisplayRow | null>(null)
 
   /* ── Audit edit / delete ── */
-  const [editAudit, setEditAudit]         = useState<CashAuditRow | null>(null)
-  const [editActual, setEditActual]       = useState('')
-  const [editSaving, setEditSaving]       = useState(false)
-  const [deleteAudit, setDeleteAudit]     = useState<CashAuditRow | null>(null)
-
-  /* ── Upcoming cheques ── */
-  const [chequeDays, setChequeDays]       = useState<7 | 14 | 30>(14)
-  const [cheques, setCheques]             = useState<UpcomingCheque[]>([])
-  const [chequesLoading, setChequesLoading] = useState(true)
-
-  useEffect(() => {
-    setChequesLoading(true)
-    dbService.cheques.getUpcoming(chequeDays)
-      .then(setCheques)
-      .catch(err => showError('تعذّر تحميل الشيكات المستحقة قريباً', err))
-      .finally(() => setChequesLoading(false))
-  }, [chequeDays])
+  const [editAudit, setEditAudit]       = useState<CashAuditRow | null>(null)
+  const [editCash, setEditCash]         = useState('')
+  const [editVisa, setEditVisa]         = useState('')
+  const [editCheck, setEditCheck]       = useState('')
+  const [editSaving, setEditSaving]     = useState(false)
+  const [deleteAudit, setDeleteAudit]   = useState<CashAuditRow | null>(null)
 
   /* ─── Load audit records ─── */
   const loadAudits = useCallback(() => {
@@ -126,16 +162,18 @@ export default function CashLedger() {
 
   useEffect(() => { loadAudits() }, [loadAudits])
 
-  /* ─── Load day operations + daily net ─── */
+  /* ─── Load day operations + daily net + system breakdown ─── */
   const loadDayData = useCallback((date: string) => {
     setLoading(true)
     Promise.all([
       dbService.ledger.getByDateRange(date, date),
       dbService.report.daily(date),
+      dbService.cashAudit.getSystemBreakdown(date),
     ])
-      .then(([entries, report]) => {
-        setRows([...entries.map(toDisplay)].reverse())
+      .then(([entries, report, breakdown]) => {
+        setRows(groupEntries([...entries].reverse()))
         setDailyNet(report.net)
+        setSysBreakdown(breakdown)
       })
       .catch(err => showError('تعذّر تحميل بيانات اليوم', err))
       .finally(() => setLoading(false))
@@ -143,34 +181,53 @@ export default function CashLedger() {
 
   useEffect(() => {
     loadDayData(selectedDate)
-    setActualAmount('')
+    setActualCash('')
+    setActualVisa('')
+    setActualCheck('')
     setMatchOk(false)
     setDiffModal(null)
   }, [selectedDate, loadDayData])
 
   /* ─── احسب الفرق ─── */
   const handleCalcDiff = () => {
-    const actual = parseFloat(actualAmount)
-    if (isNaN(actual) || actualAmount.trim() === '') return
-    const diff = actual - dailyNet
-    if (Math.abs(diff) < 0.001) {
+    if (actualCash.trim() === '' && actualVisa.trim() === '' && actualCheck.trim() === '') return
+    const actCash  = parseFloat(actualCash)  || 0
+    const actVisa  = parseFloat(actualVisa)  || 0
+    const actCheck = parseFloat(actualCheck) || 0
+    const diffCash  = actCash  - sysBreakdown.cash
+    const diffVisa  = actVisa  - sysBreakdown.visa
+    const diffCheck = actCheck - sysBreakdown.cheque
+    const allMatch = Math.abs(diffCash) < 0.001 && Math.abs(diffVisa) < 0.001 && Math.abs(diffCheck) < 0.001
+    if (allMatch) {
       setMatchOk(true)
       setDiffModal(null)
     } else {
       setMatchOk(false)
-      setDiffModal({ diff, systemTotal: dailyNet, actual })
+      setDiffModal({
+        sysCash:  sysBreakdown.cash,  sysVisa:  sysBreakdown.visa,  sysCheck:  sysBreakdown.cheque,
+        actCash,  actVisa,  actCheck,
+        diffCash, diffVisa, diffCheck,
+      })
     }
   }
 
-  /* ─── تثبيت الرقم (من modal) ─── */
-  const handleSaveAudit = async (systemTotal: number, actual: number, diff: number) => {
+  /* ─── تثبيت الرقم (من modal أو حالة مطابق) ─── */
+  const handleSaveAudit = async (
+    actCash: number, actVisa: number, actCheck: number,
+  ) => {
+    const actual = actCash + actVisa + actCheck
+    const sysTotal = sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque
+    const diff = actual - sysTotal
     setSaving(true)
     try {
       await dbService.cashAudit.save({
-        audit_date: selectedDate,
-        system_total: systemTotal,
+        audit_date:   selectedDate,
+        system_total: sysTotal,
         actual_amount: actual,
-        difference: diff,
+        actual_cash:  actCash,
+        actual_visa:  actVisa,
+        actual_check: actCheck,
+        difference:   diff,
       })
       const records = await dbService.cashAudit.getAll()
       setAuditRecords(records)
@@ -184,30 +241,39 @@ export default function CashLedger() {
 
   /* ─── تثبيت في السجل (حالة مطابق) ─── */
   const handleSaveMatch = async () => {
-    const actual = parseFloat(actualAmount)
-    if (isNaN(actual)) return
-    await handleSaveAudit(dailyNet, actual, 0)
+    await handleSaveAudit(
+      parseFloat(actualCash)  || 0,
+      parseFloat(actualVisa)  || 0,
+      parseFloat(actualCheck) || 0,
+    )
     setMatchOk(false)
   }
 
   /* ─── Edit audit record ─── */
   const openEditAudit = (rec: CashAuditRow) => {
     setEditAudit(rec)
-    setEditActual(String(rec.actual_amount))
+    setEditCash(String(rec.actual_cash  || 0))
+    setEditVisa(String(rec.actual_visa  || 0))
+    setEditCheck(String(rec.actual_check || 0))
   }
 
   const handleEditAuditSave = async () => {
     if (!editAudit) return
-    const actual = parseFloat(editActual)
-    if (isNaN(actual) || actual < 0) return
-    const diff = actual - editAudit.system_total
+    const cash   = parseFloat(editCash)  || 0
+    const visa   = parseFloat(editVisa)  || 0
+    const check  = parseFloat(editCheck) || 0
+    const actual = cash + visa + check
+    const diff   = actual - editAudit.system_total
     setEditSaving(true)
     try {
       await dbService.cashAudit.save({
-        audit_date: editAudit.audit_date,
-        system_total: editAudit.system_total,
+        audit_date:    editAudit.audit_date,
+        system_total:  editAudit.system_total,
         actual_amount: actual,
-        difference: diff,
+        actual_cash:   cash,
+        actual_visa:   visa,
+        actual_check:  check,
+        difference:    diff,
       })
       await loadAudits()
       setEditAudit(null)
@@ -275,63 +341,91 @@ export default function CashLedger() {
   /* ════════════════════════════════════════
      JSX
   ════════════════════════════════════════ */
+  const thStyle: React.CSSProperties = {
+    padding: '0.55rem 0.85rem', textAlign: 'right', fontWeight: 600,
+    fontSize: '0.85rem', color: '#555', borderBottom: '2px solid #e2e8f0',
+  }
+  const tdStyle: React.CSSProperties = {
+    padding: '0.6rem 0.85rem', borderBottom: '1px solid #e8edf2',
+  }
+
   return (
     <div>
       <div className="page-header">
         <h1 className="page-title">الصندوق الرئيسي</h1>
       </div>
 
-      {/* ── Daily Stats (مرتبطة بالكامل بـ selectedDate) ── */}
+      {/* ── Daily Stats ── */}
       {(() => {
-        const opCount        = rows.length
-        const incomingTotal  = rows.filter(r => r.type === 'incoming').reduce((s, r) => s + r.amount, 0)
-        const outgoingTotal  = rows.filter(r => r.type === 'outgoing').reduce((s, r) => s + r.amount, 0)
-        const savedAudit     = auditRecords.find(a => a.audit_date === selectedDate) ?? null
+        const saved = auditRecords.find(a => a.audit_date === selectedDate) ?? null
 
-        const liveActualNum  = actualAmount.trim() === '' ? null : parseFloat(actualAmount)
-        const hasLiveActual  = liveActualNum !== null && !isNaN(liveActualNum)
+        const sysCash  = sysBreakdown.cash
+        const sysVisa  = sysBreakdown.visa
+        const sysCheck = sysBreakdown.cheque
+        const sysTotal = sysCash + sysVisa + sysCheck
 
-        const actualDisplay: number | null = savedAudit
-          ? savedAudit.actual_amount
-          : hasLiveActual ? liveActualNum : null
+        const actCash  = saved?.actual_cash   ?? null
+        const actVisa  = saved?.actual_visa   ?? null
+        const actCheck = saved?.actual_check  ?? null
+        const actTotal = saved?.actual_amount ?? null
 
-        const diffDisplay: number | null = savedAudit
-          ? savedAudit.difference
-          : hasLiveActual ? (dailyNet - (liveActualNum as number)) : null
+        const diffCash  = actCash  !== null ? actCash  - sysCash  : null
+        const diffVisa  = actVisa  !== null ? actVisa  - sysVisa  : null
+        const diffCheck = actCheck !== null ? actCheck - sysCheck : null
+        const diffTotal = actTotal !== null ? actTotal - sysTotal : null
+
+        const breakdown = (items: { label: string; color: string; value: number | null; signed?: boolean }[]) => (
+          <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.55rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {items.map(it => (
+              <span key={it.label} style={{ fontSize: '0.75rem', color: it.value !== null ? it.color : '#aaa', fontWeight: 500 }}>
+                {it.label}:&nbsp;
+                <span style={{ fontWeight: 700 }}>
+                  {it.value === null ? '—' : `${it.signed && it.value > 0 ? '+' : it.signed && it.value < 0 ? '−' : ''}${fmt(it.value)} ₪`}
+                </span>
+              </span>
+            ))}
+          </div>
+        )
 
         return (
           <div className="stats-grid">
+            {/* إجمالي النظام */}
             <div className="stat-card">
               <span className="stat-label">إجمالي النظام ₪</span>
-              <span className="stat-value" style={{ color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
-                {dailyNet > 0 ? '+' : dailyNet < 0 ? '−' : ''}{fmt(dailyNet)} ₪
+              <span className="stat-value" style={{ color: sysTotal >= 0 ? '#2ECC71' : '#E74C3C' }}>
+                {fmt(sysTotal)} ₪
               </span>
+              {breakdown([
+                { label: 'كاش',  color: '#2ECC71', value: sysCash  },
+                { label: 'فيزا', color: '#3498DB', value: sysVisa  },
+                { label: 'شيك',  color: '#9B59B6', value: sysCheck },
+              ])}
             </div>
+
+            {/* المبلغ الفعلي */}
             <div className="stat-card">
               <span className="stat-label">المبلغ الفعلي ₪</span>
               <span className="stat-value balance">
-                {actualDisplay !== null ? `${fmt(actualDisplay)} ₪` : '—'}
+                {actTotal !== null ? `${fmt(actTotal)} ₪` : '—'}
               </span>
+              {breakdown([
+                { label: 'كاش',  color: '#2ECC71', value: actCash  },
+                { label: 'فيزا', color: '#3498DB', value: actVisa  },
+                { label: 'شيك',  color: '#9B59B6', value: actCheck },
+              ])}
             </div>
+
+            {/* الفرق */}
             <div className="stat-card">
               <span className="stat-label">الفرق ₪</span>
-              <span className="stat-value" style={{ color: diffDisplay !== null ? diffColor(diffDisplay) : '#999' }}>
-                {diffDisplay !== null
-                  ? `${diffDisplay > 0 ? '+' : diffDisplay < 0 ? '−' : ''}${fmt(diffDisplay)} ₪`
-                  : '—'}
+              <span className="stat-value" style={{ color: diffTotal !== null ? diffColor(diffTotal) : '#999' }}>
+                {diffTotal === null ? '—' : `${diffTotal > 0 ? '+' : diffTotal < 0 ? '−' : ''}${fmt(diffTotal)} ₪`}
               </span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">إحصاء العمليات</span>
-              <span className="stat-value balance">{opCount}</span>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">الوارد / الصادر ₪</span>
-              <span className="stat-value">
-                <span style={{ color: '#2ECC71' }}>{fmt(incomingTotal)}</span>
-                <span style={{ color: '#999', fontWeight: 400 }}> / </span>
-                <span style={{ color: '#E74C3C' }}>{fmt(outgoingTotal)}</span>
-              </span>
+              {breakdown([
+                { label: 'كاش',  color: diffCash  !== null ? diffColor(diffCash)  : '#aaa', value: diffCash,  signed: true },
+                { label: 'فيزا', color: diffVisa  !== null ? diffColor(diffVisa)  : '#aaa', value: diffVisa,  signed: true },
+                { label: 'شيك',  color: diffCheck !== null ? diffColor(diffCheck) : '#aaa', value: diffCheck, signed: true },
+              ])}
             </div>
           </div>
         )
@@ -360,44 +454,73 @@ export default function CashLedger() {
           )}
         </div>
 
-        {/* System total for selected day */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '0.75rem',
-          padding: '0.85rem 1.1rem', background: '#f8fafc',
-          borderRadius: '8px', border: '1px solid #e8edf2', marginBottom: '1.25rem',
-        }}>
-          <span style={{ fontSize: '0.92rem', color: '#555', fontWeight: 500 }}>إجمالي عمليات اليوم:</span>
-          <span style={{ fontWeight: 700, fontSize: '1.2rem', color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
-            {dailyNet >= 0 ? '+' : '−'}{fmt(dailyNet)} ₪
-          </span>
+        {/* Comparison table: system vs actual per method */}
+        <div style={{ overflowX: 'auto', marginBottom: '1.25rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.93rem' }}>
+            <thead>
+              <tr style={{ background: '#f1f5f9' }}>
+                <th style={thStyle}>وسيلة الدفع</th>
+                <th style={thStyle}>النظام ₪</th>
+                <th style={thStyle}>الفعلي (أدخل)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={tdStyle}><span style={{ color: '#2ECC71', fontWeight: 600 }}>● كاش</span></td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.cash)} ₪</td>
+                <td style={tdStyle}>
+                  <input type="number" min="0" step="0.01" className="mi-td-input"
+                    style={{ width: '130px' }} placeholder="0.00"
+                    value={actualCash}
+                    onChange={e => { setActualCash(e.target.value); setMatchOk(false) }}
+                    onFocus={e => { if (e.target.value === '0') setActualCash('') }}
+                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                </td>
+              </tr>
+              <tr style={{ background: '#f8fafc' }}>
+                <td style={tdStyle}><span style={{ color: '#3498DB', fontWeight: 600 }}>● فيزا</span></td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.visa)} ₪</td>
+                <td style={tdStyle}>
+                  <input type="number" min="0" step="0.01" className="mi-td-input"
+                    style={{ width: '130px' }} placeholder="0.00"
+                    value={actualVisa}
+                    onChange={e => { setActualVisa(e.target.value); setMatchOk(false) }}
+                    onFocus={e => { if (e.target.value === '0') setActualVisa('') }}
+                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                </td>
+              </tr>
+              <tr>
+                <td style={tdStyle}><span style={{ color: '#9B59B6', fontWeight: 600 }}>● شيك</span></td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.cheque)} ₪</td>
+                <td style={tdStyle}>
+                  <input type="number" min="0" step="0.01" className="mi-td-input"
+                    style={{ width: '130px' }} placeholder="0.00"
+                    value={actualCheck}
+                    onChange={e => { setActualCheck(e.target.value); setMatchOk(false) }}
+                    onFocus={e => { if (e.target.value === '0') setActualCheck('') }}
+                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                </td>
+              </tr>
+              <tr style={{ background: '#f1f5f9', fontWeight: 700 }}>
+                <td style={tdStyle}>الإجمالي</td>
+                <td style={{ ...tdStyle, color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
+                  {fmt(sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque)} ₪
+                </td>
+                <td style={{ ...tdStyle, color: '#555' }}>
+                  {fmt((parseFloat(actualCash)||0) + (parseFloat(actualVisa)||0) + (parseFloat(actualCheck)||0))} ₪
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
-        {/* Actual amount input + calculate button */}
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div className="mi-filter-field">
-            <span className="mi-filter-label">المبلغ الفعلي في الصندوق ₪</span>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              className="mi-date-input"
-              style={{ width: '185px' }}
-              placeholder="0.00"
-              value={actualAmount}
-              onChange={e => { setActualAmount(e.target.value); setMatchOk(false) }}
-              onFocus={e => { if (e.target.value === '0') setActualAmount('') }}
-              onBlur={e => { if (!e.target.value) setActualAmount('0') }}
-              onKeyDown={e => e.key === 'Enter' && handleCalcDiff()}
-            />
-          </div>
-          <button
-            className="btn btn-primary"
-            disabled={!actualAmount.trim()}
-            onClick={handleCalcDiff}
-          >
-            احسب الفرق
-          </button>
-        </div>
+        <button
+          className="btn btn-primary"
+          disabled={actualCash.trim() === '' && actualVisa.trim() === '' && actualCheck.trim() === ''}
+          onClick={handleCalcDiff}
+        >
+          احسب الفرق
+        </button>
 
         {/* Match result */}
         {matchOk && (
@@ -453,8 +576,24 @@ export default function CashLedger() {
                     </span>
                   </td>
                   <td>{tx.sourceLabel}</td>
-                  <td className={tx.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'}>
-                    {tx.type === 'incoming' ? '+' : '−'}{fmt(tx.amount)} ₪
+                  <td>
+                    <div className={tx.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'} style={{ fontWeight: 700 }}>
+                      {tx.type === 'incoming' ? '+' : '−'}{fmt(tx.amount)} ₪
+                    </div>
+                    {tx.breakdown.length > 1 && (
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.3rem' }}>
+                        {tx.breakdown.map((b, bi) => (
+                          <span key={bi} style={{
+                            fontSize: '0.75rem', padding: '1px 7px', borderRadius: '10px',
+                            background: (METHOD_COLORS[b.method] ?? '#999') + '22',
+                            color: METHOD_COLORS[b.method] ?? '#999',
+                            fontWeight: 600, whiteSpace: 'nowrap',
+                          }}>
+                            {METHOD_LABELS[b.method] ?? b.method} {fmt(b.amount)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="mi-amount">{fmt(tx.balanceAfter)} ₪</td>
                   <td>{tx.notes || '—'}</td>
@@ -464,57 +603,6 @@ export default function CashLedger() {
           </table>
         </div>
         <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>
-      </div>
-
-      {/* ════ الشيكات المستحقة قريباً ════ */}
-      <div className="mi-card">
-        <div className="mi-filters pd-filter-bar" style={{ justifyContent: 'space-between' }}>
-          <h2 className="mi-section-title" style={{ marginBottom: 0 }}>الشيكات المستحقة قريباً</h2>
-          <div className="pd-type-tabs">
-            {([[7, '7 أيام'], [14, '14 يوم'], [30, '30 يوم']] as const).map(([val, label]) => (
-              <button
-                key={val}
-                className={`pd-tab${chequeDays === val ? ' pd-tab-active' : ''}`}
-                onClick={() => setChequeDays(val)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mi-table-wrap">
-          <table className="mi-table">
-            <thead>
-              <tr>
-                <th>الطرف</th>
-                <th>المصدر</th>
-                <th>رقم الشيك</th>
-                <th>البنك</th>
-                <th>المبلغ</th>
-                <th>تاريخ الاستحقاق</th>
-                <th>الأيام المتبقية</th>
-              </tr>
-            </thead>
-            <tbody>
-              {chequesLoading ? (
-                <tr><td colSpan={7} className="mi-empty-row">جارٍ تحميل الشيكات...</td></tr>
-              ) : cheques.length === 0 ? (
-                <tr><td colSpan={7} className="mi-empty-row">لا توجد شيكات مستحقة خلال هذه الفترة</td></tr>
-              ) : cheques.map((c, i) => (
-                <tr key={`${c.source}-${c.chequeNumber}-${i}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
-                  <td>{c.partyName}</td>
-                  <td><span className={CHEQUE_SOURCE_CLS[c.source]}>{CHEQUE_SOURCE_LABELS[c.source]}</span></td>
-                  <td>{c.chequeNumber}</td>
-                  <td>{c.bankName}</td>
-                  <td className="mi-amount">{fmt(c.amount)} ₪</td>
-                  <td>{c.cashDate}</td>
-                  <td><span className={chequeDaysCls(c.daysRemaining)}>{c.daysRemaining} يوم</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
       </div>
 
       {/* ════ سجل الإحصاءات اليومية ════ */}
@@ -527,7 +615,10 @@ export default function CashLedger() {
               <tr>
                 <th>التاريخ</th>
                 <th>إجمالي النظام ₪</th>
-                <th>المبلغ الفعلي ₪</th>
+                <th>كاش ₪</th>
+                <th>فيزا ₪</th>
+                <th>شيك ₪</th>
+                <th>الإجمالي الفعلي ₪</th>
                 <th>الفرق ₪</th>
                 <th>الحالة</th>
                 <th>الإجراءات</th>
@@ -535,13 +626,16 @@ export default function CashLedger() {
             </thead>
             <tbody>
               {auditsLoading ? (
-                <tr><td colSpan={6} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">جارٍ التحميل...</td></tr>
               ) : auditRecords.length === 0 ? (
-                <tr><td colSpan={6} className="mi-empty-row">لا توجد إحصاءات مسجّلة بعد</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">لا توجد إحصاءات مسجّلة بعد</td></tr>
               ) : auditRecords.map((rec, i) => (
                 <tr key={rec.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                   <td>{rec.audit_date}</td>
                   <td className="mi-amount">{fmt(rec.system_total)} ₪</td>
+                  <td className="mi-amount">{fmt(rec.actual_cash  || 0)} ₪</td>
+                  <td className="mi-amount">{fmt(rec.actual_visa  || 0)} ₪</td>
+                  <td className="mi-amount">{fmt(rec.actual_check || 0)} ₪</td>
                   <td className="mi-amount">{fmt(rec.actual_amount)} ₪</td>
                   <td style={{ fontWeight: 700, color: diffColor(rec.difference) }}>
                     {rec.difference > 0 ? '+' : rec.difference < 0 ? '−' : ''}{fmt(rec.difference)} ₪
@@ -586,7 +680,7 @@ export default function CashLedger() {
                   <span>{detailsTx.sourceLabel}</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المبلغ</span>
+                  <span className="mi-detail-label">المبلغ الإجمالي</span>
                   <span className={detailsTx.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'}>
                     {detailsTx.type === 'incoming' ? '+' : '−'}{fmt(detailsTx.amount)} ₪
                   </span>
@@ -595,6 +689,25 @@ export default function CashLedger() {
                   <span className="mi-detail-label">الرصيد بعد العملية</span>
                   <span className="mi-amount">{fmt(detailsTx.balanceAfter)} ₪</span>
                 </div>
+                {detailsTx.breakdown.length > 0 && (
+                  <div className="mi-detail-item mi-detail-full">
+                    <span className="mi-detail-label">تفصيل وسائل الدفع</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.2rem' }}>
+                      {detailsTx.breakdown.map((b, i) => (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span style={{
+                            width: '8px', height: '8px', borderRadius: '50%',
+                            background: METHOD_COLORS[b.method] ?? '#999', flexShrink: 0,
+                          }} />
+                          <span style={{ fontWeight: 600, color: METHOD_COLORS[b.method] ?? '#555', minWidth: '40px' }}>
+                            {METHOD_LABELS[b.method] ?? b.method}
+                          </span>
+                          <span style={{ fontWeight: 700 }}>{fmt(b.amount)} ₪</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {detailsTx.notes && (
                   <div className="mi-detail-item mi-detail-full">
                     <span className="mi-detail-label">ملاحظات</span>
@@ -621,28 +734,49 @@ export default function CashLedger() {
             </div>
             <div className="mi-modal-body">
               <div className="mi-form-grid">
-                <div className="mi-field">
+                <div className="mi-field mi-field-full">
                   <span>إجمالي النظام ₪</span>
                   <div style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontWeight: 600 }}>
                     {fmt(editAudit.system_total)} ₪
                   </div>
                 </div>
                 <label className="mi-field">
-                  <span>المبلغ الفعلي في الصندوق ₪</span>
+                  <span>كاش ₪</span>
                   <input type="number" min={0} step="0.01"
-                    value={editActual}
-                    onChange={e => setEditActual(e.target.value)}
+                    value={editCash}
+                    onChange={e => setEditCash(e.target.value)}
                     className="mi-td-input"
                     autoFocus />
                 </label>
-                {editActual.trim() && !isNaN(parseFloat(editActual)) && (
-                  <div className="mi-field mi-field-full">
-                    <span>الفرق</span>
-                    <div style={{ fontWeight: 700, color: diffColor(parseFloat(editActual) - editAudit.system_total) }}>
-                      {(() => { const d = parseFloat(editActual) - editAudit.system_total; return `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmt(d)} ₪` })()}
+                <label className="mi-field">
+                  <span>فيزا ₪</span>
+                  <input type="number" min={0} step="0.01"
+                    value={editVisa}
+                    onChange={e => setEditVisa(e.target.value)}
+                    className="mi-td-input" />
+                </label>
+                <label className="mi-field">
+                  <span>شيك ₪</span>
+                  <input type="number" min={0} step="0.01"
+                    value={editCheck}
+                    onChange={e => setEditCheck(e.target.value)}
+                    className="mi-td-input" />
+                </label>
+                {(() => {
+                  const total = (parseFloat(editCash) || 0) + (parseFloat(editVisa) || 0) + (parseFloat(editCheck) || 0)
+                  const d = total - editAudit.system_total
+                  return (
+                    <div className="mi-field mi-field-full">
+                      <span>الإجمالي الفعلي / الفرق</span>
+                      <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600 }}>{fmt(total)} ₪</span>
+                        <span style={{ fontWeight: 700, color: diffColor(d) }}>
+                          {d > 0 ? '+' : d < 0 ? '−' : ''}{fmt(d)} ₪
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
             </div>
             <div className="mi-modal-footer">
@@ -674,25 +808,42 @@ export default function CashLedger() {
               <button className="mi-modal-close" onClick={() => setDiffModal(null)}>✕</button>
             </div>
             <div className="mi-modal-body">
-              <div className="mi-detail-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">المبلغ الفعلي</span>
-                  <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{fmt(diffModal.actual)} ₪</span>
-                </div>
-                <div className="mi-detail-item">
-                  <span className="mi-detail-label">إجمالي النظام</span>
-                  <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>{fmt(diffModal.systemTotal)} ₪</span>
-                </div>
-                <div className="mi-detail-item mi-detail-full">
-                  <span className="mi-detail-label">الفرق</span>
-                  <span style={{ fontWeight: 700, fontSize: '1.35rem', color: diffColor(diffModal.diff) }}>
-                    {diffModal.diff > 0 ? '+' : '−'}{fmt(diffModal.diff)} ₪
-                  </span>
-                </div>
-              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem', marginBottom: '1rem' }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f9' }}>
+                    <th style={thStyle}>وسيلة الدفع</th>
+                    <th style={thStyle}>النظام ₪</th>
+                    <th style={thStyle}>الفعلي ₪</th>
+                    <th style={thStyle}>الفرق ₪</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([
+                    { label: 'كاش',  color: '#2ECC71', sys: diffModal.sysCash,  act: diffModal.actCash,  diff: diffModal.diffCash  },
+                    { label: 'فيزا', color: '#3498DB', sys: diffModal.sysVisa,  act: diffModal.actVisa,  diff: diffModal.diffVisa  },
+                    { label: 'شيك',  color: '#9B59B6', sys: diffModal.sysCheck, act: diffModal.actCheck, diff: diffModal.diffCheck },
+                  ] as const).map(row => (
+                    <tr key={row.label}>
+                      <td style={tdStyle}><span style={{ color: row.color, fontWeight: 600 }}>● {row.label}</span></td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{fmt(row.sys)} ₪</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{fmt(row.act)} ₪</td>
+                      <td style={{ ...tdStyle, fontWeight: 700, color: diffColor(row.diff) }}>
+                        {row.diff > 0 ? '+' : row.diff < 0 ? '−' : ''}{fmt(row.diff)} ₪
+                      </td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#f1f5f9', fontWeight: 700 }}>
+                    <td style={tdStyle}>الإجمالي</td>
+                    <td style={tdStyle}>{fmt(diffModal.sysCash + diffModal.sysVisa + diffModal.sysCheck)} ₪</td>
+                    <td style={tdStyle}>{fmt(diffModal.actCash + diffModal.actVisa + diffModal.actCheck)} ₪</td>
+                    <td style={{ ...tdStyle, color: diffColor(diffModal.diffCash + diffModal.diffVisa + diffModal.diffCheck) }}>
+                      {(() => { const d = diffModal.diffCash + diffModal.diffVisa + diffModal.diffCheck; return `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmt(d)} ₪` })()}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
               <div style={{
-                marginTop: '1rem', padding: '0.75rem 1rem',
-                background: '#FEF3C7', borderRadius: '8px',
+                padding: '0.75rem 1rem', background: '#FEF3C7', borderRadius: '8px',
                 color: '#B45309', fontSize: '0.92rem', fontWeight: 600, textAlign: 'center',
               }}>
                 ⚠ يوجد فرق في المبلغ، يرجى مراجعة عمليات اليوم
@@ -702,7 +853,7 @@ export default function CashLedger() {
               <button
                 className="btn btn-primary"
                 disabled={saving}
-                onClick={() => handleSaveAudit(diffModal.systemTotal, diffModal.actual, diffModal.diff)}
+                onClick={() => handleSaveAudit(diffModal.actCash, diffModal.actVisa, diffModal.actCheck)}
               >
                 {saving ? 'جارٍ الحفظ...' : 'تثبيت الرقم'}
               </button>

@@ -35,7 +35,8 @@ export default function Settings() {
     setImporting(true)
     try {
       await dbService.backup.import()
-      // التطبيق سيُعاد تشغيله تلقائياً — هذا الكود لن يُنفَّذ عادةً
+      // إذا وصلنا هنا = المستخدم ألغى اختيار الملف (عند النجاح الفعلي يُعاد تشغيل التطبيق)
+      setImporting(false)
     } catch (err) {
       showError('فشل استيراد النسخة الاحتياطية', err)
       setImporting(false)
