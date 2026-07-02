@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import Fuse from 'fuse.js'
-import { useGarage, SaleRecord, SaleItem, SaleStatus, PayMethod, PaymentRow, WarrantyPeriodUnit } from '../store/GarageContext'
+import { useGarage, SaleRecord, SaleItem, SaleStatus, PayMethod, PaymentRow, WarrantyPeriodUnit, DiscountType } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import type { VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
    Local Types
@@ -44,7 +45,43 @@ function warrantyLabelDS(raw: string | null | undefined): string {
   return raw || '—'
 }
 
-const emptyForm = () => ({ customerName: '', phone: '', saleDate: today(), warrantyValue: '1', warrantyUnit: '' as WarrantyPeriodUnit | '', generalNotes: '' })
+/* تفكيك خصم الفاتورة للعرض (مودال التفاصيل/الإيصال): total مخزَّن بعد الخصم.
+   itemsSubtotal يُمرَّر عند توفّر البنود (getOne)، وإلا يُشتق المجموع قبل الخصم
+   من total والخصم (صفوف الجدول من GarageContext لا تحمل البنود). */
+type DiscountBreakdown = { subtotal: number | null; label: string }
+function discountBreakdownDS(
+  total: number, type: DiscountType | null | undefined, value: number | undefined,
+  itemsSubtotal: number | null,
+): DiscountBreakdown | null {
+  const v = value ?? 0
+  if (!type || v <= 0) return null
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const fmtN = (n: number) => n.toLocaleString('en-US')
+  if (type === 'fixed') {
+    return { subtotal: round2(itemsSubtotal ?? total + v), label: `${fmtN(v)} ₪` }
+  }
+  const subtotal = itemsSubtotal ?? (v < 100 ? (total * 100) / (100 - v) : null)
+  const amount = subtotal != null ? round2(subtotal - total) : null
+  return {
+    subtotal: subtotal != null ? round2(subtotal) : null,
+    label: `${v}%${amount != null ? ` (${fmtN(amount)} ₪)` : ''}`,
+  }
+}
+
+/* الضريبة (VAT) للعرض فقط (derived): تُحسب على المجموع بعد الخصم (total المخزَّن).
+   تُرجع null عندما تكون الضريبة معطّلة أو النسبة ≤ 0 — فلا يظهر أي شيء متعلق بها. */
+type VatBreakdown = { rate: number; tax: number; grand: number }
+function vatBreakdown(base: number, vat: VatSettings | null): VatBreakdown | null {
+  if (!vat || !vat.enabled || vat.rate <= 0) return null
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const tax = round2(base * vat.rate / 100)
+  return { rate: vat.rate, tax, grand: round2(base + tax) }
+}
+
+const emptyForm = () => ({
+  customerName: '', phone: '', saleDate: today(), warrantyValue: '1', warrantyUnit: '' as WarrantyPeriodUnit | '', generalNotes: '',
+  discountType: '' as '' | DiscountType, discountValue: '',
+})
 
 const newFormItem  = (): FormItem    => ({ id: nextItemId++, name: '', qty: 1, unitPrice: 0, notes: '' })
 const emptyPayRow  = (): PaymentRow  => ({ id: nextPayId++, method: 'cash', amount: 0, checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '' })
@@ -118,6 +155,10 @@ export default function DirectSales() {
   const [warnInv,        setWarnInv]        = useState<SaleRecord | null>(null)
   const [formPayRows,    setFormPayRows]    = useState<PaymentRow[]>([emptyPayRow()])
 
+  /* إعدادات الضريبة (VAT) — تُحمَّل مرة واحدة؛ null افتراضياً فلا يظهر أي شيء متعلق بها */
+  const [vat, setVat] = useState<VatSettings | null>(null)
+  useEffect(() => { dbService.vat.getSettings().then(setVat).catch(() => { /* تجاهل — تبقى الضريبة مخفية */ }) }, [])
+
   /* Draft */
   useEffect(() => {
     try {
@@ -167,7 +208,9 @@ export default function DirectSales() {
         saleDate: record.saleDate,
         warrantyValue: wParsed ? String(wParsed.value) : '1',
         warrantyUnit: wParsed ? wParsed.unit : '' as WarrantyPeriodUnit | '',
-        generalNotes: record.notes })
+        generalNotes: record.notes,
+        discountType: record.discountType ?? '',
+        discountValue: record.discountType ? String(record.discountValue ?? 0) : '' })
       const editItems: FormItem[] = record.items.length > 0
         ? record.items.map(it => ({ id: nextItemId++, name: it.name, qty: it.quantity, unitPrice: it.unitPrice, notes: it.notes }))
         : [newFormItem()]
@@ -194,7 +237,20 @@ export default function DirectSales() {
   const formPayErr = !editingInvoice && !formPayRows.some(r => r.amount > 0 || r.method === 'debt')
     ? 'يجب تحديد طريقة دفع وإدخال مبلغ'
     : ''
-  const hasErrors = !!nameErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr) || !!formPayErr
+
+  /* ── خصم الفاتورة + العرض الحي للإجمالي بعد الخصم ── */
+  const discountValueNum = Number(form.discountValue || 0)
+  const discountErr = !form.discountType ? ''
+    : discountValueNum < 0 ? 'قيمة الخصم لا يمكن أن تكون سالبة'
+    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم يجب أن تكون بين 0 و 100'
+    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم لا يمكن أن تتجاوز مجموع البنود'
+    : ''
+  const discountAmount = form.discountType && !discountErr
+    ? (form.discountType === 'percentage' ? formTotal * discountValueNum / 100 : discountValueNum)
+    : 0
+  const formTotalAfterDiscount = formTotal - discountAmount
+
+  const hasErrors = !!nameErr || !!discountErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr) || !!formPayErr
 
   const handleSave = async () => {
     setSubmitAttempted(true)
@@ -204,22 +260,28 @@ export default function DirectSales() {
     const isNew = !editingInvoice
     const actualPayRows = isNew ? formPayRows.filter(r => r.method !== 'debt' && r.amount > 0) : []
     const amountPaid    = isNew ? actualPayRows.reduce((s, r) => s + r.amount, 0) : (editingInvoice?.amountPaid ?? 0)
-    const amountRemaining = formTotal - amountPaid
-    const status: SaleStatus = amountPaid >= formTotal - 0.001 ? 'paid' : amountPaid <= 0.001 ? 'full_debt' : 'partial_debt'
+    const amountRemaining = formTotalAfterDiscount - amountPaid
+    const status: SaleStatus = amountPaid >= formTotalAfterDiscount - 0.001 ? 'paid' : amountPaid <= 0.001 ? 'full_debt' : 'partial_debt'
     const warrantyJson = form.warrantyUnit
       ? JSON.stringify({ value: Math.max(1, parseInt(form.warrantyValue) || 1), unit: form.warrantyUnit })
       : ''
     const saleData: SaleRecord = {
       id: editingInvoice?.id ?? 0,
       customerName: form.customerName, phone, saleDate: form.saleDate,
-      warranty: warrantyJson, notes: form.generalNotes, total: formTotal,
+      warranty: warrantyJson, notes: form.generalNotes,
+      discountType: form.discountType || null,
+      discountValue: form.discountType ? discountValueNum : 0,
+      total: formTotalAfterDiscount,
       amountPaid, amountRemaining, status,
       items: newItems, payments: editingInvoice?.payments ?? [],
     }
     try {
       if (editingInvoice) {
-        await dbService.directSale.update(saleData)
-        await dbService.directSale.updateItems(editingInvoice.id, newItems)
+        // الخصم يُمرَّر مع البنود الجديدة في updateItems (يُطبَّقان ذرّياً معاً)؛
+        // undefined هنا = لا تلمس الخصم في قناة update كي لا يُقيَّم مقابل البنود القديمة
+        await dbService.directSale.update({ ...saleData, discountType: undefined, discountValue: undefined })
+        await dbService.directSale.updateItems(editingInvoice.id, newItems,
+          { type: form.discountType || null, value: form.discountType ? discountValueNum : 0 })
       } else {
         await dbService.directSale.add(saleData, actualPayRows)
       }
@@ -309,7 +371,24 @@ export default function DirectSales() {
           <tbody>${rows}</tbody>
         </table>` : ''}
         <div class="detail-grid" style="margin-top:16px;">
-          <div class="detail-item"><label>الإجمالي</label><span>${fmt(full.total)} ₪</span></div>
+          ${(() => {
+            const itemsSubtotal = full.items.length
+              ? full.items.reduce((s, it) => s + it.quantity * it.unitPrice, 0) : null
+            const bd = discountBreakdownDS(full.total, full.discountType, full.discountValue, itemsSubtotal)
+            return bd ? `
+          <div class="detail-item"><label>المجموع قبل الخصم</label><span>${bd.subtotal != null ? `${fmt(bd.subtotal)} ₪` : '—'}</span></div>
+          <div class="detail-item"><label>الخصم</label><span class="amount-out">−${bd.label}</span></div>
+          <div class="detail-item"><label>الإجمالي بعد الخصم</label><span>${fmt(full.total)} ₪</span></div>`
+            : `
+          <div class="detail-item"><label>الإجمالي</label><span>${fmt(full.total)} ₪</span></div>`
+          })()}
+          ${(() => {
+            const vb = vatBreakdown(full.total, vat)
+            return vb ? `
+          <div class="detail-item"><label>المجموع قبل الضريبة</label><span>${fmt(full.total)} ₪</span></div>
+          <div class="detail-item"><label>الضريبة (${vb.rate}%)</label><span>${fmt(vb.tax)} ₪</span></div>
+          <div class="detail-item"><label>الإجمالي شامل الضريبة</label><span class="amount-in">${fmt(vb.grand)} ₪</span></div>` : ''
+          })()}
           <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(full.amountPaid)} ₪</span></div>
           <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(full.amountRemaining)} ₪</span></div>
           <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[full.status]}</span></div>
@@ -396,7 +475,42 @@ export default function DirectSales() {
           </tbody>
         </table>
       </div>
-      <div className="mi-total-row">الإجمالي: <strong>{fmt(formTotal)} ₪</strong></div>
+      <div className="mi-total-row">المجموع قبل الخصم: <strong>{fmt(formTotal)} ₪</strong></div>
+      <div className="mi-form-grid" style={{ marginTop: '0.5rem' }}>
+        <label className="mi-field">
+          <span>الخصم</span>
+          <select className="pay-select" value={form.discountType || ''}
+            onChange={e => setForm(prev => ({ ...prev, discountType: e.target.value as '' | DiscountType, discountValue: e.target.value ? prev.discountValue : '' }))}>
+            <option value="">بدون خصم</option>
+            <option value="fixed">مبلغ ثابت (₪)</option>
+            <option value="percentage">نسبة مئوية (%)</option>
+          </select>
+        </label>
+        {form.discountType && (
+          <label className="mi-field">
+            <span>{form.discountType === 'percentage' ? 'نسبة الخصم (%)' : 'قيمة الخصم (₪)'}</span>
+            <input type="number" min={0} max={form.discountType === 'percentage' ? 100 : undefined}
+              value={form.discountValue} placeholder="0"
+              className={errCls(submitAttempted && !!discountErr)}
+              onChange={e => setField('discountValue', e.target.value)} />
+            {showErr(discountErr)}
+          </label>
+        )}
+        <div className="mi-field">
+          <span>الإجمالي بعد الخصم</span>
+          <div style={{
+            padding: '8px 12px', background: '#f0fdf4', border: '1px solid #27ae60',
+            borderRadius: '6px', fontWeight: 700, fontSize: '16px', color: '#27ae60',
+          }}>
+            {fmt(formTotalAfterDiscount)} ₪
+            {discountAmount > 0 && (
+              <span style={{ fontSize: '11px', fontWeight: 400, color: '#888', marginRight: '8px' }}>
+                (الخصم: −{fmt(discountAmount)} ₪)
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
 
       {!editingInvoice && (
         <>
@@ -440,8 +554,8 @@ export default function DirectSales() {
           <button className="btn btn-secondary pay-add-btn" onClick={addFormPayRow}>+ إضافة طريقة دفع</button>
           <div className="pay-summary" style={{ marginTop: '0.75rem' }}>
             <div className="pay-summary-row">
-              <span>إجمالي الفاتورة</span>
-              <strong>{fmt(formTotal)} ₪</strong>
+              <span>إجمالي الفاتورة {discountAmount > 0 ? '(بعد الخصم)' : ''}</span>
+              <strong>{fmt(formTotalAfterDiscount)} ₪</strong>
             </div>
             <div className="pay-summary-row">
               <span>إجمالي المدفوع</span>
@@ -452,7 +566,7 @@ export default function DirectSales() {
             <div className="pay-summary-row pay-summary-last">
               <span>المتبقي</span>
               <strong className="pay-due">
-                {fmt(Math.max(0, formTotal - formPayRows.filter(r => r.method !== 'debt').reduce((s, r) => s + (r.amount || 0), 0)))} ₪
+                {fmt(Math.max(0, formTotalAfterDiscount - formPayRows.filter(r => r.method !== 'debt').reduce((s, r) => s + (r.amount || 0), 0)))} ₪
               </strong>
             </div>
           </div>
@@ -603,7 +717,43 @@ export default function DirectSales() {
                   </tbody>
                 </table>
               </div>
-              <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>الإجمالي الكلي: <strong>{fmt(detailsInvoice.total)} ₪</strong></div>
+              {(() => {
+                const itemsSubtotal = detailsInvoice.items.length
+                  ? detailsInvoice.items.reduce((s, it) => s + it.quantity * it.unitPrice, 0) : null
+                const bd = discountBreakdownDS(detailsInvoice.total, detailsInvoice.discountType, detailsInvoice.discountValue, itemsSubtotal)
+                return bd ? (
+                  <>
+                    <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                      المجموع قبل الخصم: <strong>{bd.subtotal != null ? `${fmt(bd.subtotal)} ₪` : '—'}</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الخصم: <strong>−{bd.label}</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الإجمالي بعد الخصم: <strong>{fmt(detailsInvoice.total)} ₪</strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>الإجمالي الكلي: <strong>{fmt(detailsInvoice.total)} ₪</strong></div>
+                )
+              })()}
+              {(() => {
+                const vb = vatBreakdown(detailsInvoice.total, vat)
+                if (!vb) return null
+                return (
+                  <>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      المجموع قبل الضريبة: <strong>{fmt(detailsInvoice.total)} ₪</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الضريبة ({vb.rate}%): <strong>{fmt(vb.tax)} ₪</strong>
+                    </div>
+                    <div className="mi-total-row" style={{ marginBottom: 0 }}>
+                      الإجمالي شامل الضريبة: <strong>{fmt(vb.grand)} ₪</strong>
+                    </div>
+                  </>
+                )
+              })()}
               <LinkedOpsSection phone={detailsInvoice.phone} id={detailsInvoice.id} />
             </div>
             <div className="mi-modal-footer">

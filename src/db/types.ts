@@ -3,6 +3,9 @@
 export type InvoiceType = 'maintenance' | 'direct_sale'
 export type PaymentMethod = 'cash' | 'cheque' | 'visa' | 'debt'
 
+// خصم على مستوى الفاتورة كاملة (صيانة/بيع مباشر): مبلغ ثابت أو نسبة مئوية، NULL = بدون خصم
+export type DiscountType = 'fixed' | 'percentage'
+
 // ── Payment ───────────────────────────────────────────────────────────────────
 
 export interface PaymentInput {
@@ -59,6 +62,8 @@ export interface MaintenanceInvoiceInput {
   date_received: string
   warranty?: string
   notes?: string
+  discount_type?: DiscountType | null
+  discount_value?: number
   items: InvoiceItemInput[]
   payments: PaymentInput[]
 }
@@ -76,6 +81,8 @@ export interface MaintenanceInvoiceRow {
   status: 'in_progress' | 'delivered'
   warranty: string | null
   notes: string | null
+  discount_type: DiscountType | null
+  discount_value: number
   total_amount: number
   amount_paid: number
   amount_remaining: number
@@ -108,6 +115,9 @@ export interface DirectSaleInput {
   sale_date: string
   warranty?: string
   notes?: string
+  // undefined = لا تغيير على الخصم المخزَّن (في directSale:update)، null = إزالة الخصم
+  discount_type?: DiscountType | null
+  discount_value?: number
   items: InvoiceItemInput[]
   payments: PaymentInput[]
 }
@@ -120,6 +130,8 @@ export interface DirectSaleRow {
   sale_date: string
   warranty: string | null
   notes: string | null
+  discount_type: DiscountType | null
+  discount_value: number
   total_amount: number
   amount_paid: number
   amount_remaining: number
@@ -516,6 +528,13 @@ export interface PasswordVerifyResult {
 export interface AutoLockSettings {
   enabled: boolean
   minutes: number
+}
+
+// ── الضريبة (VAT) — اختيارية، قابلة للتعطيل الكامل، لا تُخزَّن ضمن total_amount ──
+// معطّلة افتراضياً؛ عند التفعيل تُحسب وقت العرض فقط (derived) في المودالات والإيصالات.
+export interface VatSettings {
+  enabled: boolean
+  rate: number // نسبة مئوية (مثلاً 16 = الضريبة الرسمية في فلسطين)
 }
 
 export interface ActivityLogRow {

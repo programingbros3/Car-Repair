@@ -1,7 +1,9 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
+import { applyDiscount } from './discount'
 import type {
+  DiscountType,
   DirectSaleInput,
   DirectSaleRow,
   DirectSaleDetail,
@@ -73,7 +75,9 @@ function insertPayments(
 export function addDirectSaleInvoice(input: DirectSaleInput): number {
   const db = getDB()
 
-  const total_amount = calcTotal(input.items)
+  const discount_type = input.discount_type ?? null
+  const discount_value = discount_type ? (input.discount_value ?? 0) : 0
+  const total_amount = applyDiscount(calcTotal(input.items), discount_type, discount_value)
   const amount_paid = calcPaid(input.payments)
   const amount_remaining = total_amount - amount_paid
 
@@ -82,10 +86,10 @@ export function addDirectSaleInvoice(input: DirectSaleInput): number {
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO direct_sale_invoices
         (invoice_number, customer_name, customer_phone, sale_date, warranty, notes,
-         total_amount, amount_paid, amount_remaining)
+         discount_type, discount_value, total_amount, amount_paid, amount_remaining)
       VALUES
         (@invoice_number, @customer_name, @customer_phone, @sale_date, @warranty, @notes,
-         @total_amount, @amount_paid, @amount_remaining)
+         @discount_type, @discount_value, @total_amount, @amount_paid, @amount_remaining)
     `).run({
       invoice_number,
       customer_name: input.customer_name,
@@ -93,6 +97,8 @@ export function addDirectSaleInvoice(input: DirectSaleInput): number {
       sale_date: input.sale_date,
       warranty: input.warranty ?? null,
       notes: input.notes ?? null,
+      discount_type,
+      discount_value,
       total_amount,
       amount_paid,
       amount_remaining,
@@ -146,9 +152,37 @@ export function getDirectSaleInvoices(filters: DirectSaleFilters = {}): DirectSa
   `).all(...params) as DirectSaleRow[]
 }
 
-// ─── Update items for an existing direct sale invoice ────────────────────────
+// ─── Recalculate total (after discount) + remaining from current items ───────
+// تُستدعى بعد أي تغيير على البنود أو على خصم الفاتورة (updateItems هنا،
+// وقناة directSale:update في ipc-handlers.ts عند تعديل الخصم).
 
-export function updateDirectSaleItems(invoiceId: number, items: DirectSaleItemInput[]): void {
+export function recalcDirectSaleTotals(invoiceId: number): void {
+  const db = getDB()
+  const itemRows = db.prepare(
+    `SELECT quantity, unit_price FROM invoice_items WHERE invoice_id = ? AND invoice_type = 'direct_sale'`,
+  ).all(invoiceId) as { quantity: number; unit_price: number }[]
+  const subtotal = itemRows.reduce((sum, r) => sum + r.quantity * r.unit_price, 0)
+
+  const row = db.prepare(
+    `SELECT amount_paid, discount_type, discount_value FROM direct_sale_invoices WHERE id = ?`,
+  ).get(invoiceId) as { amount_paid: number; discount_type: DiscountType | null; discount_value: number } | undefined
+
+  const total = applyDiscount(subtotal, row?.discount_type, row?.discount_value)
+  db.prepare(
+    `UPDATE direct_sale_invoices SET total_amount = ?, amount_remaining = ? WHERE id = ?`,
+  ).run(total, total - (row?.amount_paid ?? 0), invoiceId)
+}
+
+// ─── Update items for an existing direct sale invoice ────────────────────────
+// discount (اختياري): يُكتب داخل نفس الـ transaction قبل إعادة الحساب — نموذج
+// التعديل في DirectSales.tsx يمرّر البنود الجديدة والخصم الجديد معاً كي لا
+// يُقيَّم الخصم الجديد مقابل البنود القديمة (أو العكس) بينهما.
+
+export function updateDirectSaleItems(
+  invoiceId: number,
+  items: DirectSaleItemInput[],
+  discount?: { type: DiscountType | null; value: number },
+): void {
   const db = getDB()
   db.transaction(() => {
     db.prepare(
@@ -164,15 +198,13 @@ export function updateDirectSaleItems(invoiceId: number, items: DirectSaleItemIn
       stmt.run(invoiceId, item.item_name, item.quantity, item.unit_price, item.notes ?? null)
     }
 
-    const total = items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
-    const row = db.prepare(
-      `SELECT amount_paid FROM direct_sale_invoices WHERE id = ?`,
-    ).get(invoiceId) as { amount_paid: number } | undefined
-    const amountPaid = row?.amount_paid ?? 0
+    if (discount !== undefined) {
+      db.prepare(
+        `UPDATE direct_sale_invoices SET discount_type = ?, discount_value = ? WHERE id = ?`,
+      ).run(discount.type, discount.type ? discount.value : 0, invoiceId)
+    }
 
-    db.prepare(
-      `UPDATE direct_sale_invoices SET total_amount = ?, amount_remaining = ? WHERE id = ?`,
-    ).run(total, total - amountPaid, invoiceId)
+    recalcDirectSaleTotals(invoiceId)
   })()
 }
 

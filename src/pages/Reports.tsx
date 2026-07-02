@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { printPdf } from '../utils/printPdf'
 import { exportToCsv } from '../utils/exportCsv'
+import { exportToXlsx } from '../utils/exportXlsx'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type {
@@ -366,6 +367,83 @@ export default function Reports() {
     }
   }
 
+  /* ── Export Excel (.xlsx) — إضافة موازية لتصدير CSV بنفس البيانات ── */
+  const handleExportXlsx = () => {
+    if (tab === 'daily') {
+      if (!daily || daily.entries.length === 0) return
+      exportToXlsx(
+        `تقرير-يومي-${day}.xlsx`,
+        ['التاريخ', 'النوع', 'المصدر', 'المبلغ', 'ملاحظات'],
+        daily.entries.map(e => [
+          e.transaction_date,
+          e.amount_in > 0 ? 'وارد' : 'صادر',
+          refLabel(e.reference_type),
+          e.amount_in > 0 ? e.amount_in : e.amount_out,
+          e.notes ?? '',
+        ]),
+        'تقرير يومي',
+      )
+    } else if (tab === 'monthly') {
+      if (!monthly || monthly.days.length === 0) return
+      exportToXlsx(
+        `تقرير-شهري-${month}.xlsx`,
+        ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
+        monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net]),
+        'تقرير شهري',
+      )
+    } else if (tab === 'yearly') {
+      if (!yearly) return
+      exportToXlsx(
+        `تقرير-سنوي-${year}.xlsx`,
+        ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
+        yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net]),
+        'تقرير سنوي',
+      )
+    } else if (tab === 'debts_aging') {
+      if (!sortedAging.length) return
+      exportToXlsx(
+        `أعمار-الديون-${today()}.xlsx`,
+        ['الطرف', 'النوع', 'التاريخ', 'الإجمالي', 'المتبقي', 'عدد الأيام', 'الشريحة العمرية'],
+        sortedAging.map(d => [
+          d.party_name,
+          AGING_KIND_LABELS[d.kind],
+          d.invoice_date,
+          d.total_amount,
+          d.amount_remaining,
+          d.days_old,
+          AGING_BUCKET_LABELS[d.bucket],
+        ]),
+        'أعمار الديون',
+      )
+    } else if (tab === 'debts') {
+      if (!debts) return
+      exportToXlsx(
+        `ديون-الزبائن-${today()}.xlsx`,
+        ['اسم الزبون', 'المصدر', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        debts.customer_debts.map(d => [
+          d.customer_name,
+          d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر',
+          d.total_amount,
+          d.amount_paid,
+          d.amount_remaining,
+        ]),
+        'ديون الزبائن',
+      )
+      exportToXlsx(
+        `ديون-الموردين-${today()}.xlsx`,
+        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        debts.supplier_debts.map(d => [
+          d.supplier_name,
+          d.supplier_phone ?? '',
+          d.total_amount,
+          d.amount_paid,
+          d.amount_remaining,
+        ]),
+        'ديون الموردين',
+      )
+    }
+  }
+
   /* القيم المعروضة في بطاقات الإحصائيات للفترة الحالية */
   const periodTotals = useMemo(() => {
     if (tab === 'daily')   return daily   ? { in: daily.total_in,   out: daily.total_out,   net: daily.net }   : null
@@ -384,7 +462,10 @@ export default function Reports() {
         <h1 className="page-title">التقارير</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {tab !== 'top_customers' && (
-            <button className="btn btn-secondary" onClick={handleExportCsv}>⬇ تصدير CSV</button>
+            <>
+              <button className="btn btn-secondary" onClick={handleExportCsv}>⬇ تصدير CSV</button>
+              <button className="btn btn-secondary" onClick={handleExportXlsx}>⬇ تصدير Excel</button>
+            </>
           )}
           <button className="btn btn-secondary" onClick={handlePrint}>🖨️ طباعة التقرير</button>
         </div>

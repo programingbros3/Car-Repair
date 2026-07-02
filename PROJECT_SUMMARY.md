@@ -17,6 +17,7 @@
 | better-sqlite3 | قاعدة بيانات SQLite المتزامنة في Main process |
 | React Router (HashRouter) | التنقل بين الشاشات |
 | Fuse.js | بحث ضبابي (Fuzzy search) بدعم عربي |
+| SheetJS (`xlsx`) | تصدير تقارير Excel حقيقية (.xlsx) من الواجهة عبر Blob — بجانب تصدير CSV الموجود |
 | bcryptjs | تشفير (hash) كلمة سر التطبيق — نسخة JS خالصة، بدون بناء أصلي/electron-rebuild |
 | Tajawal Font | خط عربي، محزَّم محلياً عبر حزمة npm `@fontsource/tajawal` (لا يعتمد على اتصال إنترنت أو Google Fonts CDN) |
 
@@ -37,6 +38,7 @@
 │   ├── preload.ts           — يكشف window.ipcRenderer للـ renderer عبر contextBridge
 │   ├── ipc-handlers.ts      — جميع معالجات IPC (ipcMain.handle) — القلب الخلفي للتطبيق
 │   ├── auto-backup.ts       — النسخ الاحتياطي التلقائي الدوري (منفصل عن backup:export/import)
+│   ├── vat.ts               — إعدادات الضريبة (VAT) الاختيارية في app_settings (نفس نمط auto-backup.ts) — معطّلة افتراضياً
 │   ├── auth.ts              — كلمة السر (bcrypt hash)، القفل عند تجاوز المحاولات، القفل التلقائي، سجل النشاط
 │   └── schema.sql           — تعريف كل جداول قاعدة البيانات (CREATE TABLE IF NOT EXISTS)
 │
@@ -58,6 +60,7 @@
 │   │   ├── suppliers.ts     — دوال CRUD للموردين وفواتيرهم
 │   │   ├── cheques.ts       — الشيكات المستحقة قريباً (قراءة فقط)
 │   │   ├── invoiceNumber.ts — nextInvoiceNumber(): توليد رقم الفاتورة المنسّق (INV/PUR) عند الإضافة
+│   │   ├── discount.ts      — applyDiscount(): تطبيق خصم الفاتورة (ثابت/نسبة) على مجموع البنود مع validation
 │   │   └── warranties.ts    — دوال CRUD للكفالات (إضافة/تعديل/حذف يدوي)
 │   │
 │   ├── services/
@@ -73,6 +76,7 @@
 │   │   ├── dbMapper.ts      — دوال التحويل بين أنواع DB (snake_case) وأنواع UI (camelCase)
 │   │   ├── warranty.ts      — calcEndDate() و daysRemaining(): دوال مشتركة لحساب الكفالة
 │   │   ├── exportCsv.ts     — exportToCsv(): تصدير البيانات إلى ملف CSV
+│   │   ├── exportXlsx.ts    — exportToXlsx(): تصدير البيانات إلى ملف Excel حقيقي (.xlsx) عبر SheetJS — إضافة موازية لـ exportCsv دون المساس به
 │   │   └── useAutoLock.ts   — hook: يقفل التطبيق تلقائياً (يعيد عرض PasswordGate) بعد فترة خمول
 │   │
 │   ├── components/
@@ -92,7 +96,7 @@
 │       ├── Suppliers.tsx        — الموردون: فواتير الشراء CRUD + دفعات + موردون دليل
 │       ├── Employees.tsx        — الموظفون والرواتب: CRUD + اليومية + حساب الراتب تلقائياً
 │       ├── Warranties.tsx       — الكفالات: عرض نشطة/منتهية + تعديل/حذف + نوع العملية (لا إضافة يدوية)
-│       ├── Reports.tsx          — التقارير: يومي/شهري/سنوي/ديون/أعمار ديون/أفضل زبائن + تصدير CSV
+│       ├── Reports.tsx          — التقارير: يومي/شهري/سنوي/ديون/أعمار ديون/أفضل زبائن + تصدير CSV + تصدير Excel
 │       └── Settings.tsx         — الإعدادات: نسخ احتياطي (يدوي + تلقائي دوري) + الأمان (تغيير كلمة السر، القفل التلقائي، سجل النشاط)
 │
 ├── public/
@@ -132,7 +136,9 @@
 | status | TEXT | 'in_progress' أو 'delivered' |
 | warranty | TEXT | غير مستخدم على مستوى الفاتورة (الكفالة في البنود) |
 | notes | TEXT | ملاحظات |
-| total_amount | REAL DEFAULT 0 | الإجمالي (يُحسب من البنود) |
+| discount_type | TEXT | نوع خصم الفاتورة: `'fixed'` أو `'percentage'` أو NULL (بدون خصم) — أُضيف عبر migration، راجع "خصم الفاتورة" أدناه |
+| discount_value | REAL DEFAULT 0 | قيمة الخصم (₪ إن كان fixed، نسبة 0-100 إن كان percentage) — أُضيف عبر migration |
+| total_amount | REAL DEFAULT 0 | الإجمالي **بعد الخصم** (يُحسب من البنود ثم يُطبَّق الخصم) |
 | amount_paid | REAL DEFAULT 0 | المدفوع |
 | amount_remaining | REAL DEFAULT 0 | المتبقي |
 | created_at | TEXT | توقيت الإنشاء |
@@ -147,7 +153,9 @@
 | sale_date | TEXT NOT NULL | تاريخ البيع |
 | warranty | TEXT | JSON كفالة الفاتورة: `{"value":N,"unit":"week"|"month"|"year"}` أو NULL |
 | notes | TEXT | |
-| total_amount | REAL DEFAULT 0 | |
+| discount_type | TEXT | نفس خصم فواتير الصيانة: `'fixed'` / `'percentage'` / NULL — أُضيف عبر migration |
+| discount_value | REAL DEFAULT 0 | قيمة الخصم — أُضيف عبر migration |
+| total_amount | REAL DEFAULT 0 | الإجمالي **بعد الخصم** |
 | amount_paid | REAL DEFAULT 0 | |
 | amount_remaining | REAL DEFAULT 0 | |
 | created_at | TEXT | |
@@ -258,7 +266,7 @@
 | notes | TEXT | |
 | created_at | TEXT | |
 
-**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
+**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه؛ و`discount_type`/`discount_value` في جدولي الصيانة والبيع المباشر، راجع "خصم الفاتورة" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
 
 #### ترقيم الفواتير (`invoice_number`) — منذ 2026-07-02
 
@@ -275,6 +283,17 @@
 **تعبئة السجلات القديمة (`src/database.ts → backfillInvoiceNumbers()`):** تُستدعى مرة واحدة بعد حلقة الـ migrations في `initDB()`. لكل مجموعة (`INV` = صيانة+بيع مباشر، `PUR` = موردون) تجلب كل الصفوف التي `invoice_number IS NULL` بعمودي `id`/`created_at` من كل جدول في المجموعة، ثم **تُرتَّب كلها معاً** (وليس كل جدول على حدة) ترتيباً زمنياً صرفاً حسب `created_at ASC` (وقت الإدخال الفعلي)، وتُرقَّم تصاعدياً ضمن مجموعة كل سنة — والسنة المستخدمة في كل رقم هي سنة **تاريخ الفاتورة نفسه** (`date_received`/`sale_date`/`purchase_date`) لا سنة `created_at`. تُهيّئ العدّادات أولاً من أي أرقام مُسنَدة مسبقاً (`WHERE invoice_number IS NOT NULL`) لتبقى آمنة عند التشغيل الجزئي/المتكرر — إن لم يبقَ أي صف بلا رقم تُصبح no-op فورية (نفس فلسفة باقي الـ migrations). تم التحقق يدوياً من الخوارزمية بمحاكاة قاعدة بيانات تجريبية تحوي بيانات موزّعة على سنتين مختلفتين قبل الدمج: الترقيم جاء متسلسلاً زمنياً بشكل صحيح، معاد الصفر لكل سنة، بلا أي تكرار بين الجدولين، ومطابق بعد التشغيل مرتين متتاليتين (idempotent).
 
 **العرض:** `invoice_number` يظهر بدل الاعتماد على `id` الداخلي في: جداول `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`SalesInvoices.tsx`/`Suppliers.tsx` (عمود "رقم الفاتورة")، مودالات التفاصيل في نفس الصفحات، ورأس كل إيصال مطبوع (`printPdf` — العنوان + أول سطر في `detail-grid`). أُضيف أيضاً كحقل بحث في كل نسخة `Fuse.js` بهذه الصفحات (بجانب اسم الزبون/المورد). فواتير الشراء المجمّعة (`PurchaseInvoices.tsx`) تعرض `invoice_number` للموردين فقط (المصاريف والرواتب ليس لها رقم فاتورة، تبقى `#{id}` كما كانت).
+
+#### خصم الفاتورة (`discount_type` / `discount_value`) — منذ 2026-07-02
+
+خصم اختياري **على مستوى الفاتورة كاملة** (وليس على مستوى البند الفردي — قرار تبسيط مقصود) لفواتير الصيانة والبيع المباشر فقط:
+- `discount_type`: `'fixed'` (مبلغ ثابت بالشيكل) أو `'percentage'` (نسبة مئوية من مجموع البنود) أو `NULL` (بدون خصم).
+- `discount_value`: المبلغ أو النسبة (0-100).
+- **`total_amount` يُخزَّن دائماً بعد الخصم**: `total_amount = applyDiscount(مجموع qty × unit_price للبنود, discount_type, discount_value)`، و`amount_remaining` يُحسب من هذا الإجمالي المخصوم. لا يُخزَّن المجموع قبل الخصم — يُشتق للعرض من البنود (عند توفّرها عبر `getOne`) أو عكسياً من `total_amount` والخصم (دوال `discountBreakdown` المحلية في الصفحتين).
+- **المنطق المركزي (`src/db/discount.ts → applyDiscount(subtotal, type, value)`):** يُطبَّق في main process عند كل إضافة/تعديل، ويرمي خطأً عربياً عند القيم غير الصالحة (سالبة، نسبة > 100، مبلغ ثابت > مجموع البنود) — حماية أخيرة تضمن ألا يصبح `total_amount` سالباً أبداً؛ الواجهة تتحقق من نفس القواعد قبل الإرسال (`discountErr` في الصفحتين).
+- **اصطلاح `undefined` مقابل `null` في مدخلات التعديل:** `discount_type === undefined` في `maintenance:update`/`directSale:update` يعني "المستدعي لا يحمل الخصم — أبقِ المخزَّن كما هو" (شاشتا `SalesInvoices.tsx`/`PendingDebts.tsx` اللتان تعدّلان بيانات الفاتورة دون معرفة خصمها)، بينما `null` يعني "أزل الخصم" (اختيار "بدون خصم" في نموذجَي الصيانة/البيع المباشر). التحويل في `dbMapper.ts` يحافظ على هذا التمييز.
+- **إعادة الحساب:** `updateMaintenanceInvoice` يعيد حساب `total_amount`/`amount_remaining` من بنود الجدول الفعلية عند تغيّر البنود **أو** الخصم (البنود والخصم يصلان معاً في نفس الاستدعاء/الـ transaction)؛ `recalcDirectSaleTotals(invoiceId)` (في `direct-sale.ts`) تفعل الشيء نفسه للبيع المباشر وتُستدعى من `updateDirectSaleItems` ومن قناة `directSale:update` عند تمرير خصم.
+- **ذرّية الخصم مع البنود في البيع المباشر:** نموذج التعديل في `DirectSales.tsx` يمرّر الخصم الجديد كوسيط ثالث اختياري لـ `directSale:updateItems` (`{ type, value }`) فيُكتب داخل نفس transaction البنود الجديدة **قبل** إعادة الحساب، ويستدعي `directSale:update` بخصم `undefined` (لا تلمس) — كي لا يُقيَّم الخصم الجديد مقابل البنود القديمة (كان سيرمي خطأً زائفاً لو كان الخصم الثابت الجديد أكبر من مجموع البنود القديمة رغم صلاحيته للبنود الجديدة).
 
 #### `cash_ledger` — سجل الصندوق الرئيسي
 | العمود | النوع | الوصف |
@@ -305,7 +324,7 @@
 | key | TEXT PRIMARY KEY |
 | value | TEXT |
 
-تُستخدم لإعدادات النسخ الاحتياطي التلقائي (`auto_backup_*` — راجع قسم "النسخ الاحتياطي التلقائي" أدناه) ولإعدادات الأمان (`app_password_hash`, `auth_failed_attempts`, `auth_lockout_until`, `auth_lockout_level`, `auto_lock_enabled`, `auto_lock_minutes` — راجع قسم "الأمان" أدناه).
+تُستخدم لإعدادات النسخ الاحتياطي التلقائي (`auto_backup_*` — راجع قسم "النسخ الاحتياطي التلقائي" أدناه)، ولإعدادات الأمان (`app_password_hash`, `auth_failed_attempts`, `auth_lockout_until`, `auth_lockout_level`, `auto_lock_enabled`, `auto_lock_minutes` — راجع قسم "الأمان" أدناه)، ولإعدادات الضريبة (`vat_enabled` بقيمة `'0'`/`'1'` افتراضي `'0'`، و`vat_rate` نسبة مئوية افتراضي `'16'` — راجع قسم "الضريبة (VAT)" أدناه).
 
 #### `activity_log` — سجل النشاط (توثيق خفيف للعمليات الحساسة)
 | العمود | النوع | الوصف |
@@ -416,7 +435,7 @@ React Page
 | `directSale:getOne` | id | SaleRow + items[] + payments[] | تفاصيل كاملة |
 | `directSale:add` | SaleInput | { id } | إضافة فاتورة + بنود + دفعات + مزامنة كفالات |
 | `directSale:update` | SaleRecord | void | تحديث بيانات الفاتورة + مزامنة كفالات |
-| `directSale:updateItems` | { invoiceId, items[] } | void | حذف البنود القديمة وإعادة إدراجها + تحديث total |
+| `directSale:updateItems` | { invoiceId, items[], discount? } | void | حذف البنود القديمة وإعادة إدراجها + كتابة الخصم إن مُرِّر + إعادة حساب total بعد الخصم |
 | `directSale:addPayment` | { id, payments, date } | void | إضافة دفعة + Ledger |
 | `directSale:delete` | id | void | حذف + بنود + دفعات + كفالات |
 
@@ -570,6 +589,21 @@ React Page
 
 **Transactions atomic بالكامل:** `maintenance:add`/`maintenance:update`/`directSale:add`/`directSale:update` في `ipc-handlers.ts` أصبحت ملفوفة بـ `db.transaction(() => {...})()` خارجي واحد يضمّ كتابة الفاتورة **و** مزامنة الكفالات (`syncWarrantiesForMaintenance`/`syncWarrantiesForDirectSale`) معاً — كانتا سابقاً transaction-ين منفصلتين متتاليتين (كل منهما atomic بمفردها، لكن غير atomic معاً)، فإذا انهار التطبيق بينهما تبقى الفاتورة محفوظة بدون مزامنة كفالات. better-sqlite3 يدعم تداخل `db.transaction()` تلقائياً عبر SAVEPOINT، فلم يلزم أي تعديل على `src/db/maintenance.ts`/`direct-sale.ts` أو دوال المزامنة نفسها — فقط لفّة خارجية إضافية في `ipc-handlers.ts`. بقية عمليات الكتابة المركّبة في المشروع كانت ملفوفة بـ `db.transaction()` بالفعل من قبل.
 
+#### الضريبة (VAT) — منذ 2026-07-02
+
+ميزة **اختيارية بالكامل ومعطّلة افتراضياً** لإضافة الضريبة على القيمة المضافة إلى مودالات تفاصيل الفواتير والإيصالات المطبوعة — بعض عملاء الكراج لا يحتاجون فوترة ضريبية رسمية، لذا لا يجب أن تظهر أي إشارة للضريبة في أي مكان ما لم تُفعَّل صراحةً من الإعدادات، مع عدم تغيير أي سلوك حالي للمستخدمين الذين لا يفعّلونها.
+
+| القناة | المدخلات | الخرج | الوصف |
+|---|---|---|---|
+| `vat:getSettings` | — | `VatSettings` (`{enabled, rate}`) | يرجع إعدادات الضريبة الحالية من `app_settings` |
+| `vat:updateSettings` | `Partial<{enabled, rate}>` | `VatSettings` | تحديث جزئي (يحفظ فوراً) ويرجع الإعدادات الكاملة |
+
+**المنطق (`electron/vat.ts`):** نفس نمط `auto-backup.ts`/`auth.ts` بالضبط (يأخذ `db` كمعامل، يخزّن حالته في `app_settings` عبر `getSetting`/`setSetting` بنمط key/value). مفتاحان فقط: `vat_enabled` (`'0'`/`'1'`، افتراضي `'0'` = معطّلة) و`vat_rate` (نسبة مئوية نصّية، `DEFAULT_RATE = 16` = الضريبة الرسمية في فلسطين، قابلة للتعديل). `getVatSettings` يرجع `enabled=false` والنسبة الافتراضية عند غياب المفاتيح تماماً (المستخدمون القدامى)، فلا حاجة لأي migration أو seeding — no-op بطبيعته حتى يفعّلها المستخدم. `updateVatSettings` يحرس النسبة (`Math.max(0, ...)`) فلا تصبح سالبة.
+
+**حقل محسوب وقت العرض فقط (derived) — لا يُخزَّن أبداً:** الضريبة **لا** تُضاف إلى `total_amount` في قاعدة البيانات ولا تمسّ `amount_paid`/`amount_remaining` — تُحسب وقت العرض فقط في الواجهة من `total` المخزَّن (الذي هو أصلاً المجموع **بعد الخصم**). القاعدة (`base`) = `total`، والضريبة = `base × rate/100`، والإجمالي شامل الضريبة = `base + tax`. بهذا لا يتعقّد منطق الديون/الدفعات الحالي إطلاقاً، وتبقى قيم قاعدة البيانات كما هي سواء فُعّلت الضريبة أو عُطّلت.
+
+**العرض (فقط عند `vat_enabled='1'`):** دالة محلية `vatBreakdown(base, vat)` (نسخة متطابقة في `MaintenanceInvoices.tsx` و`DirectSales.tsx`، بنفس أسلوب `discountBreakdown` المكرَّرة محلياً في كل صفحة) تُرجع `null` عندما تكون الضريبة معطّلة أو النسبة ≤ 0 — فلا يُعرَض أي شيء. عند التفعيل تُضاف ثلاثة أسطر بعد سطر الإجمالي (بعد الخصم إن وُجد) في مودال التفاصيل والإيصال المطبوع لكل من الصيانة والبيع المباشر: "المجموع قبل الضريبة" / "الضريبة (X%)" / "الإجمالي شامل الضريبة". كل صفحة تحمّل الإعدادات مرة واحدة عبر `dbService.vat.getSettings()` في `useEffect` إلى حالة `vat: VatSettings | null` (تبقى `null` عند أي فشل فتظل الضريبة مخفية).
+
 ### مزامنة الكفالات التلقائية
 
 عند كل إضافة أو تعديل لفاتورة صيانة أو بيع مباشر، يُستدعى:
@@ -595,9 +629,12 @@ React Page
 - `SALES_INVOICE_NUMBER_TABLES` = `['maintenance_invoices', 'direct_sale_invoices']` — تسلسل `INV` مشترك بينهما (راجع "ترقيم الفواتير" أعلاه لسبب القرار)
 - `PURCHASE_INVOICE_NUMBER_TABLES` = `['supplier_invoices']` — تسلسل `PUR` مستقل
 
+#### `src/db/discount.ts` — منذ 2026-07-02
+- `applyDiscount(subtotal, discountType, discountValue)` — يطبّق خصم الفاتورة (fixed يُطرح كما هو / percentage نسبة من المجموع) ويرمي خطأً عربياً عند القيم غير الصالحة. راجع "خصم الفاتورة" أعلاه.
+
 #### `src/db/maintenance.ts`
-- `addMaintenanceInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر `nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)` داخل نفس transaction) + insertItems (يكتب warranty وpart_type في DB) + insertPayments
-- `updateMaintenanceInvoice(db, car)` — UPDATE فاتورة + يحذف البنود القديمة ويُعيد إدراجها
+- `addMaintenanceInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر `nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)` داخل نفس transaction، و`discount_type`/`discount_value` مع `total_amount` بعد الخصم) + insertItems (يكتب warranty وpart_type في DB) + insertPayments
+- `updateMaintenanceInvoice(db, car)` — UPDATE فاتورة (يشمل حقلَي الخصم عند تمريرهما) + يحذف البنود القديمة ويُعيد إدراجها + يعيد حساب `total_amount` (بعد الخصم) و`amount_remaining` من بنود الجدول الفعلية عند تغيّر البنود أو الخصم
 - `deliverMaintenance(db, id, payments, date)` — UPDATE status='delivered' + date_released + دفعات + Ledger
 - `deleteMaintenanceInvoice(db, id)` — DELETE + بنودها + دفعاتها
 - `getMaintenanceInvoices(db, filters)` — SELECT مع فلاتر (بحث، تاريخ، حالة)
@@ -606,8 +643,9 @@ React Page
 **ملاحظة:** دالة `addMaintenanceItem` (وقناة `maintenance:addItem` المقابلة) لإضافة بند واحد لفاتورة موجودة دون تعديلها بالكامل — أُزيلتا لعدم استخدامهما (نموذج التعديل الكامل في `MaintenanceInvoices.tsx` يغطي نفس الحاجة).
 
 #### `src/db/direct-sale.ts`
-- `addDirectSaleInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر نفس تسلسل `INV` المشترك مع الصيانة) + invoice_items + payments + Ledger
-- `updateDirectSaleItems(db, invoiceId, items)` — يحذف بنود 'direct_sale' للفاتورة ويُعيد إدراجها + يُحدّث total_amount وamount_remaining
+- `addDirectSaleInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر نفس تسلسل `INV` المشترك مع الصيانة، و`discount_type`/`discount_value` مع `total_amount` بعد الخصم) + invoice_items + payments + Ledger
+- `recalcDirectSaleTotals(invoiceId)` — يعيد حساب `total_amount` (مجموع البنود بعد الخصم المخزَّن) و`amount_remaining`؛ تُستدعى من `updateDirectSaleItems` ومن قناة `directSale:update` عند تمرير خصم
+- `updateDirectSaleItems(db, invoiceId, items, discount?)` — يحذف بنود 'direct_sale' للفاتورة ويُعيد إدراجها + يكتب الخصم إن مُرِّر (`{ type, value }`) داخل نفس الـ transaction + `recalcDirectSaleTotals`
 - `getDirectSaleInvoices(db, filters)` — SELECT مع فلاتر
 - `getDirectSaleInvoice(db, id)` — SELECT + items + payments
 
@@ -684,8 +722,13 @@ React Page
 **حالة النموذج (FormState):**
 ```
 customerName, phone, carPlate, carType, carColor, dateReceived, notes
+discountType: ''|'fixed'|'percentage', discountValue: string
 parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warrantyValue, warrantyUnit, notes }]
 ```
+
+**خصم الفاتورة في النموذج (منذ 2026-07-02):** أسفل جدول البنود مباشرة: صف "المجموع قبل الخصم" ثم dropdown نوع الخصم (بدون خصم / مبلغ ثابت ₪ / نسبة مئوية %) + حقل رقمي للقيمة (يظهر فقط عند اختيار نوع) + **عرض حي "الإجمالي بعد الخصم"** بنفس أسلوب صندوق "صافي الراتب" الأخضر في `Employees.tsx` (يتحدّث فورياً مع كل تعديل على البنود أو الخصم). validation: نسبة 0-100، مبلغ ثابت ≤ مجموع البنود (`discountErr` يظهر بعد أول محاولة حفظ كباقي الحقول). مودال التفاصيل والإيصال المطبوع يعرضان عند وجود خصم: "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" بدل سطر "الإجمالي الكلي" (عبر `discountBreakdown()` المحلية التي تشتق المجموع قبل الخصم من البنود عند توفّرها أو عكسياً من الإجمالي المخصوم).
+
+**الضريبة (VAT) في العرض (منذ 2026-07-02):** عند تفعيل الضريبة من الإعدادات فقط (`vat_enabled='1'`)، يُضاف بعد سطر الإجمالي (بعد الخصم إن وُجد) في مودال التفاصيل والإيصال المطبوع ثلاثة أسطر: "المجموع قبل الضريبة" / "الضريبة (X%)" / "الإجمالي شامل الضريبة" — محسوبة وقت العرض فقط من `total` المخزَّن (بعد الخصم) عبر `vatBreakdown(base, vat)` المحلية، ولا تُخزَّن في قاعدة البيانات. الإعدادات تُحمَّل مرة واحدة عبر `dbService.vat.getSettings()` إلى حالة `vat`. عند التعطيل (الافتراضي) لا يظهر أي سطر ضريبة. راجع قسم "الضريبة (VAT)" في الـ Backend أعلاه.
 
 حقل الكفالة في كل بند: `warrantyUnit` (select: لا كفالة/أسبوع/شهر/سنة) + `warrantyValue` (رقم، يظهر فقط عند اختيار وحدة). تُخزَّن كـ JSON عند الحفظ.
 
@@ -729,7 +772,12 @@ parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warr
 **حالة النموذج:**
 ```
 customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriodUnit, generalNotes
+discountType: ''|'fixed'|'percentage', discountValue: string
 ```
+
+**خصم الفاتورة في النموذج (منذ 2026-07-02):** نفس كتلة الخصم والعرض الحي الموجودة في `MaintenanceInvoices.tsx` بالضبط (dropdown + حقل قيمة + صندوق "الإجمالي بعد الخصم" الأخضر أسفل جدول البنود، مع نفس الـ validation). ملخّص الدفع عند الإضافة ("إجمالي الفاتورة"/"المتبقي") يعتمد الإجمالي **بعد الخصم**، وكذلك اشتقاق الحالة (مدفوع/دين جزئي/دين كامل). مودال التفاصيل والإيصال يعرضان تسلسل "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" عند وجود خصم (`discountBreakdownDS()`).
+
+**الضريبة (VAT) في العرض (منذ 2026-07-02):** نفس سلوك `MaintenanceInvoices.tsx` بالضبط — عند تفعيل الضريبة فقط تُضاف ثلاثة أسطر ("المجموع قبل الضريبة" / "الضريبة (X%)" / "الإجمالي شامل الضريبة") بعد سطر الإجمالي في مودال التفاصيل والإيصال المطبوع، محسوبة من `total` (بعد الخصم) عبر `vatBreakdown()` المحلية دون تخزين. معطّلة افتراضياً فلا يظهر شيء. راجع قسم "الضريبة (VAT)" في الـ Backend أعلاه.
 
 **Draft localStorage:** مفتاح `'garage-ds-draft-v2'`
 
@@ -752,7 +800,7 @@ customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriod
 
 **التعديل:**
 - ConfirmDialog أولاً (مع كلمة سر، `warnInv`/`confirmEditInv`) *(أُضيف بتاريخ 2026-07-01 — سابقاً كان زر "تعديل" يفتح المودال مباشرة بلا أي تأكيد)*
-- بعد التأكيد يستدعي `dbService.directSale.getOne(id)` لجلب البنود الحالية، ثم عند الحفظ يستدعي `dbService.directSale.updateItems(id, newItems)` لتحديث البنود
+- بعد التأكيد يستدعي `dbService.directSale.getOne(id)` لجلب البنود الحالية، ثم عند الحفظ يستدعي `dbService.directSale.updateItems(id, newItems, { type, value })` لتحديث البنود والخصم معاً ذرّياً (وقناة `update` تُستدعى بخصم `undefined` = لا تغيير)
 
 **البنود في البيع المباشر:**
 - جدول قابل للتعديل المباشر: اسم البند، الكمية، السعر، ملاحظات (بدون كفالة فردية)
@@ -1013,6 +1061,8 @@ export function daysRemaining(endDate: string): number
 
 **تصدير CSV:** زر "⬇ تصدير CSV" يظهر في كل التبويبات ما عدا "أفضل الزبائن" (الشرط البرمجي `tab !== 'top_customers'`، لذا ظهر تلقائياً لتبويب "أعمار الديون" الجديد دون أي تعديل على شرط الإظهار)؛ يستدعي `exportToCsv()` من `src/utils/exportCsv.ts`
 
+**تصدير Excel (.xlsx) — منذ 2026-07-02:** بجانب زر "⬇ تصدير CSV" أُضيف زر مواز "⬇ تصدير Excel" بنفس النمط البصري (`btn btn-secondary`) وبنفس شرط الإظهار (`tab !== 'top_customers'`)، يستدعي `handleExportXlsx()` → `exportToXlsx()` من `src/utils/exportXlsx.ts` (مكتبة SheetJS/`xlsx`). يُصدّر **نفس بيانات وأعمدة CSV بالضبط** لكل تبويب (يومي/شهري/سنوي/ديون/أعمار ديون) — إضافة موازية تماماً، ومنطق/زر CSV الأصلي **لم يُمَسّ إطلاقاً**. ينتج ملف xlsx حقيقياً (ليس CSV بامتداد مختلف): الأرقام تُكتب كخلايا أرقام حقيقية (`t:'n'`) لتعمل معادلات Excel مباشرة، والتواريخ تبقى نصاً مقروءاً (نفس نصوص CSV، لا تُحوَّل لتسلسل تاريخ Excel لأنها بصيغ غير موحّدة)، مع اتجاه ورقة RTL (`wb.Workbook.Views = [{ RTL: true }]`) واسم ورقة عربي لكل تقرير. تم التحقق من فتح الملف بنجاح في LibreOffice Calc (تحويل headless إلى CSV أعاد نفس البيانات بالعربية سليمة).
+
 ---
 
 ### الإعدادات — `src/pages/Settings.tsx`
@@ -1054,6 +1104,10 @@ export function daysRemaining(endDate: string): number
 **القسم الخامس (جديد، بطاقة `mi-card` منفصلة، للقراءة فقط): سجل النشاط**
 
 يُحمَّل عبر `dbService.activityLog.getAll(200)` في `useEffect` عند فتح الصفحة. جدول: التاريخ | العملية (تعديل/حذف) | النوع (اسم الكيان بالعربي) | التفاصيل. لا إمكانية تعديل أو حذف من هذه الشاشة — راجع تفاصيل نطاق التسجيل الكامل ضمن قسم "الأمان" في الـ Backend أعلاه.
+
+**القسم السادس (جديد، بطاقة `mi-card` منفصلة): الضريبة (VAT)** — منذ 2026-07-02
+
+نفس نمط قسم "القفل التلقائي عند الخمول" بالضبط: checkbox "تفعيل الضريبة" يحفظ فوراً عند التبديل + حقل رقمي "نسبة الضريبة (%)" (يظهر **فقط** عند التفعيل) يحفظ عند `onBlur` — عبر `dbService.vat.getSettings`/`updateSettings`. الإعدادات تُحمَّل في `useEffect` عند فتح الصفحة إلى حالة `vatEnabled`/`vatRate`. معطّلة افتراضياً؛ عند التعطيل لا يظهر حقل النسبة ولا أي شيء متعلق بالضريبة في أي فاتورة أو إيصال. راجع التفاصيل الكاملة (القنوات، المنطق، سبب كونها derived غير مخزَّنة) في قسم "الضريبة (VAT)" ضمن الـ Backend أعلاه.
 
 ---
 
@@ -1118,9 +1172,9 @@ export function daysRemaining(endDate: string): number
 
 | النوع | الوصف |
 |---|---|
-| `CarRecord` | فاتورة صيانة في UI (يشمل amountPaid?, amountRemaining? الاختياريَّين) |
+| `CarRecord` | فاتورة صيانة في UI (يشمل amountPaid?, amountRemaining? الاختياريَّين + discountType?/discountValue?) |
 | `CarItem` | بند صيانة في UI |
-| `SaleRecord` | فاتورة بيع مباشر في UI |
+| `SaleRecord` | فاتورة بيع مباشر في UI (يشمل discountType?/discountValue?) |
 | `SaleItem` | بند بيع مباشر في UI |
 | `PaymentRow` | صف دفع (مع تفاصيل شيك/فيزا) |
 | `DebtRecord` | دين معلق |
@@ -1139,6 +1193,7 @@ export function daysRemaining(endDate: string): number
 | `SalaryRecord` | دفعة راتب (يشمل dailyWageSnapshot, daysWorked, bonus, deduction) |
 | `WarrantyRecord` | كفالة |
 | `WarrantyPeriodUnit` | `'week'` \| `'month'` \| `'year'` |
+| `DiscountType` | `'fixed'` \| `'percentage'` — خصم الفاتورة (undefined = لا تغيير، null = بدون خصم) |
 
 ---
 
@@ -1252,6 +1307,17 @@ exportToCsv(filename: string, headers: string[], rows: (string | number)[][]): v
 - يهرب الفواصل والاقتباسات وأسطر جديدة داخل الخلايا
 - يُنشئ Blob وينقره تلقائياً (no server needed)
 
+### تصدير Excel (src/utils/exportXlsx.ts) — منذ 2026-07-02
+
+```ts
+exportToXlsx(filename: string, headers: string[], rows: (string | number)[][], sheetName?: string): void
+```
+- يبني ورقة عمل من `headers + rows` عبر `XLSX.utils.aoa_to_sheet` ثم يكتبها كملف xlsx حقيقي (SheetJS)
+- الأرقام تبقى أرقاماً حقيقية في الخلايا (`t:'n'`) لتعمل معادلات Excel، والتواريخ نصوص مقروءة كما تصل من المُستدعي
+- اتجاه الورقة RTL (`wb.Workbook.Views = [{ RTL: true }]`) واسم الورقة قابل للتخصيص (يُقصّ لـ 31 حرفاً — حد Excel)
+- يُنشئ Blob وينقره تلقائياً (no server needed) — بنفس فلسفة `exportToCsv`
+- **إضافة موازية:** لا يمسّ `exportToCsv` ولا زر/منطق CSV في `Reports.tsx` إطلاقاً
+
 ### طرق الدفع
 
 | في DB | في UI | الوصف |
@@ -1327,6 +1393,7 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **نظام الرواتب باليومية:** daily_wage في employees + 4 أعمدة في salary_payments + migration تلقائي + salary:update
 - [x] **تقرير أفضل الزبائن:** تبويب جديد في Reports.tsx يستدعي `report:topCustomers(20)`
 - [x] **تصدير CSV:** زر تصدير في Reports.tsx لتبويبات يومي/شهري/سنوي/ديون
+- [x] **تصدير Excel (.xlsx):** زر مواز لزر CSV في Reports.tsx (SheetJS) لنفس التبويبات، أرقام حقيقية + RTL، دون المساس بتصدير CSV
 - [x] **نسخ احتياطي:** backup:export و backup:import مع التحقق والنسخة التلقائية + صفحة Settings.tsx
 - [x] **نسخ احتياطي تلقائي دوري:** جدول app_settings + autoBackup:getSettings/updateSettings/runNow/getStatus/pickFolder + تشغيل عند بدء التطبيق وعند الإغلاق + rotation — منفصل تماماً عن النسخ اليدوي
 - [x] **توحيد بوابة ConfirmDialog+كلمة السر على كل أزرار التعديل** (وليس الحذف فقط) عبر كل الصفحات — راجع "الأمان وكلمة السر"
@@ -1340,6 +1407,7 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **ضمان atomic كامل لكل عمليات الكتابة المركّبة:** لفّ `maintenance:add/update` و`directSale:add/update` بـ transaction خارجي واحد يضمّ كتابة الفاتورة ومزامنة الكفالات معاً (بقية عمليات الكتابة المركّبة كانت ملفوفة بالفعل)
 - [x] **تقرير/تنبيه الشيكات المستحقة قريباً:** قناة `cheques:getUpcoming` (قراءة فقط بالكامل) + قسم جديد في `CashLedger.tsx` مع فلتر مدى 7/14/30 يوماً وتلوين حسب الإلحاح — بدون أي تعديل على بنية جداول الشيكات الأربعة الموجودة
 - [x] **تبويب "أعمار الديون" في Reports.tsx:** قناة `report:debtsAging` (قراءة فقط) تصنّف كل الديون المعلقة (زبائن + موردين) إلى 4 شرائح عمرية حسب تاريخ الفاتورة الأصلي، مع بطاقات إحصاء لكل شريحة، جدول موحّد قابل للفرز حسب عدد الأيام، وطباعة/تصدير CSV بنفس نمط بقية تبويبات Reports.tsx
+- [x] **خصم على مستوى الفاتورة (صيانة + بيع مباشر):** `discount_type` (`fixed`/`percentage`/NULL) + `discount_value` عبر migration، منطق مركزي `applyDiscount` في `src/db/discount.ts` (يضمن ألا يصبح الإجمالي سالباً)، `total_amount` يُخزَّن بعد الخصم ويُعاد حساب `amount_remaining` منه، نموذج خصم + عرض حي للإجمالي بعد الخصم في `MaintenanceInvoices.tsx`/`DirectSales.tsx`، وعرض "المجموع قبل الخصم/الخصم/الإجمالي بعد الخصم" في مودالات التفاصيل والإيصالات المطبوعة
 - [x] **رقم فاتورة منسّق يظهر للزبون (`invoice_number`):** `INV-{سنة}-{تسلسل}` مشترك بين فواتير الصيانة والبيع المباشر (تسلسل واحد لضمان التفرّد بينهما بما أنهما يُعرضان مجتمعين)، و`PUR-{سنة}-{تسلسل}` مستقل لفواتير الموردين. عمود جديد + بحث Fuse.js + عنوان الإيصال المطبوع في `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`SalesInvoices.tsx`/`Suppliers.tsx`. مُضاف عبر migration `ALTER TABLE ... ADD COLUMN` + تعبئة رجعية للسجلات القديمة (`backfillInvoiceNumbers`) بترتيب زمني صرف حسب `created_at`؛ الـ `id` الداخلي لم يتغيّر ولم يُحذف.
 
 ### غير مكتمل / قيود معروفة
@@ -1491,3 +1559,12 @@ const dbPath = app.getPath('userData') + '/garage.db'
 4. **التوليد عند الإضافة (`src/db/invoiceNumber.ts → nextInvoiceNumber()`):** يُستدعى من داخل نفس `db.transaction()` الذي يضمّ `INSERT` الفاتورة في `addMaintenanceInvoice`/`addDirectSaleInvoice`/`addSupplierInvoice` — يبحث عن أعلى تسلسل مستخدم لنفس السنة **الحالية وقت الإضافة** (`new Date().getFullYear()`، وليس تاريخ الفاتورة الذي قد يُدخله المستخدم بأثر رجعي) ثم يزيده بـ 1؛ يبدأ من `0001` تلقائياً عند أول فاتورة في سنة جديدة. تحقّق يدوياً بمحاكاة إضافات متتالية عبر سنتين مختلفتين: الترقيم تسلسلي صحيح ويُعاد الصفر عند تغيّر السنة.
 5. **العرض:** عمود "رقم الفاتورة" (أول عمود) + حقل بحث إضافي في Fuse.js + أول حقل في مودال التفاصيل + عنوان الإيصال المطبوع، في `MaintenanceInvoices.tsx`، `DirectSales.tsx`، `SalesInvoices.tsx` (بما يشمل إصلاح ترويسة مودال التفاصيل وتسمية الحقل في `printInvoice()` اللذين كانا يعرضان `id` الداخلي تحت تسمية "رقم الفاتورة" خطأً)، و`Suppliers.tsx`. في `PurchaseInvoices.tsx` أُصلح فقط تسمية "رقم الفاتورة" في إيصال الطباعة لتستخدم `invoiceNumber` الحقيقي لصفوف الموردين (تبقى `#{id}` للمصاريف/الرواتب التي لا رقم فاتورة حقيقياً لها) دون إضافة عمود جدول جديد لتفادي عمود شبه فارغ لبقية الأنواع.
 6. **أنواع جديدة/مُعدَّلة:** `invoice_number` أُضيف لـ `MaintenanceInvoiceRow`/`DirectSaleRow`/`SupplierInvoiceRow`/`SaleInvoiceRow`/`PurchaseInvoiceRow` (`src/db/types.ts`)، و`invoiceNumber` لـ `CarRecord`/`SaleRecord`/`SupplierRecord`/`SaleInvoice`/`PurchaseInvoice` (`src/store/GarageContext.tsx`) مع تحديث دوال التحويل المقابلة في `dbMapper.ts` وقناتي `salesInvoice:getAll`/`purchaseInvoice:getAll` في `ipc-handlers.ts`.
+
+**تحديث 2026-07-02 (٤) — خصم على مستوى الفاتورة (صيانة + بيع مباشر):**
+1. **عمودان جديدان** `discount_type TEXT` (`'fixed'`/`'percentage'`/NULL) و`discount_value REAL DEFAULT 0` في `maintenance_invoices` و`direct_sale_invoices` عبر 4 أسطر `ALTER TABLE` جديدة في `src/database.ts` (نفس نمط migrations الموجود؛ السجلات القديمة تبقى بلا خصم — `NULL`/`0`). الخصم على مستوى الفاتورة كاملة وليس البند الفردي (تبسيط مقصود).
+2. **منطق مركزي `src/db/discount.ts → applyDiscount(subtotal, type, value)`:** fixed يُطرح كما هو، percentage نسبة من مجموع البنود؛ يرمي خطأً عربياً عند القيم غير الصالحة (سالبة / نسبة > 100 / مبلغ > المجموع) كحماية أخيرة في main process. **`total_amount` يُخزَّن دائماً بعد الخصم** و`amount_remaining` يُحسب منه — لا تغيير على منطق الدفعات/الديون/الصندوق (كلها تعتمد `total_amount` أصلاً).
+3. **إعادة الحساب:** `updateMaintenanceInvoice` يعيد حساب الإجمالي/المتبقي من بنود الجدول الفعلية عند تغيّر البنود أو الخصم؛ `recalcDirectSaleTotals()` الجديدة في `direct-sale.ts` تُستدعى من `updateDirectSaleItems` ومن قناة `directSale:update` (التي أصبحت تكتب حقلَي الخصم عند تمريرهما). في تعديل البيع المباشر يُمرَّر الخصم الجديد مع البنود الجديدة إلى `directSale:updateItems` (وسيط ثالث اختياري) ليُطبَّقا ذرّياً في transaction واحد — لا يُقيَّم الخصم الجديد مقابل البنود القديمة أبداً.
+4. **اصطلاح `undefined` مقابل `null`:** في مدخلات التعديل `undefined` = لا تغيير على الخصم المخزَّن (شاشتا `SalesInvoices.tsx`/`PendingDebts.tsx` تعدّلان الفاتورة دون معرفة خصمها فلا تمحوه)، و`null` = إزالة الخصم. محفوظ عبر `dbMapper.ts` (`carToUpdateInput`/`saleToDbInput`).
+5. **الواجهة:** في `MaintenanceInvoices.tsx`/`DirectSales.tsx` أسفل جدول البنود مباشرة: "المجموع قبل الخصم" + dropdown نوع الخصم + حقل قيمة + **عرض حي "الإجمالي بعد الخصم"** (نفس أسلوب صندوق "صافي الراتب" الأخضر في `Employees.tsx`)، مع validation (نسبة 0-100، ثابت ≤ مجموع البنود). ملخّص الدفع في البيع المباشر واشتقاق الحالة يعتمدان الإجمالي بعد الخصم.
+6. **العرض:** مودال التفاصيل والإيصال المطبوع في الصفحتين يعرضان عند وجود خصم تسلسل "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" (بدل "الإجمالي الكلي")؛ المجموع قبل الخصم يُشتق من البنود عند توفّرها (`getOne` في الطباعة) أو عكسياً من الإجمالي المخصوم (صفوف GarageContext لا تحمل البنود) عبر `discountBreakdown()`/`discountBreakdownDS()` المحليتين.
+7. **أنواع:** `DiscountType` جديد في `src/db/types.ts` و`GarageContext.tsx`؛ `discount_type`/`discount_value` في `MaintenanceInvoiceRow`/`DirectSaleRow` + المدخلات، و`discountType?`/`discountValue?` في `CarRecord`/`SaleRecord`، مع تحديث `dbMapper.ts` بالاتجاهين.

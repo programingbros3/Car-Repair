@@ -21,7 +21,7 @@
 
 import type {
   CarRecord,
-  SaleRecord, SaleItem,
+  SaleRecord, SaleItem, DiscountType as DiscountTypeUi,
   SupplierRecord,
   Expense, Employee, SalaryRecord,
   DebtType,
@@ -42,7 +42,7 @@ import type {
   SaleInvoiceRow, PurchaseInvoiceRow,
   CashAuditRow, CashAuditInput,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
-  PasswordVerifyResult, AutoLockSettings, ActivityLogRow,
+  PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
   UpcomingChequeRow,
   DebtAgingRow,
 } from '../db/types'
@@ -130,8 +130,10 @@ export const dbService = {
     update: (sale: SaleRecord) =>
       invoke<void>('directSale:update', sale.id, saleToDbInput(sale)),
 
-    updateItems: (id: number, items: SaleItem[]) =>
-      invoke<void>('directSale:updateItems', id, items.map(saleItemToDbInput)),
+    // discount (اختياري): يُطبَّق ذرّياً مع البنود الجديدة في نفس transaction
+    // (لا يُقيَّم الخصم الجديد مقابل البنود القديمة)
+    updateItems: (id: number, items: SaleItem[], discount?: { type: DiscountTypeUi | null; value: number }) =>
+      invoke<void>('directSale:updateItems', id, items.map(saleItemToDbInput), discount),
 
     addPayment: (invoiceId: number, payments: PaymentRow[], date: string) =>
       invoke<void>('directSale:addPayment', invoiceId, payments.map(paymentRowToDbInput), date),
@@ -332,6 +334,13 @@ export const dbService = {
   /* ─────────────── سجل النشاط (قراءة فقط) ─────────────── */
   activityLog: {
     getAll: (limit?: number) => invoke<ActivityLogRow[]>('activityLog:getAll', limit),
+  },
+
+  /* ─────────────── الضريبة (VAT) — اختيارية، معطّلة افتراضياً ─────────────── */
+  vat: {
+    getSettings: () => invoke<VatSettings>('vat:getSettings'),
+    updateSettings: (updates: Partial<VatSettings>) =>
+      invoke<VatSettings>('vat:updateSettings', updates),
   },
 }
 
