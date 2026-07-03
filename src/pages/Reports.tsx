@@ -4,9 +4,10 @@ import { exportToCsv } from '../utils/exportCsv'
 import { exportToXlsx } from '../utils/exportXlsx'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import Pagination from '../components/Pagination'
 import type {
   DailyReport, MonthlyReport, DebtReport, LedgerRow, TopCustomer,
-  DebtAgingRow, DebtAgingBucket,
+  DebtAgingRow, DebtAgingBucket, PendingDebt, SupplierPendingDebt
 } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -154,6 +155,12 @@ export default function Reports() {
   const [agingSort, setAgingSort]     = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading]         = useState(false)
 
+  /* ── Modal States for Debt Details ── */
+  const [detailsDebt, setDetailsDebt] = useState<PendingDebt | null>(null)
+  const [debtItems, setDebtItems] = useState<any[] | null>(null)
+  const [detailsSupDebt, setDetailsSupDebt] = useState<SupplierPendingDebt | null>(null)
+  const [supDebtItems, setSupDebtItems] = useState<any[] | null>(null)
+
   /* ── جلب التقرير المناسب عند تغيّر التبويب أو الفترة ── */
   useEffect(() => {
     let active = true
@@ -212,6 +219,68 @@ export default function Reports() {
     arr.sort((a, b) => agingSort === 'desc' ? b.days_old - a.days_old : a.days_old - b.days_old)
     return arr
   }, [debtsAging, agingSort])
+
+  /* ── Pagination & Filtering ── */
+  const [reportSearch, setReportSearch] = useState('')
+  const [reportPageSize, setReportPageSize] = useState(10)
+  
+  const [topCustPage, setTopCustPage] = useState(1)
+  const [agingPage, setAgingPage] = useState(1)
+  const [custDebtPage, setCustDebtPage] = useState(1)
+  const [supDebtPage, setSupDebtPage] = useState(1)
+
+  useEffect(() => {
+    setReportSearch('')
+    setTopCustPage(1)
+    setAgingPage(1)
+    setCustDebtPage(1)
+    setSupDebtPage(1)
+  }, [tab])
+
+  useEffect(() => {
+    setTopCustPage(1)
+    setAgingPage(1)
+    setCustDebtPage(1)
+    setSupDebtPage(1)
+  }, [reportSearch])
+
+  const filteredTopCust = useMemo(() => {
+    const q = reportSearch.trim().toLowerCase()
+    return q ? topCustomers.filter(c => c.customer_name.toLowerCase().includes(q) || c.customer_phone?.includes(q)) : topCustomers
+  }, [topCustomers, reportSearch])
+  const paginatedTopCust = useMemo(() => {
+    const start = (topCustPage - 1) * reportPageSize
+    return filteredTopCust.slice(start, start + reportPageSize)
+  }, [filteredTopCust, topCustPage, reportPageSize])
+
+  const filteredAging = useMemo(() => {
+    const q = reportSearch.trim().toLowerCase()
+    return q ? sortedAging.filter(d => d.party_name.toLowerCase().includes(q)) : sortedAging
+  }, [sortedAging, reportSearch])
+  const paginatedAging = useMemo(() => {
+    const start = (agingPage - 1) * reportPageSize
+    return filteredAging.slice(start, start + reportPageSize)
+  }, [filteredAging, agingPage, reportPageSize])
+
+  const filteredCustDebts = useMemo(() => {
+    const q = reportSearch.trim().toLowerCase()
+    if (!debts) return []
+    return q ? debts.customer_debts.filter(d => d.customer_name.toLowerCase().includes(q)) : debts.customer_debts
+  }, [debts, reportSearch])
+  const paginatedCustDebts = useMemo(() => {
+    const start = (custDebtPage - 1) * reportPageSize
+    return filteredCustDebts.slice(start, start + reportPageSize)
+  }, [filteredCustDebts, custDebtPage, reportPageSize])
+
+  const filteredSupDebts = useMemo(() => {
+    const q = reportSearch.trim().toLowerCase()
+    if (!debts) return []
+    return q ? debts.supplier_debts.filter(d => d.supplier_name.toLowerCase().includes(q) || d.supplier_phone?.includes(q)) : debts.supplier_debts
+  }, [debts, reportSearch])
+  const paginatedSupDebts = useMemo(() => {
+    const start = (supDebtPage - 1) * reportPageSize
+    return filteredSupDebts.slice(start, start + reportPageSize)
+  }, [filteredSupDebts, supDebtPage, reportPageSize])
 
   /* ── Print report ── */
   const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج الخط الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
@@ -589,6 +658,15 @@ export default function Reports() {
         ))}
       </div>
 
+      {(tab === 'debts' || tab === 'top_customers' || tab === 'debts_aging') && (
+        <div className="mi-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
+          <div className="mi-search-wrap">
+            <input type="text" className="mi-search-input" placeholder="🔍 بحث بالاسم أو الرقم في التقرير..."
+              value={reportSearch} onChange={e => setReportSearch(e.target.value)} />
+          </div>
+        </div>
+      )}
+
       {/* ════════════════════════════════════════
           Period reports (daily / monthly / yearly)
       ════════════════════════════════════════ */}
@@ -785,9 +863,9 @@ export default function Reports() {
               <tbody>
                 {loading ? (
                   <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
-                ) : topCustomers.length === 0 ? (
+                ) : paginatedTopCust.length === 0 ? (
                   <tr><td colSpan={5} className="mi-empty-row">لا توجد بيانات</td></tr>
-                ) : topCustomers.map((c, i) => (
+                ) : paginatedTopCust.map((c, i) => (
                   <tr key={`${c.customer_name}-${i}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                     <td style={{ textAlign: 'center', fontWeight: 700 }}>{i + 1}</td>
                     <td>{c.customer_name}</td>
@@ -803,6 +881,13 @@ export default function Reports() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={topCustPage}
+            totalItems={filteredTopCust.length}
+            pageSize={reportPageSize}
+            onPageChange={setTopCustPage}
+            onPageSizeChange={(size) => { setReportPageSize(size); setTopCustPage(1); setAgingPage(1); setCustDebtPage(1); setSupDebtPage(1) }}
+          />
         </div>
       )}
 
@@ -850,9 +935,9 @@ export default function Reports() {
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={7} className="mi-empty-row">جارٍ التحميل...</td></tr>
-                  ) : sortedAging.length === 0 ? (
+                  ) : paginatedAging.length === 0 ? (
                     <tr><td colSpan={7} className="mi-empty-row">لا توجد ديون معلقة</td></tr>
-                  ) : sortedAging.map((d, i) => (
+                  ) : paginatedAging.map((d, i) => (
                     <tr key={`${d.kind}-${d.invoice_id}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                       <td><span className={AGING_BUCKET_CLS[d.bucket]}>{AGING_BUCKET_LABELS[d.bucket]}</span></td>
                       <td>{d.party_name}</td>
@@ -866,6 +951,13 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              currentPage={agingPage}
+              totalItems={filteredAging.length}
+              pageSize={reportPageSize}
+              onPageChange={setAgingPage}
+              onPageSizeChange={(size) => { setReportPageSize(size); setTopCustPage(1); setAgingPage(1); setCustDebtPage(1); setSupDebtPage(1) }}
+            />
           </div>
         </>
       )}
@@ -892,6 +984,8 @@ export default function Reports() {
                 <thead>
                   <tr>
                     <th>اسم الزبون</th>
+                    <th>التاريخ</th>
+                    <th>السيارة</th>
                     <th>المصدر</th>
                     <th>الإجمالي</th>
                     <th>المدفوع</th>
@@ -901,11 +995,26 @@ export default function Reports() {
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
-                  ) : !debts || debts.customer_debts.length === 0 ? (
+                  ) : !debts || paginatedCustDebts.length === 0 ? (
                     <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون على الزبائن</td></tr>
-                  ) : debts.customer_debts.map((d, i) => (
-                    <tr key={`${d.invoice_type}-${d.invoice_id}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                  ) : paginatedCustDebts.map((d, i) => (
+                    <tr key={`${d.invoice_type}-${d.invoice_id}`} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                      onClick={async () => {
+                        setDetailsDebt(d)
+                        setDebtItems(null)
+                        try {
+                          if (d.invoice_type === 'maintenance') {
+                            const inv = await dbService.maintenance.getOne(d.invoice_id)
+                            setDebtItems(inv?.items ?? [])
+                          } else {
+                            const inv = await dbService.directSale.getOne(d.invoice_id)
+                            setDebtItems(inv?.items ?? [])
+                          }
+                        } catch (err) { showError('تعذر جلب التفاصيل', err) }
+                      }}>
                       <td>{d.customer_name}</td>
+                      <td>{d.invoice_date}</td>
+                      <td>{d.car_plate ? <span className="mi-plate">{d.car_plate}</span> : '—'}</td>
                       <td>
                         <span className={d.invoice_type === 'maintenance' ? 'mi-badge-orange' : 'mi-badge-blue'}>
                           {d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}
@@ -919,6 +1028,13 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              currentPage={custDebtPage}
+              totalItems={filteredCustDebts.length}
+              pageSize={reportPageSize}
+              onPageChange={setCustDebtPage}
+              onPageSizeChange={(size) => { setReportPageSize(size); setTopCustPage(1); setAgingPage(1); setCustDebtPage(1); setSupDebtPage(1) }}
+            />
             <div className="mi-total-row">
               إجمالي ديون الزبائن: <strong>{fmt(debts?.total_customer_debt ?? 0)} ₪</strong>
             </div>
@@ -932,6 +1048,7 @@ export default function Reports() {
                 <thead>
                   <tr>
                     <th>اسم المورد</th>
+                    <th>التاريخ</th>
                     <th>رقم الهاتف</th>
                     <th>الإجمالي</th>
                     <th>المدفوع</th>
@@ -941,11 +1058,20 @@ export default function Reports() {
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
-                  ) : !debts || debts.supplier_debts.length === 0 ? (
+                  ) : !debts || paginatedSupDebts.length === 0 ? (
                     <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون للموردين</td></tr>
-                  ) : debts.supplier_debts.map((d, i) => (
-                    <tr key={d.invoice_id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                  ) : paginatedSupDebts.map((d, i) => (
+                    <tr key={d.invoice_id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                      onClick={async () => {
+                        setDetailsSupDebt(d)
+                        setSupDebtItems(null)
+                        try {
+                          const inv = await dbService.supplierInvoice.getOne(d.invoice_id)
+                          setSupDebtItems(inv?.items ?? [])
+                        } catch (err) { showError('تعذر جلب التفاصيل', err) }
+                      }}>
                       <td>{d.supplier_name}</td>
+                      <td>{d.purchase_date}</td>
                       <td>{d.supplier_phone ?? '—'}</td>
                       <td className="mi-amount">{fmt(d.total_amount)} ₪</td>
                       <td className="pd-paid">{fmt(d.amount_paid)} ₪</td>
@@ -955,11 +1081,122 @@ export default function Reports() {
                 </tbody>
               </table>
             </div>
+            <Pagination
+              currentPage={supDebtPage}
+              totalItems={filteredSupDebts.length}
+              pageSize={reportPageSize}
+              onPageChange={setSupDebtPage}
+              onPageSizeChange={(size) => { setReportPageSize(size); setTopCustPage(1); setAgingPage(1); setCustDebtPage(1); setSupDebtPage(1) }}
+            />
             <div className="mi-total-row">
               إجمالي ديون الموردين: <strong>{fmt(debts?.total_supplier_debt ?? 0)} ₪</strong>
             </div>
           </div>
         </>
+      )}
+
+      {/* ════ Debt Details Modal ════ */}
+      {detailsDebt && (
+        <div className="mi-modal-overlay" onClick={() => setDetailsDebt(null)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تفاصيل فاتورة الدين — {detailsDebt.customer_name}</h3>
+              <button className="mi-modal-close" onClick={() => setDetailsDebt(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid">
+                <div className="mi-detail-item"><span className="mi-detail-label">التاريخ</span><span>{detailsDebt.invoice_date}</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المصدر</span><span className={detailsDebt.invoice_type === 'maintenance' ? 'mi-badge-orange' : 'mi-badge-blue'}>{detailsDebt.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}</span></div>
+                {detailsDebt.car_plate && <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span><span className="mi-plate">{detailsDebt.car_plate}</span></div>}
+                {detailsDebt.car_type && <div className="mi-detail-item"><span className="mi-detail-label">نوع السيارة</span><span>{detailsDebt.car_type}</span></div>}
+                {detailsDebt.car_color && <div className="mi-detail-item"><span className="mi-detail-label">لون السيارة</span><span>{detailsDebt.car_color}</span></div>}
+                <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsDebt.total_amount)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsDebt.amount_paid)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(detailsDebt.amount_remaining)} ₪</span></div>
+              </div>
+              <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: '#1E2A38' }}>العناصر المسجلة بالفاتورة</h4>
+              {debtItems === null ? (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>جارٍ التحميل...</div>
+              ) : debtItems.length === 0 ? (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>لا توجد عناصر</div>
+              ) : (
+                <table className="mi-table" style={{ fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr><th>اسم العنصر / القطعة</th><th style={{width: 60}}>الكمية</th><th style={{width: 80}}>السعر</th><th style={{width: 80}}>المجموع</th></tr>
+                  </thead>
+                  <tbody>
+                    {debtItems.map((it, i) => {
+                      const name = it.itemName || it.item_name || ''
+                      const qty = it.quantity || 0
+                      const price = it.unitPrice || it.unit_price || 0
+                      return (
+                        <tr key={i}>
+                          <td>{name}</td>
+                          <td style={{ textAlign: 'center' }}>{qty}</td>
+                          <td style={{ textAlign: 'center' }}>{fmt(price)}</td>
+                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{fmt(qty * price)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-ghost" onClick={() => setDetailsDebt(null)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Supplier Debt Details Modal ════ */}
+      {detailsSupDebt && (
+        <div className="mi-modal-overlay" onClick={() => setDetailsSupDebt(null)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تفاصيل فاتورة المورد — {detailsSupDebt.supplier_name}</h3>
+              <button className="mi-modal-close" onClick={() => setDetailsSupDebt(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid">
+                <div className="mi-detail-item"><span className="mi-detail-label">التاريخ</span><span>{detailsSupDebt.purchase_date}</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsSupDebt.total_amount)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsSupDebt.amount_paid)} ₪</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(detailsSupDebt.amount_remaining)} ₪</span></div>
+              </div>
+              <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: '#1E2A38' }}>البضاعة المشتراة</h4>
+              {supDebtItems === null ? (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>جارٍ التحميل...</div>
+              ) : supDebtItems.length === 0 ? (
+                <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>لا توجد عناصر</div>
+              ) : (
+                <table className="mi-table" style={{ fontSize: '0.9rem' }}>
+                  <thead>
+                    <tr><th>اسم العنصر / القطعة</th><th style={{width: 60}}>الكمية</th><th style={{width: 80}}>السعر</th><th style={{width: 80}}>المجموع</th></tr>
+                  </thead>
+                  <tbody>
+                    {supDebtItems.map((it, i) => {
+                      const name = it.itemName || it.item_name || ''
+                      const qty = it.quantity || 0
+                      const price = it.unitPrice || it.unit_price || 0
+                      return (
+                        <tr key={i}>
+                          <td>{name}</td>
+                          <td style={{ textAlign: 'center' }}>{qty}</td>
+                          <td style={{ textAlign: 'center' }}>{fmt(price)}</td>
+                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{fmt(qty * price)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-ghost" onClick={() => setDetailsSupDebt(null)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
