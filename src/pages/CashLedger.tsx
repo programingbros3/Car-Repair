@@ -122,6 +122,14 @@ export default function CashLedger() {
 
   /* ── Overall summary (removed — no longer used) ── */
 
+  /* ── Daily totals for the 4 summary cards (tied to selectedDate) ── */
+  const [dayTotals, setDayTotals] = useState({
+    salesIncome:      0, // إيرادات اليوم (صيانة + بيع مباشر)
+    expenses:         0, // مصاريف اليوم
+    supplierPayments: 0, // مدفوعات الموردين اليوم
+    salaries:         0, // رواتب اليوم
+  })
+
   /* ── End-of-day audit ── */
   const [dailyNet, setDailyNet]             = useState(0)
   const [sysBreakdown, setSysBreakdown]     = useState<CashSystemBreakdown>({ cash: 0, visa: 0, cheque: 0 })
@@ -173,6 +181,12 @@ export default function CashLedger() {
       .then(([entries, report, breakdown]) => {
         setRows(groupEntries([...entries].reverse()))
         setDailyNet(report.net)
+        setDayTotals({
+          salesIncome:      report.today_sales_income,
+          expenses:         report.today_expenses,
+          supplierPayments: report.today_supplier_payments,
+          salaries:         report.today_salaries,
+        })
         setSysBreakdown(breakdown)
       })
       .catch(err => showError('تعذّر تحميل بيانات اليوم', err))
@@ -353,6 +367,34 @@ export default function CashLedger() {
     <div>
       <div className="page-header">
         <h1 className="page-title">الصندوق الرئيسي</h1>
+      </div>
+
+      {/* ── بطاقات ملخّص اليوم (إيرادات/مصاريف/موردين/رواتب) — مرتبطة بـ selectedDate وتتحدّث حياً ── */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <span className="stat-label">إيرادات اليوم (صيانة + بيع مباشر) ₪</span>
+          <span className="stat-value" style={{ color: '#2ECC71' }}>
+            {fmt(dayTotals.salesIncome)} ₪
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">مصاريف اليوم ₪</span>
+          <span className="stat-value" style={{ color: '#E74C3C' }}>
+            {fmt(dayTotals.expenses)} ₪
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">مدفوعات الموردين اليوم ₪</span>
+          <span className="stat-value" style={{ color: '#E74C3C' }}>
+            {fmt(dayTotals.supplierPayments)} ₪
+          </span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">رواتب اليوم ₪</span>
+          <span className="stat-value" style={{ color: '#E74C3C' }}>
+            {fmt(dayTotals.salaries)} ₪
+          </span>
+        </div>
       </div>
 
       {/* ── Daily Stats ── */}

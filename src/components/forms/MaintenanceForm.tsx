@@ -220,7 +220,7 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
       <div className="mi-parts-table-wrap">
         <table className="mi-parts-table">
           <thead>
-            <tr><th>النوع</th><th>اسم القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الكفالة</th><th>ملاحظات</th><th></th></tr>
+            <tr><th>النوع</th><th>اسم القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الإجمالي (₪)</th><th>الكفالة</th><th>ملاحظات</th><th></th></tr>
           </thead>
           <tbody>
             {parts.map(part => (
@@ -247,6 +247,9 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
                   <input type="number" min={0} value={part.unitPrice || ''} className="mi-td-input mi-td-num"
                     onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))}
                     onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'unitPrice', 0) }} />
+                </td>
+                <td className="mi-td-center">
+                  {fmt(Number(part.partType === 'service' ? 1 : (part.qty || 0)) * Number(part.unitPrice || 0))} ₪
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>

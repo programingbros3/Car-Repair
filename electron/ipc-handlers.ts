@@ -24,7 +24,7 @@ import {
   getDirectSaleInvoices, getDirectSaleInvoice,
 } from '../src/db/direct-sale'
 import {
-  addSupplierInvoice, addSupplierPayment, addSupplierDebtPayment,
+  addSupplierInvoice, updateSupplierInvoice, addSupplierPayment, addSupplierDebtPayment,
   getSupplierInvoices, getSupplierInvoice, getSupplierDebts, searchSupplierNames,
 } from '../src/db/suppliers'
 import {
@@ -35,7 +35,7 @@ import {
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
 import { getLedgerSummary, getLedgerByDateRange, recordLedgerEntry, REF } from '../src/db/ledger'
 import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers, getDebtsAging } from '../src/db/reports'
-import { getUpcomingCheques } from '../src/db/cheques'
+import { getUpcomingCheques, getAllCheques } from '../src/db/cheques'
 import {
   getAutoBackupSettings, updateAutoBackupSettings, getAutoBackupStatus,
   runAutoBackup, pickAutoBackupFolder,
@@ -49,6 +49,7 @@ import {
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
+  ChequeFilters,
   PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput, DiscountType,
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
   DailyExpenseInput, EmployeeInput, SalaryInput,
@@ -158,7 +159,7 @@ export function registerIpcHandlers(db: DB): void {
     })()
     logActivity(db, 'update', 'maintenance_invoice', id, `تعديل فاتورة صيانة #${id}${updates.customer_name ? ` — ${updates.customer_name}` : ''}`)
   })
-  on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[] }) =>
+  on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[]; settlementDiscount?: number }) =>
     releaseMaintenanceCar(input))
   on('maintenance:delete', (id: number) => {
     db.transaction(() => {
@@ -205,8 +206,8 @@ export function registerIpcHandlers(db: DB): void {
   })
   on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[], discount?: { type: DiscountType | null; value: number }) =>
     updateDirectSaleItems(invoiceId, items, discount))
-  on('directSale:addPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
-    addPayment(invoiceId, 'direct_sale', payments, date))
+  on('directSale:addPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
+    addPayment(invoiceId, 'direct_sale', payments, date, settlementDiscount ?? 0))
   on('directSale:delete', (id: number) => {
     db.transaction(() => {
       const payIds = paymentIds(db, 'payments', `invoice_id=? AND invoice_type='direct_sale'`, id)
@@ -228,15 +229,13 @@ export function registerIpcHandlers(db: DB): void {
   on('supplierInvoice:getOne', (id: number) => getSupplierInvoice(id))
   on('supplierInvoice:add', (input: SupplierInvoiceInput) => addSupplierInvoice(input))
   on('supplierInvoice:update', (id: number, input: SupplierInvoiceInput) => {
-    db.prepare(
-      `UPDATE supplier_invoices SET supplier_name=?, supplier_phone=?, purchase_date=?, notes=? WHERE id=?`,
-    ).run(input.supplier_name, input.supplier_phone ?? null, input.purchase_date, input.notes ?? null, id)
+    updateSupplierInvoice(id, input)
     logActivity(db, 'update', 'supplier_invoice', id, `تعديل فاتورة مورد #${id} — ${input.supplier_name}`)
   })
-  on('supplierInvoice:addPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
-    addSupplierPayment(invoiceId, payments, date))
-  on('supplierInvoice:addDebtPayment', (invoiceId: number, payments: PaymentInput[], date: string) =>
-    addSupplierDebtPayment(invoiceId, payments, date))
+  on('supplierInvoice:addPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
+    addSupplierPayment(invoiceId, payments, date, settlementDiscount ?? 0))
+  on('supplierInvoice:addDebtPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
+    addSupplierDebtPayment(invoiceId, payments, date, settlementDiscount ?? 0))
   on('supplierInvoice:getDebts', () => getSupplierDebts())
   on('supplierInvoice:searchNames', (query: string) => searchSupplierNames(query))
   on('supplierInvoice:delete', (id: number) => {
@@ -308,8 +307,8 @@ export function registerIpcHandlers(db: DB): void {
 
   /* ─────────────── الديون المعلّقة (العملاء) ─────────────── */
   on('debt:getAll', (filters?: DebtFilters) => getPendingDebts(filters ?? {}))
-  on('debt:addPayment', (invoiceId: number, type: InvoiceType, payments: PaymentInput[], date: string) =>
-    addDebtPayment(invoiceId, type, payments, date))
+  on('debt:addPayment', (invoiceId: number, type: InvoiceType, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
+    addDebtPayment(invoiceId, type, payments, date, settlementDiscount ?? 0))
 
   /* ─────────────── الصندوق ─────────────── */
   on('ledger:getSummary', () => getLedgerSummary())
@@ -324,6 +323,7 @@ export function registerIpcHandlers(db: DB): void {
 
   /* ─────────────── الشيكات المستحقة قريباً (قراءة فقط) ─────────────── */
   on('cheques:getUpcoming', (daysAhead?: number) => getUpcomingCheques(daysAhead ?? 14))
+  on('cheques:getAll', (filters?: ChequeFilters) => getAllCheques(filters ?? {}))
 
   /* ─────────────── فواتير البيع (عرض مجمّع: صيانة + بيع مباشر) ─────────────── */
   on('salesInvoice:getAll', () =>
@@ -472,22 +472,31 @@ export function registerIpcHandlers(db: DB): void {
 
   /* ── دفعات الفاتورة (صيانة / بيع مباشر) ── */
   on('payments:getByInvoice', (invoiceId: number, invoiceType: string) =>
+    // تجمع دفعات الاستلام/التسليم (payments) مع دفعات تحصيل الدين لاحقاً (debt_payments)
+    // كي يظهر تفصيل الدفعات كاملاً — بما فيه صفوف "خصم التسوية" (settlement_discount) —
+    // على الإيصال المطبوع ومودالات التفاصيل، لا دفعات الاستلام فقط.
     db.prepare(`
-      SELECT method, amount, payment_date
-      FROM payments
+      SELECT method, amount, payment_date, settlement_discount FROM payments
       WHERE invoice_id = ? AND invoice_type = ?
-      ORDER BY id ASC
-    `).all(invoiceId, invoiceType)
+      UNION ALL
+      SELECT method, amount, payment_date, settlement_discount FROM debt_payments
+      WHERE invoice_id = ? AND invoice_type = ?
+      ORDER BY payment_date ASC
+    `).all(invoiceId, invoiceType, invoiceId, invoiceType)
   )
 
   /* ── دفعات فواتير الموردين ── */
   on('supplierPayments:getByInvoice', (invoiceId: number) =>
+    // تجمع دفعات الشراء (supplier_payments) مع سداد ديون المورد لاحقاً (supplier_debt_payments)
+    // كي يظهر خصم التسوية في كلا النوعين على الإيصال ومودال التفاصيل.
     db.prepare(`
-      SELECT method, amount, payment_date
-      FROM supplier_payments
+      SELECT method, amount, payment_date, settlement_discount FROM supplier_payments
       WHERE invoice_id = ?
-      ORDER BY id ASC
-    `).all(invoiceId)
+      UNION ALL
+      SELECT method, amount, payment_date, settlement_discount FROM supplier_debt_payments
+      WHERE invoice_id = ?
+      ORDER BY payment_date ASC
+    `).all(invoiceId, invoiceId)
   )
 
   /* ─────────────── النسخ الاحتياطي ─────────────── */

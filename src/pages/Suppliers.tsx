@@ -1,12 +1,14 @@
 import { useState, useMemo, useRef } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { Supplier, SupplierRecord } from '../store/GarageContext'
+import type { Supplier, SupplierRecord, SupplierItem } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SupplierInvoiceForm, { hasSupplierDraft, clearSupplierDraft, type SupplierInvoiceFormHandle } from '../components/forms/SupplierInvoiceForm'
 import { printPdf } from '../utils/printPdf'
+import { applyDiscount } from '../db/discount'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { useSettlementTotal } from '../utils/useSettlementTotal'
 
 /* ════════════════════════════════════════
    Local-only types (payment modal state)
@@ -42,24 +44,41 @@ const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش',
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 
+// خصم على مستوى البند الفردي — وصف للعرض + الإجمالي بعد الخصم
+const itemDiscountLabel = (item: SupplierItem): string =>
+  !item.discountType ? '—'
+    : item.discountType === 'percentage'
+      ? `${fmt(item.discountValue ?? 0)}%`
+      : `−${fmt(item.discountValue ?? 0)} ₪`
+const itemNetTotal = (item: SupplierItem): number =>
+  applyDiscount(item.quantity * item.unitPrice, item.discountType ?? null, item.discountValue ?? 0)
+
 function printSupplierInvoice(
   sup: SupplierRecord,
-  payments: Array<{ method: string; amount: number }> = [],
+  payments: Array<{ method: string; amount: number; settlement_discount?: number }> = [],
 ): void {
   const PAY_AR: Record<string, string> = { cash: 'نقداً', cheque: 'شيك', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+  const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
   const rows = sup.items.map(item => `
     <tr>
       <td>${item.name}</td>
       <td>${item.quantity}</td>
       <td>${fmt(item.unitPrice)} ₪</td>
       <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+      <td>${itemDiscountLabel(item)}</td>
+      <td>${fmt(itemNetTotal(item))} ₪</td>
       <td>${item.notes || '—'}</td>
     </tr>`).join('')
-  const payRows = payments.map(p => `
+  const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
     <tr>
       <td>${PAY_AR[p.method] || p.method}</td>
       <td class="amount-in">${fmt(p.amount)} ₪</td>
     </tr>`).join('')
+    + (settlementTotal > 0 ? `
+    <tr>
+      <td>خصم تسوية</td>
+      <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
+    </tr>` : '')
   const body = `
     <div class="detail-grid">
       <div class="detail-item"><label>رقم الفاتورة</label><span>${sup.invoiceNumber || '—'}</span></div>
@@ -69,7 +88,7 @@ function printSupplierInvoice(
       ${sup.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${sup.notes}</span></div>` : ''}
     </div>
     <table>
-      <thead><tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th></tr></thead>
+      <thead><tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الخصم</th><th>بعد الخصم</th><th>ملاحظات</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <div class="detail-grid" style="margin-top:16px;">
@@ -140,11 +159,14 @@ export default function Suppliers() {
   /* filters */
   const [search,      setSearch]      = useState('')
   const [phoneSearch, setPhoneSearch] = useState('')
+  const [filterFrom,  setFilterFrom]  = useState('')
+  const [filterTo,    setFilterTo]    = useState('')
   const [amtMin,      setAmtMin]      = useState('')
   const [amtMax,      setAmtMax]      = useState('')
 
   /* modals */
   const [detailsSup, setDetailsSup] = useState<SupplierRecord | null>(null)
+  const detailsSettlement = useSettlementTotal(detailsSup ? 'supplier' : null, detailsSup?.id ?? null)
   const [warnSup,    setWarnSup]    = useState<SupplierRecord | null>(null)
   const [deleteSup,  setDeleteSup]  = useState<SupplierRecord | null>(null)
 
@@ -153,6 +175,7 @@ export default function Suppliers() {
   const [payDate,      setPayDate]      = useState(today())
   const [payNotes,     setPayNotes]     = useState('')
   const [payRows,      setPayRows]      = useState<PaymentRow[]>([])
+  const [settleDiscount, setSettleDiscount] = useState('')
   const [paySubmitted, setPaySubmitted] = useState(false)
 
   /* ── Fuse.js ── */
@@ -172,13 +195,15 @@ export default function Suppliers() {
       ? fuse.search(normalizeAr(q)).map(r => supplierInvoices[r.item._idx])
       : [...supplierInvoices]
     if (phoneSearch) result = result.filter(s => s.phone.includes(phoneSearch))
+    if (filterFrom)  result = result.filter(s => s.purchaseDate >= filterFrom)
+    if (filterTo)    result = result.filter(s => s.purchaseDate <= filterTo)
     if (amtMin)      result = result.filter(s => s.total >= Number(amtMin))
     if (amtMax)      result = result.filter(s => s.total <= Number(amtMax))
     return result
-  }, [supplierInvoices, search, phoneSearch, amtMin, amtMax, fuse])
+  }, [supplierInvoices, search, phoneSearch, filterFrom, filterTo, amtMin, amtMax, fuse])
 
-  const hasFilters   = !!search.trim() || !!phoneSearch || !!amtMin || !!amtMax
-  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setAmtMin(''); setAmtMax('') }
+  const hasFilters   = !!search.trim() || !!phoneSearch || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
+  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('') }
 
   /* ════════════════════════════════════════
      Suppliers list helpers
@@ -253,7 +278,7 @@ export default function Suppliers() {
   /* ── Payment modal ── */
   const openPay = (sup: SupplierRecord) => {
     setPaySup(sup); setPayDate(today()); setPayNotes('')
-    setPayRows([emptyPayRow()]); setPaySubmitted(false)
+    setPayRows([emptyPayRow()]); setSettleDiscount(''); setPaySubmitted(false)
   }
   const addPayRow    = () => setPayRows(prev => [...prev, emptyPayRow()])
   const removePayRow = (id: number) => setPayRows(prev => prev.filter(r => r.id !== id))
@@ -261,15 +286,16 @@ export default function Suppliers() {
     setPayRows(prev => prev.map(r => r.id !== id ? r : { ...r, ...update }))
 
   const thisPaymentTotal = payRows.reduce((s, r) => s + (r.amount || 0), 0)
-  const remainingAfter   = (paySup?.amountRemaining ?? 0) - thisPaymentTotal
-  const payExceedsDebt   = thisPaymentTotal > (paySup?.amountRemaining ?? 0)
+  const settleNum        = Math.max(0, Number(settleDiscount || 0))
+  const remainingAfter   = (paySup?.amountRemaining ?? 0) - thisPaymentTotal - settleNum
+  const payExceedsDebt   = thisPaymentTotal + settleNum > (paySup?.amountRemaining ?? 0) + 0.001
 
   const handlePayConfirm = async () => {
     setPaySubmitted(true)
-    if (thisPaymentTotal <= 0 || payExceedsDebt || !paySup) return
+    if ((thisPaymentTotal <= 0 && settleNum <= 0) || payExceedsDebt || !paySup) return
     const rows = payRows.filter(r => r.amount > 0)
     try {
-      await dbService.supplierInvoice.addDebtPayment(paySup.id, rows, payDate)
+      await dbService.supplierInvoice.addDebtPayment(paySup.id, rows, payDate, settleNum)
       await reload()
       setPaySup(null)
     } catch (err) {
@@ -447,6 +473,16 @@ export default function Suppliers() {
           </div>
           <div className="mi-date-range">
             <div className="mi-filter-field">
+              <span className="mi-filter-label">من تاريخ</span>
+              <input type="date" className="mi-date-input" value={filterFrom} max={today()}
+                onChange={e => setFilterFrom(e.target.value > today() ? today() : e.target.value)} />
+            </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">إلى تاريخ</span>
+              <input type="date" className="mi-date-input" value={filterTo} max={today()}
+                onChange={e => setFilterTo(e.target.value > today() ? today() : e.target.value)} />
+            </div>
+            <div className="mi-filter-field">
               <span className="mi-filter-label">من مبلغ ₪</span>
               <input type="number" min={0} className="mi-amount-input"
                 value={amtMin} onChange={e => setAmtMin(e.target.value)} placeholder="0" />
@@ -571,7 +607,7 @@ export default function Suppliers() {
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead>
-                    <tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th></tr>
+                    <tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الخصم</th><th>بعد الخصم</th><th>ملاحظات</th></tr>
                   </thead>
                   <tbody>
                     {detailsSup.items.map((item, idx) => (
@@ -580,6 +616,8 @@ export default function Suppliers() {
                         <td className="mi-td-center">{item.quantity}</td>
                         <td className="mi-td-center">{fmt(item.unitPrice)} ₪</td>
                         <td className="mi-td-center">{fmt(item.quantity * item.unitPrice)} ₪</td>
+                        <td className="mi-td-center">{itemDiscountLabel(item)}</td>
+                        <td className="mi-td-center"><strong>{fmt(itemNetTotal(item))} ₪</strong></td>
                         <td>{item.notes || '—'}</td>
                       </tr>
                     ))}
@@ -589,6 +627,11 @@ export default function Suppliers() {
               <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
                 الإجمالي الكلي: <strong>{fmt(detailsSup.total)} ₪</strong>
               </div>
+              {detailsSettlement > 0 && (
+                <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
+                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                </div>
+              )}
 
               {detailsSup.phone && detailsSup.phone !== '' && (
                 <LinkedOpsSection phone={detailsSup.phone} source="supplier" id={detailsSup.id} />
@@ -700,11 +743,19 @@ export default function Suppliers() {
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPayRow}>+ إضافة طريقة دفع</button>
 
-              {paySubmitted && thisPaymentTotal <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
+              <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
+                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <input type="number" min={0} placeholder="0" value={settleDiscount}
+                  className="mi-td-input"
+                  onChange={e => setSettleDiscount(e.target.value)} />
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+              </label>
+
+              {paySubmitted && thisPaymentTotal <= 0 && settleNum <= 0 && (
+                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة أو خصم التسوية</p>
               )}
               {payExceedsDebt && (
-                <p className="pd-pay-error">مجموع الدفعة ({fmt(thisPaymentTotal)} ₪) يتجاوز المتبقي ({fmt(paySup.amountRemaining)} ₪)</p>
+                <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPaymentTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(paySup.amountRemaining)} ₪)</p>
               )}
 
               <div className="pay-summary">
@@ -712,9 +763,15 @@ export default function Suppliers() {
                   <span>إجمالي هذه الدفعة</span>
                   <strong className="pay-paid">{fmt(thisPaymentTotal)} ₪</strong>
                 </div>
+                {settleNum > 0 && (
+                  <div className="pay-summary-row">
+                    <span>خصم تسوية</span>
+                    <strong className="pay-over">−{fmt(settleNum)} ₪</strong>
+                  </div>
+                )}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعدها</span>
-                  <strong className={remainingAfter <= 0 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
+                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <strong className={remainingAfter <= 0.001 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
                     {fmt(Math.max(0, remainingAfter))} ₪
                   </strong>
                 </div>

@@ -24,3 +24,4 @@ release
 *.sln
 *.sw?
 dist-electron/
+.claude/

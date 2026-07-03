@@ -57,6 +57,11 @@ export function getDailyReport(date: string): DailyReport {
     total_out,
     net: total_in - total_out,
     entries,
+    // حقول مجمّعة إضافية لبطاقات الصندوق الأربع الجديدة (تُشتق من نفس entries المجمّعة لليوم المحدد)
+    today_sales_income:      maintenance_income + direct_sale_income,
+    today_expenses:          daily_expenses,
+    today_supplier_payments: supplier_expenses,
+    today_salaries:          salaries,
   }
 }
 

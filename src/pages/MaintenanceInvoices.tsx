@@ -6,6 +6,7 @@ import MaintenanceForm, { hasMaintenanceDraft, clearMaintenanceDraft, type Maint
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { useSettlementTotal } from '../utils/useSettlementTotal'
 import type { VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -131,6 +132,37 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
   )
 }
 
+/* عمليات سابقة مرتبطة بنمرة السيارة (بجانب قسم الهاتف — كلاهما يظهران معاً) */
+function LinkedOpsByPlateSection({ carPlate, source, id }: { carPlate: string; source: string; id: number }) {
+  const { getLinkedOpsByPlate } = useGarage()
+  const ops = useMemo(() => getLinkedOpsByPlate(carPlate, source, id), [carPlate, source, id, getLinkedOpsByPlate])
+  if (!ops.length) return null
+  const fmt = (n: number) => n.toLocaleString('en-US')
+  return (
+    <div className="linked-ops-section">
+      <h4 className="linked-ops-title">عمليات سابقة لهذه السيارة ({ops.length})</h4>
+      <div className="mi-parts-table-wrap">
+        <table className="mi-parts-table">
+          <thead>
+            <tr><th>التاريخ</th><th>نوع العملية</th><th>الاسم / الوصف</th><th>الإجمالي</th><th>الحالة</th></tr>
+          </thead>
+          <tbody>
+            {ops.map(op => (
+              <tr key={`${op.source}-${op.id}`}>
+                <td>{op.date}</td>
+                <td><span className={op.sourceCls}>{op.sourceLabel}</span></td>
+                <td>{op.name}</td>
+                <td className="mi-amount">{fmt(op.total)} ₪</td>
+                <td>{op.statusLabel && <span className={op.statusCls}>{op.statusLabel}</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 /* ════════════════════════════════════════
    Component
 ════════════════════════════════════════ */
@@ -145,10 +177,12 @@ export default function MaintenanceInvoices() {
 
   /* modals */
   const [detailsCar, setDetailsCar]           = useState<CarRecord | null>(null)
+  const detailsSettlement = useSettlementTotal(detailsCar ? 'maintenance' : null, detailsCar?.id ?? null)
   const [warnCar, setWarnCar]                 = useState<CarRecord | null>(null)
   const [deliveryCar, setDeliveryCar]         = useState<CarRecord | null>(null)
   const [deliveryDate, setDeliveryDate]       = useState(today())
   const [paymentRows, setPaymentRows]         = useState<PaymentRow[]>([])
+  const [settleDiscount, setSettleDiscount]   = useState('')
   const [deleteCar, setDeleteCar]             = useState<CarRecord | null>(null)
   const [confirmDeliveryDebt, setConfirmDeliveryDebt] = useState(false)
 
@@ -207,7 +241,7 @@ export default function MaintenanceInvoices() {
   const onEditSaved = () => setEditCar(null)
 
   /* Delivery modal */
-  const openDelivery      = (car: CarRecord) => { setDeliveryCar(car); setDeliveryDate(today()); setPaymentRows([emptyPayRow()]) }
+  const openDelivery      = (car: CarRecord) => { setDeliveryCar(car); setDeliveryDate(today()); setPaymentRows([emptyPayRow()]); setSettleDiscount('') }
   const addPaymentRow     = () => setPaymentRows(prev => [...prev, emptyPayRow()])
   const removePaymentRow  = (id: number) => setPaymentRows(prev => prev.filter(r => r.id !== id))
   const updatePaymentRow  = (id: number, u: Partial<Omit<PaymentRow, 'id'>>) =>
@@ -217,13 +251,14 @@ export default function MaintenanceInvoices() {
   const alreadyPaid    = deliveryCar?.amountPaid ?? 0
   const invoiceRemaining = deliveryCar ? Math.max(0, invoiceTotal - alreadyPaid) : 0
   const totalPaid      = paymentRows.reduce((s, r) => s + Number(r.amount || 0), 0)
-  const remaining      = invoiceRemaining - totalPaid
-  const deliveryExceeds = totalPaid > invoiceRemaining + 0.001
+  const settleNum      = Math.max(0, Number(settleDiscount || 0))
+  const remaining      = invoiceRemaining - totalPaid - settleNum
+  const deliveryExceeds = totalPaid + settleNum > invoiceRemaining + 0.001
 
   const handleDeliverySave = () => {
     if (!deliveryCar) return
     if (deliveryExceeds) {
-      showError(`مجموع الدفعة (${fmt(totalPaid)} ₪) يتجاوز المتبقي (${fmt(invoiceRemaining)} ₪)`, null)
+      showError(`مجموع الدفعة والخصم (${fmt(totalPaid + settleNum)} ₪) يتجاوز المتبقي (${fmt(invoiceRemaining)} ₪)`, null)
       return
     }
     if (remaining > 0.009) {
@@ -237,7 +272,7 @@ export default function MaintenanceInvoices() {
     if (!deliveryCar) return
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
-      await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows)
+      await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows, settleNum)
       await reload()
       setConfirmDeliveryDebt(false)
       setDeliveryCar(null)
@@ -267,11 +302,17 @@ export default function MaintenanceInvoices() {
           <td>${warrantyLabel(item.warranty)}</td>
           <td>${item.notes || '—'}</td>
         </tr>`).join('')
-      const payRows = payments.map(p => `
+      const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
+      const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
         <tr>
           <td>${PAY_AR[p.method] || p.method}</td>
           <td class="amount-in">${fmt(p.amount)} ₪</td>
         </tr>`).join('')
+        + (settlementTotal > 0 ? `
+        <tr>
+          <td>خصم تسوية</td>
+          <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
+        </tr>` : '')
       const body = `
         <div class="detail-grid">
           <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
@@ -583,8 +624,16 @@ export default function MaintenanceInvoices() {
                 )
               })()}
 
+              {detailsSettlement > 0 && (
+                <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
+                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                </div>
+              )}
+
               {/* Previous operations for same phone */}
               <LinkedOpsSection phone={detailsCar.phone} source="maintenance" id={detailsCar.id} />
+              {/* Previous operations for same car plate (نمرة السيارة) */}
+              <LinkedOpsByPlateSection carPlate={detailsCar.carPlate} source="maintenance" id={detailsCar.id} />
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary" onClick={() => handlePrintCar(detailsCar)}>طباعة</button>
@@ -660,15 +709,23 @@ export default function MaintenanceInvoices() {
                 </div>
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
-              {deliveryExceeds && <p className="pd-pay-error">مجموع الدفعة ({fmt(totalPaid)} ₪) يتجاوز المتبقي ({fmt(invoiceRemaining)} ₪)</p>}
+              <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
+                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <input type="number" min={0} placeholder="0" value={settleDiscount}
+                  className="mi-td-input"
+                  onChange={e => setSettleDiscount(e.target.value)} />
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+              </label>
+              {deliveryExceeds && <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(totalPaid + settleNum)} ₪) يتجاوز المتبقي ({fmt(invoiceRemaining)} ₪)</p>}
               <div className="pay-summary">
                 <div className="pay-summary-row"><span>إجمالي الفاتورة</span><strong>{fmt(invoiceTotal)} ₪</strong></div>
                 {alreadyPaid > 0 && <div className="pay-summary-row"><span>المدفوع سابقاً</span><strong className="pay-paid">{fmt(alreadyPaid)} ₪</strong></div>}
                 <div className="pay-summary-row"><span>المتبقي قبل هذه الدفعة</span><strong className="pay-due">{fmt(invoiceRemaining)} ₪</strong></div>
                 <div className="pay-summary-row"><span>إجمالي هذه الدفعة</span><strong className="pay-paid">{fmt(totalPaid)} ₪</strong></div>
+                {settleNum > 0 && <div className="pay-summary-row"><span>خصم تسوية</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعد الدفعة</span>
-                  <strong className={remaining <= 0 ? 'pay-ok' : deliveryExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, remaining))} ₪</strong>
+                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <strong className={remaining <= 0.001 ? 'pay-ok' : deliveryExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, remaining))} ₪</strong>
                 </div>
               </div>
             </div>

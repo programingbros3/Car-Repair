@@ -105,6 +105,7 @@ export interface ReleaseCarInput {
   invoiceId: number
   date_released: string
   payments: PaymentInput[]
+  settlementDiscount?: number   // خصم تسوية اختياري يُسقَط من المتبقّي (لا نقدية)
 }
 
 // ── Direct Sale ───────────────────────────────────────────────────────────────
@@ -159,7 +160,8 @@ export interface PendingDebt {
   total_amount: number
   amount_paid: number
   amount_remaining: number
-  // إثراء التفاصيل: صيانة فقط لـ car_type/car_color (NULL لبيع مباشر)، notes لكليهما
+  // إثراء التفاصيل: صيانة فقط لـ car_plate/car_type/car_color (NULL لبيع مباشر)، notes لكليهما
+  car_plate?: string | null
   car_type?: string | null
   car_color?: string | null
   notes?: string | null
@@ -177,6 +179,9 @@ export interface SupplierItemInput {
   quantity: number
   unit_price: number
   notes?: string
+  // خصم على مستوى البند الفردي (لا الفاتورة كاملة): 'fixed' / 'percentage' / null
+  discount_type?: DiscountType | null
+  discount_value?: number
 }
 
 export interface SupplierItemRow {
@@ -186,6 +191,8 @@ export interface SupplierItemRow {
   quantity: number
   unit_price: number
   notes: string | null
+  discount_type: DiscountType | null
+  discount_value: number
 }
 
 export interface SupplierInvoiceInput {
@@ -333,6 +340,11 @@ export interface DailyReport {
   total_out: number
   net: number
   entries: LedgerRow[]
+  // حقول مجمّعة إضافية لبطاقات الصندوق الأربع الجديدة (نفس اليوم المحدد) — راجع CashLedger.tsx
+  today_sales_income: number       // إيرادات اليوم (صيانة + بيع مباشر)
+  today_expenses: number           // مصاريف اليوم (daily_expense)
+  today_supplier_payments: number  // مدفوعات الموردين اليوم (supplier_payment + supplier_debt)
+  today_salaries: number           // رواتب اليوم (salary)
 }
 
 export interface MonthlyReportDay {
@@ -536,6 +548,22 @@ export interface UpcomingChequeRow {
   amount: number
   cash_date: string
   days_remaining: number
+}
+
+// ── كل الشيكات (cheques:getAll) — نفس الجداول الأربعة، بلا قيد "قادم"، قراءة فقط ──
+// نفس بنية UpcomingChequeRow + تاريخ الإصدار (issue_date) اللازم للعرض في صفحة الشيكات.
+
+export interface ChequeRow extends UpcomingChequeRow {
+  issue_date: string
+}
+
+export interface ChequeFilters {
+  chequeNumber?: string   // بحث جزئي على رقم الشيك
+  bankName?: string       // بحث جزئي على اسم البنك
+  dateFrom?: string       // على cash_date (YYYY-MM-DD)
+  dateTo?: string         // على cash_date (YYYY-MM-DD)
+  amountMin?: number
+  amountMax?: number
 }
 
 // ── الأمان (auth) — كلمة السر، القفل عند تجاوز المحاولات، القفل التلقائي، سجل النشاط ──

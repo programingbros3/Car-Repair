@@ -1,6 +1,7 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, PURCHASE_INVOICE_NUMBER_TABLES } from './invoiceNumber'
+import { applyDiscount } from './discount'
 import type {
   SupplierInvoiceInput,
   SupplierInvoiceRow,
@@ -12,8 +13,13 @@ import type {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// المجموع الكلي = مجموع (إجمالي كل بند بعد خصمه الخاص على مستوى البند)
 function calcTotal(items: SupplierInvoiceInput['items']): number {
-  return items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
+  return items.reduce(
+    (sum, item) =>
+      sum + applyDiscount(item.quantity * item.unit_price, item.discount_type, item.discount_value),
+    0,
+  )
 }
 
 function calcPaid(payments: PaymentInput[]): number {
@@ -22,12 +28,26 @@ function calcPaid(payments: PaymentInput[]): number {
     .reduce((sum, p) => sum + p.amount, 0)
 }
 
+// التحقق من عدم تجاوز مجموع الدفعة النقدية للمتبقّي — يُستدعى داخل transaction قبل
+// إدراج دفعات على فاتورة مورد موجودة (لا يُستخدم عند إنشاء الفاتورة لأن amount_remaining
+// حينها محسوب مسبقاً بعد طرح الدفعات). خصم التسوية يُتحقَّق منه داخل insertSupplierPayments.
+function assertSupplierPaymentWithinRemaining(invoiceId: number, payments: PaymentInput[]): void {
+  const db = getDB()
+  const inv = db.prepare('SELECT amount_remaining FROM supplier_invoices WHERE id = ?').get(invoiceId) as { amount_remaining: number } | undefined
+  if (!inv) throw new Error('الفاتورة غير موجودة')
+  const totalNew = calcPaid(payments)
+  if (totalNew > inv.amount_remaining + 0.001) {
+    throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${inv.amount_remaining.toFixed(2)} ₪)`)
+  }
+}
+
 // Insert supplier payments — call inside a transaction
 function insertSupplierPayments(
   invoiceId: number,
   paymentDate: string,
   payments: PaymentInput[],
   isDebtRepayment = false,
+  settlementDiscount = 0,
 ): void {
   const db = getDB()
 
@@ -75,6 +95,23 @@ function insertSupplierPayments(
       notes: `${label} #${invoiceId} — ${p.method}`,
     })
   }
+
+  // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية (لا صادر ولا وارد) في cash_ledger
+  const disc = settlementDiscount || 0
+  if (disc > 0) {
+    if (disc < 0) throw new Error('خصم التسوية لا يمكن أن يكون سالباً')
+    // amount_remaining هنا هو المتبقّي بعد خصم الدفعات النقدية الفعلية أعلاه
+    const inv = db.prepare('SELECT amount_remaining FROM supplier_invoices WHERE id = ?').get(invoiceId) as { amount_remaining: number } | undefined
+    if (!inv) throw new Error('الفاتورة غير موجودة')
+    if (disc > inv.amount_remaining + 0.001) {
+      throw new Error(`خصم التسوية (${disc.toFixed(2)} ₪) يتجاوز المتبقي بعد الدفعة (${Math.max(0, inv.amount_remaining).toFixed(2)} ₪)`)
+    }
+    db.prepare(`
+      INSERT INTO ${paymentsTable} (invoice_id, payment_date, method, amount, settlement_discount, notes)
+      VALUES (?, ?, 'cash', 0, ?, 'خصم تسوية')
+    `).run(invoiceId, paymentDate, disc)
+    db.prepare('UPDATE supplier_invoices SET amount_remaining = amount_remaining - ? WHERE id = ?').run(disc, invoiceId)
+  }
 }
 
 // ─── Day 3: Add supplier invoice ─────────────────────────────────────────────
@@ -110,11 +147,14 @@ export function addSupplierInvoice(input: SupplierInvoiceInput): number {
 
     // Insert items
     const stmt = db.prepare(`
-      INSERT INTO supplier_items (invoice_id, item_name, quantity, unit_price, notes)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO supplier_items (invoice_id, item_name, quantity, unit_price, notes, discount_type, discount_value)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
     for (const item of input.items) {
-      stmt.run(invoiceId, item.item_name, item.quantity, item.unit_price, item.notes ?? null)
+      stmt.run(
+        invoiceId, item.item_name, item.quantity, item.unit_price, item.notes ?? null,
+        item.discount_type ?? null, item.discount_value ?? 0,
+      )
     }
 
     insertSupplierPayments(invoiceId, input.purchase_date, input.payments, false)
@@ -125,15 +165,59 @@ export function addSupplierInvoice(input: SupplierInvoiceInput): number {
   return run()
 }
 
+// ─── Update supplier invoice (header + items + recompute total) ──────────────
+// يعيد إدراج البنود ويعيد حساب total_amount من خصم كل بند، ثم amount_remaining
+// من amount_paid الحالي (الدفعات لا تُعدَّل هنا). ذرّي داخل transaction واحدة.
+export function updateSupplierInvoice(id: number, input: SupplierInvoiceInput): void {
+  const db = getDB()
+
+  const total_amount = calcTotal(input.items)
+
+  const run = db.transaction(() => {
+    db.prepare(`
+      UPDATE supplier_invoices
+      SET supplier_name = ?, supplier_phone = ?, purchase_date = ?, notes = ?, total_amount = ?
+      WHERE id = ?
+    `).run(
+      input.supplier_name, input.supplier_phone ?? null, input.purchase_date,
+      input.notes ?? null, total_amount, id,
+    )
+
+    // amount_remaining يُشتق من amount_paid المخزَّن الحالي
+    db.prepare(`
+      UPDATE supplier_invoices SET amount_remaining = ? - amount_paid WHERE id = ?
+    `).run(total_amount, id)
+
+    db.prepare('DELETE FROM supplier_items WHERE invoice_id = ?').run(id)
+
+    const stmt = db.prepare(`
+      INSERT INTO supplier_items (invoice_id, item_name, quantity, unit_price, notes, discount_type, discount_value)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    for (const item of input.items) {
+      stmt.run(
+        id, item.item_name, item.quantity, item.unit_price, item.notes ?? null,
+        item.discount_type ?? null, item.discount_value ?? 0,
+      )
+    }
+  })
+
+  run()
+}
+
 // ─── Day 3: Add payment to existing supplier invoice ─────────────────────────
 
 export function addSupplierPayment(
   invoiceId: number,
   payments: PaymentInput[],
   paymentDate: string,
+  settlementDiscount = 0,
 ): void {
   const db = getDB()
-  const run = db.transaction(() => insertSupplierPayments(invoiceId, paymentDate, payments, false))
+  const run = db.transaction(() => {
+    assertSupplierPaymentWithinRemaining(invoiceId, payments)
+    insertSupplierPayments(invoiceId, paymentDate, payments, false, settlementDiscount)
+  })
   run()
 }
 
@@ -143,9 +227,13 @@ export function addSupplierDebtPayment(
   invoiceId: number,
   payments: PaymentInput[],
   paymentDate: string,
+  settlementDiscount = 0,
 ): void {
   const db = getDB()
-  const run = db.transaction(() => insertSupplierPayments(invoiceId, paymentDate, payments, true))
+  const run = db.transaction(() => {
+    assertSupplierPaymentWithinRemaining(invoiceId, payments)
+    insertSupplierPayments(invoiceId, paymentDate, payments, true, settlementDiscount)
+  })
   run()
 }
 

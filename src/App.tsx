@@ -15,6 +15,7 @@ import DailyExpenses from './pages/DailyExpenses'
 import Suppliers from './pages/Suppliers'
 import Employees from './pages/Employees'
 import Warranties from './pages/Warranties'
+import Cheques from './pages/Cheques'
 import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 import './App.css'
@@ -44,6 +45,7 @@ function AppShell() {
             <Route path="/maintenance"        element={<MaintenanceInvoices />} />
             <Route path="/direct-sales"       element={<DirectSales />} />
             <Route path="/pending-debts"      element={<PendingDebts />} />
+            <Route path="/cheques"            element={<Cheques />} />
             <Route path="/expenses"           element={<DailyExpenses />} />
             <Route path="/suppliers"          element={<Suppliers />} />
             <Route path="/employees"          element={<Employees />} />

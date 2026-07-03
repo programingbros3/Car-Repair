@@ -49,14 +49,15 @@ CREATE TABLE IF NOT EXISTS invoice_items (
 
 
 CREATE TABLE IF NOT EXISTS payments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id   INTEGER NOT NULL,
-    invoice_type TEXT    NOT NULL,  
-    payment_date TEXT    NOT NULL,  
-    method       TEXT    NOT NULL, 
-    amount       REAL    NOT NULL,
-    notes        TEXT,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id          INTEGER NOT NULL,
+    invoice_type        TEXT    NOT NULL,
+    payment_date        TEXT    NOT NULL,
+    method              TEXT    NOT NULL,
+    amount              REAL    NOT NULL,
+    settlement_discount REAL    NOT NULL DEFAULT 0,  -- خصم تسوية (لا يُسجَّل في cash_ledger)
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS payment_cheque (
@@ -78,14 +79,15 @@ CREATE TABLE IF NOT EXISTS payment_visa (
 
 
 CREATE TABLE IF NOT EXISTS debt_payments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id   INTEGER NOT NULL,
-    invoice_type TEXT    NOT NULL,  
-    payment_date TEXT    NOT NULL,  
-    method       TEXT    NOT NULL, 
-    amount       REAL    NOT NULL,
-    notes        TEXT,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id          INTEGER NOT NULL,
+    invoice_type        TEXT    NOT NULL,
+    payment_date        TEXT    NOT NULL,
+    method              TEXT    NOT NULL,
+    amount              REAL    NOT NULL,
+    settlement_discount REAL    NOT NULL DEFAULT 0,  -- خصم تسوية (لا يُسجَّل في cash_ledger)
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 -- تفاصيل شيك سداد الديون
@@ -142,13 +144,14 @@ CREATE TABLE IF NOT EXISTS supplier_items (
 
 
 CREATE TABLE IF NOT EXISTS supplier_payments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id   INTEGER NOT NULL,
-    payment_date TEXT    NOT NULL,
-    method       TEXT    NOT NULL,  
-    amount       REAL    NOT NULL,
-    notes        TEXT,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id          INTEGER NOT NULL,
+    payment_date        TEXT    NOT NULL,
+    method              TEXT    NOT NULL,
+    amount              REAL    NOT NULL,
+    settlement_discount REAL    NOT NULL DEFAULT 0,  -- خصم تسوية (لا يُسجَّل في cash_ledger)
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE CASCADE
 );
 
@@ -172,13 +175,14 @@ CREATE TABLE IF NOT EXISTS supplier_payment_visa (
 
 -- سداد ديون الموردين
 CREATE TABLE IF NOT EXISTS supplier_debt_payments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id   INTEGER NOT NULL,
-    payment_date TEXT    NOT NULL,
-    method       TEXT    NOT NULL,
-    amount       REAL    NOT NULL,
-    notes        TEXT,
-    created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id          INTEGER NOT NULL,
+    payment_date        TEXT    NOT NULL,
+    method              TEXT    NOT NULL,
+    amount              REAL    NOT NULL,
+    settlement_discount REAL    NOT NULL DEFAULT 0,  -- خصم تسوية (لا يُسجَّل في cash_ledger)
+    notes               TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE CASCADE
 );
 

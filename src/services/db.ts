@@ -43,7 +43,7 @@ import type {
   CashAuditRow, CashAuditInput, CashSystemBreakdown,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
-  UpcomingChequeRow,
+  UpcomingChequeRow, ChequeRow, ChequeFilters,
   DebtAgingRow,
 } from '../db/types'
 
@@ -59,7 +59,7 @@ import {
   supplierDirectoryToDbInput, dbRowToSupplierDirectory,
   warrantyToDbInput, dbRowToWarranty,
   dbRowToSaleInvoice, dbRowToPurchaseInvoice,
-  dbRowToUpcomingCheque,
+  dbRowToUpcomingCheque, dbRowToCheque,
 } from '../utils/dbMapper'
 
 /* ════════════════════════════════════════
@@ -102,11 +102,12 @@ export const dbService = {
     update: (car: CarRecord) =>
       invoke<void>('maintenance:update', car.id, carToUpdateInput(car)),
 
-    deliver: (invoiceId: number, date: string, payments: PaymentRow[] = []) =>
+    deliver: (invoiceId: number, date: string, payments: PaymentRow[] = [], settlementDiscount = 0) =>
       invoke<void>('maintenance:deliver', {
         invoiceId,
         date_released: date,
         payments: payments.map(paymentRowToDbInput),
+        settlementDiscount,
       }),
 
     delete: (id: number) => invoke<void>('maintenance:delete', id),
@@ -135,8 +136,8 @@ export const dbService = {
     updateItems: (id: number, items: SaleItem[], discount?: { type: DiscountTypeUi | null; value: number }) =>
       invoke<void>('directSale:updateItems', id, items.map(saleItemToDbInput), discount),
 
-    addPayment: (invoiceId: number, payments: PaymentRow[], date: string) =>
-      invoke<void>('directSale:addPayment', invoiceId, payments.map(paymentRowToDbInput), date),
+    addPayment: (invoiceId: number, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
+      invoke<void>('directSale:addPayment', invoiceId, payments.map(paymentRowToDbInput), date, settlementDiscount),
 
     delete: (id: number) => invoke<void>('directSale:delete', id),
   },
@@ -159,11 +160,11 @@ export const dbService = {
     update: (sup: SupplierRecord) =>
       invoke<void>('supplierInvoice:update', sup.id, supplierToDbInput(sup)),
 
-    addPayment: (invoiceId: number, payments: PaymentRow[], date: string) =>
-      invoke<void>('supplierInvoice:addPayment', invoiceId, payments.map(paymentRowToDbInput), date),
+    addPayment: (invoiceId: number, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
+      invoke<void>('supplierInvoice:addPayment', invoiceId, payments.map(paymentRowToDbInput), date, settlementDiscount),
 
-    addDebtPayment: (invoiceId: number, payments: PaymentRow[], date: string) =>
-      invoke<void>('supplierInvoice:addDebtPayment', invoiceId, payments.map(paymentRowToDbInput), date),
+    addDebtPayment: (invoiceId: number, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
+      invoke<void>('supplierInvoice:addDebtPayment', invoiceId, payments.map(paymentRowToDbInput), date, settlementDiscount),
 
     // لا نظير UI لـ SupplierPendingDebt في dbMapper بعد — تُعاد كنوع DB
     getDebts: () => invoke<SupplierPendingDebt[]>('supplierInvoice:getDebts'),
@@ -257,8 +258,8 @@ export const dbService = {
     getAll: (filters?: DebtFilters) =>
       invoke<PendingDebt[]>('debt:getAll', filters).then(rows => rows.map(d => pendingDebtToRecord(d))),
 
-    addPayment: (invoiceId: number, type: DebtType, payments: PaymentRow[], date: string) =>
-      invoke<void>('debt:addPayment', invoiceId, type, payments.map(paymentRowToDbInput), date),
+    addPayment: (invoiceId: number, type: DebtType, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
+      invoke<void>('debt:addPayment', invoiceId, type, payments.map(paymentRowToDbInput), date, settlementDiscount),
   },
 
   /* ─────────────── الصندوق (قراءة فقط، أنواع DB) ─────────────── */
@@ -279,11 +280,11 @@ export const dbService = {
   /* ─────────────── دفعات الفواتير (للطباعة) ─────────────── */
   invoicePayments: {
     get: (invoiceId: number, invoiceType: 'maintenance' | 'direct_sale') =>
-      invoke<Array<{ method: string; amount: number; payment_date: string }>>(
+      invoke<Array<{ method: string; amount: number; payment_date: string; settlement_discount: number }>>(
         'payments:getByInvoice', invoiceId, invoiceType,
       ),
     getSupplier: (invoiceId: number) =>
-      invoke<Array<{ method: string; amount: number; payment_date: string }>>(
+      invoke<Array<{ method: string; amount: number; payment_date: string; settlement_discount: number }>>(
         'supplierPayments:getByInvoice', invoiceId,
       ),
   },
@@ -293,6 +294,10 @@ export const dbService = {
     getUpcoming: (daysAhead = 14) =>
       invoke<UpcomingChequeRow[]>('cheques:getUpcoming', daysAhead).then(rows =>
         rows.map(dbRowToUpcomingCheque),
+      ),
+    getAll: (filters: ChequeFilters = {}) =>
+      invoke<ChequeRow[]>('cheques:getAll', filters).then(rows =>
+        rows.map(dbRowToCheque),
       ),
   },
 

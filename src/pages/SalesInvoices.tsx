@@ -137,11 +137,11 @@ export default function SalesInvoices() {
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => salesInvoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName), invoiceNumber: normalizeAr(inv.invoiceNumber) })),
+    () => salesInvoices.map((inv, i) => ({ _idx: i, customerName: normalizeAr(inv.customerName), invoiceNumber: normalizeAr(inv.invoiceNumber), carPlate: normalizeAr(inv.carPlate) })),
     [salesInvoices],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, { keys: ['customerName', 'invoiceNumber'], threshold: 0.4, ignoreLocation: true }),
+    () => new Fuse(fuseItems, { keys: ['customerName', 'invoiceNumber', 'carPlate'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 

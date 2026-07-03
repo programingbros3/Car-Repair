@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 import { dbService } from '../services/db'
+import { calcEndDate, daysRemaining } from '../utils/warranty'
 
 /* ════════════════════════════════════════
    Shared Enums / Types
@@ -73,6 +74,8 @@ export type Supplier = { id: number; name: string; phone: string; notes: string 
 
 export type SupplierItem = {
   name: string; quantity: number; unitPrice: number; notes: string
+  // خصم على مستوى البند الفردي (null = بدون خصم)
+  discountType?: DiscountType | null; discountValue?: number
 }
 export type SupplierRecord = {
   id: number; invoiceNumber?: string; supplierName: string; phone: string; purchaseDate: string
@@ -136,6 +139,10 @@ export type UpcomingCheque = {
   daysRemaining: number
 }
 
+/* ── Cheques (كل الشيكات — صفحة الشيكات) — قراءة فقط ── */
+// نفس UpcomingCheque + تاريخ الإصدار (issueDate)
+export type ChequeRecord = UpcomingCheque & { issueDate: string }
+
 /* ── Cross-screen linked operation ── */
 export type LinkedOp = {
   id: number; source: string; sourceLabel: string; sourceCls: string
@@ -164,7 +171,10 @@ type GarageContextType = {
   debts:            DebtRecord[];      setDebts:            React.Dispatch<React.SetStateAction<DebtRecord[]>>
   warranties:       WarrantyRecord[];  setWarranties:       React.Dispatch<React.SetStateAction<WarrantyRecord[]>>
   /* cross-screen helpers */
-  getLinkedOps:     (phone: string, currentSource: string, currentId: number) => LinkedOp[]
+  getLinkedOps:        (phone: string, currentSource: string, currentId: number) => LinkedOp[]
+  /* نظير getLinkedOps لكن بنمرة السيارة بدل الهاتف (وسيلة ربط رئيسية إضافية).
+     البيع المباشر بلا عمود car_plate فيُبحث في الصيانة والكفالات المرتبطة فقط — راجع التعليق عند التعريف. */
+  getLinkedOpsByPlate: (carPlate: string, currentSource: string, currentId: number) => LinkedOp[]
 }
 
 const GarageContext = createContext<GarageContextType>(null!)
@@ -299,6 +309,46 @@ export function GarageProvider({ children }: { children: ReactNode }) {
     return ops
   }, [maintenanceCars, directSales, salesInvoices, purchaseInvoices, supplierInvoices, debts])
 
+  /* ── Cross-screen: previous operations by CAR PLATE (نمرة السيارة) ──
+     نظير getLinkedOps لكن الربط بنمرة السيارة بدل رقم الهاتف — نمرة السيارة وسيلة ربط وبحث
+     رئيسية إضافية بنفس أهمية الهاتف، لا بديل عن أي مفتاح داخلي (id لم يتغيّر).
+     ملاحظة مهمّة: فواتير البيع المباشر (direct_sale_invoices) لا تحمل عمود car_plate في قاعدة
+     البيانات (SaleRecord بلا carPlate)، لذا لا يمكن ربطها بالنمرة — يقتصر البحث فعلياً على
+     فواتير الصيانة (maintenance_invoices) والكفالات المرتبطة (warranties.car_plate، تُملأ
+     للصيانة فقط). المقارنة تجرى على النمرة بعد إزالة الفراغات وتوحيد حالة الأحرف. */
+  const getLinkedOpsByPlate = useCallback((carPlate: string, currentSource: string, currentId: number): LinkedOp[] => {
+    const norm = (p: string) => (p || '').replace(/\s+/g, '').toLowerCase()
+    const plate = norm(carPlate)
+    if (!plate) return []
+    const ops: LinkedOp[] = []
+
+    maintenanceCars.forEach(c => {
+      if (norm(c.carPlate) !== plate) return
+      if (currentSource === 'maintenance' && c.id === currentId) return
+      ops.push({
+        id: c.id, source: 'maintenance', sourceLabel: 'صيانة', sourceCls: 'mi-badge-orange',
+        date: c.dateReceived, name: c.customerName, total: c.total,
+        statusLabel: c.status === 'in_progress' ? 'قيد الصيانة' : 'تم التسليم',
+        statusCls:   c.status === 'in_progress' ? 'mi-badge-orange' : 'mi-badge-green',
+      })
+    })
+
+    /* الكفالات المرتبطة بنفس النمرة (الكفالة بلا إجمالي مالي → total = 0، الحالة سارية/منتهية) */
+    warranties.forEach(w => {
+      if (norm(w.carPlate) !== plate) return
+      if (currentSource === 'warranty' && w.id === currentId) return
+      const remaining = daysRemaining(calcEndDate(w.startDate, w.periodValue, w.periodUnit))
+      ops.push({
+        id: w.id, source: 'warranty', sourceLabel: 'كفالة', sourceCls: 'mi-badge-blue',
+        date: w.startDate, name: w.itemName, total: 0,
+        statusLabel: remaining > 0 ? 'سارية' : 'منتهية',
+        statusCls:   remaining > 0 ? 'mi-badge-green' : 'mi-badge-red',
+      })
+    })
+
+    return ops
+  }, [maintenanceCars, warranties])
+
   const value = useMemo<GarageContextType>(() => ({
     loading,
     reload,
@@ -314,12 +364,14 @@ export function GarageProvider({ children }: { children: ReactNode }) {
     debts,            setDebts,
     warranties,       setWarranties,
     getLinkedOps,
+    getLinkedOpsByPlate,
   }), [
     loading, reload,
     maintenanceCars, directSales, salesInvoices, purchaseInvoices,
     suppliers, supplierInvoices, expenses, employees, salaries, debts,
     warranties,
     getLinkedOps,
+    getLinkedOpsByPlate,
   ])
 
   return <GarageContext.Provider value={value}>{children}</GarageContext.Provider>

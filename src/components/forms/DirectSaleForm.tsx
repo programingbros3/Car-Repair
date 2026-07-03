@@ -229,7 +229,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
       </div>
       <div className="mi-parts-table-wrap">
         <table className="mi-parts-table">
-          <thead><tr><th>اسم الصنف</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>ملاحظات</th><th></th></tr></thead>
+          <thead><tr><th>اسم الصنف</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الإجمالي (₪)</th><th>ملاحظات</th><th></th></tr></thead>
           <tbody>
             {items.map(item => (
               <tr key={item.id}>
@@ -246,6 +246,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
                   {showItemErr(item.id, 'qtyErr')}
                 </td>
                 <td><input type="number" min={0} value={item.unitPrice === '' || item.unitPrice === 0 ? '' : item.unitPrice} className="mi-td-input mi-td-num" onChange={e => updateItem(item.id, 'unitPrice', e.target.value === '' ? '' : Math.max(0, parseFloat(e.target.value) || 0))} onBlur={(e) => { if (!e.target.value) updateItem(item.id, 'unitPrice', 0) }} /></td>
+                <td className="mi-td-center">{fmt(Number(item.qty || 0) * Number(item.unitPrice || 0))} ₪</td>
                 <td><input type="text" placeholder="ملاحظة..." value={item.notes} className="mi-td-input" onChange={e => updateItem(item.id, 'notes', e.target.value)} /></td>
                 <td className="mi-td-center"><button className="btn btn-danger-sm" disabled={items.length === 1} onClick={() => removeItem(item.id)}>حذف</button></td>
               </tr>

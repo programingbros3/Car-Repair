@@ -88,11 +88,11 @@ export default function Warranties() {
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => withCalc.map((w, i) => ({ _idx: i, customerName: normalizeAr(w.customerName) })),
+    () => withCalc.map((w, i) => ({ _idx: i, customerName: normalizeAr(w.customerName), carPlate: normalizeAr(w.carPlate) })),
     [withCalc],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }),
+    () => new Fuse(fuseItems, { keys: ['customerName', 'carPlate'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 

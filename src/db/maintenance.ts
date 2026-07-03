@@ -2,6 +2,7 @@ import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import { applyDiscount } from './discount'
+import { applySettlementDiscount } from './payments'
 import type {
   DiscountType,
   MaintenanceInvoiceInput,
@@ -239,7 +240,7 @@ export function releaseMaintenanceCar(input: ReleaseCarInput): void {
 
     if (!invoice) throw new Error('الفاتورة غير موجودة أو تم تسليم السيارة مسبقاً')
 
-    // التحقق من عدم تجاوز المبلغ المدفوع للمتبقي
+    // التحقق من عدم تجاوز المبلغ المدفوع (+ خصم التسوية) للمتبقي
     const totalNew = input.payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
     if (totalNew > invoice.amount_remaining + 0.001) {
       throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
@@ -258,6 +259,10 @@ export function releaseMaintenanceCar(input: ReleaseCarInput): void {
       REF.MAINTENANCE_RELEASE,
       'تسليم صيانة',
     )
+
+    // خصم التسوية عند التسليم: يُخصم من amount_remaining دون تسجيل نقدية في cash_ledger
+    applySettlementDiscount(db, 'payments', input.invoiceId, 'maintenance', 'maintenance_invoices',
+      input.date_released, input.settlementDiscount ?? 0, invoice.amount_remaining - totalNew)
   })
 
   run()

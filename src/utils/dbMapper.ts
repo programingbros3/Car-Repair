@@ -27,7 +27,7 @@ import type {
   PaymentRow, PayMethod,
   Supplier, WarrantyRecord,
   SaleInvoice, PurchaseInvoice,
-  UpcomingCheque,
+  UpcomingCheque, ChequeRecord,
 } from '../store/GarageContext'
 
 import type {
@@ -45,7 +45,7 @@ import type {
   SupplierDirectoryInput, SupplierDirectoryRow,
   WarrantyInput, WarrantyRow,
   SaleInvoiceRow, PurchaseInvoiceRow,
-  UpcomingChequeRow,
+  UpcomingChequeRow, ChequeRow,
 } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -89,9 +89,12 @@ export function phoneToDb(uiPhone: string): string | undefined {
   return !uiPhone || uiPhone === UI_NO_PHONE ? undefined : uiPhone
 }
 
-/** يشتق حالة فاتورة البيع من الإجمالي/المدفوع (DB لا يخزّنها) */
-export function saleStatus(total: number, paid: number): SaleStatus {
-  if (paid >= total - 0.001) return 'paid'
+/** يشتق حالة فاتورة البيع من الإجمالي/المدفوع (DB لا يخزّنها).
+    remaining اختياري: يُمرَّر من amount_remaining المخزَّن كي تُحسب الحالة بدقّة عند
+    وجود خصم تسوية (حيث total ≠ paid + remaining، لأن الخصم يُسقِط من المتبقّي فقط). */
+export function saleStatus(total: number, paid: number, remaining?: number): SaleStatus {
+  const rem = remaining ?? total - paid
+  if (rem <= 0.001) return 'paid'
   if (paid <= 0.001) return 'full_debt'
   return 'partial_debt'
 }
@@ -291,7 +294,7 @@ export function dbRowToSaleRecord(
     total: row.total_amount,
     amountPaid: row.amount_paid,
     amountRemaining: row.amount_remaining,
-    status: saleStatus(row.total_amount, row.amount_paid),
+    status: saleStatus(row.total_amount, row.amount_paid, row.amount_remaining),
     items: items.map(dbRowToSaleItem),
     payments: payments.map(dbPaymentToRow),
   }
@@ -307,6 +310,8 @@ export function supplierItemToDbInput(item: SupplierItem): SupplierItemInput {
     quantity: item.quantity,
     unit_price: item.unitPrice,
     notes: item.notes || undefined,
+    discount_type: item.discountType ?? null,
+    discount_value: item.discountType ? (item.discountValue ?? 0) : 0,
   }
 }
 
@@ -317,6 +322,8 @@ export function dbRowToSupplierItem(r: SupplierItemRow): SupplierItem {
     quantity: r.quantity,
     unitPrice: r.unit_price,
     notes: r.notes ?? '',
+    discountType: r.discount_type ?? null,
+    discountValue: r.discount_value ?? 0,
   }
 }
 
@@ -434,7 +441,7 @@ export function dbRowToSalaryRecord(row: SalaryRow): SalaryRecord {
 
 /* ════════════════════════════════════════
    الديون المعلّقة  (DebtRecord ↔ PendingDebt)
-   PendingDebt لا يحوي carPlate ⇒ '' افتراضياً.
+   car_plate/car_type/car_color: صيانة فقط (NULL لبيع مباشر) ⇒ '' / undefined افتراضياً.
 ════════════════════════════════════════ */
 /** PendingDebt (DB) → DebtRecord (واجهة) */
 export function pendingDebtToRecord(d: PendingDebt, payments: PaymentRowDb[] = []): DebtRecord {
@@ -446,7 +453,7 @@ export function pendingDebtToRecord(d: PendingDebt, payments: PaymentRowDb[] = [
     customerName: d.customer_name,
     phone: phoneToUi(d.customer_phone),
     date: d.invoice_date,
-    carPlate: '',
+    carPlate: d.car_plate ?? '',
     total: d.total_amount,
     amountPaid: d.amount_paid,
     amountRemaining: d.amount_remaining,
@@ -532,7 +539,7 @@ export function dbRowToSaleInvoice(r: SaleInvoiceRow): SaleInvoice {
     total: r.total_amount,
     paid: r.amount_paid,
     remaining: r.amount_remaining,
-    status: saleStatus(r.total_amount, r.amount_paid),
+    status: saleStatus(r.total_amount, r.amount_paid, r.amount_remaining),
     carPlate: r.car_plate,
     carType: r.car_type,
     carColor: r.car_color || undefined,
@@ -558,7 +565,7 @@ export function dbRowToPurchaseInvoice(r: PurchaseInvoiceRow): PurchaseInvoice {
     total: r.total_amount,
     paid: r.amount_paid,
     remaining: r.amount_remaining,
-    status: saleStatus(r.total_amount, r.amount_paid),
+    status: saleStatus(r.total_amount, r.amount_paid, r.amount_remaining),
     details: r.details,
     payments: [],
   }
@@ -577,6 +584,17 @@ export function dbRowToUpcomingCheque(r: UpcomingChequeRow): UpcomingCheque {
     amount: r.amount,
     cashDate: r.cash_date,
     daysRemaining: r.days_remaining,
+  }
+}
+
+/* ════════════════════════════════════════
+   كل الشيكات  ChequeRow → ChequeRecord
+   عرض قراءة فقط بالكامل؛ لا اتجاه كتابة. (نفس UpcomingCheque + تاريخ الإصدار)
+════════════════════════════════════════ */
+export function dbRowToCheque(r: ChequeRow): ChequeRecord {
+  return {
+    ...dbRowToUpcomingCheque(r),
+    issueDate: r.issue_date,
   }
 }
 

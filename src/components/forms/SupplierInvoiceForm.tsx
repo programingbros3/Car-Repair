@@ -1,6 +1,7 @@
 import { useState, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { useGarage } from '../../store/GarageContext'
-import type { SupplierRecord } from '../../store/GarageContext'
+import type { SupplierRecord, DiscountType } from '../../store/GarageContext'
+import { applyDiscount } from '../../db/discount'
 import { dbService } from '../../services/db'
 import { showError } from '../../utils/notify'
 
@@ -15,8 +16,26 @@ type PaymentRow = {
   checkNumber: string; issueDate: string; clearDate: string
   bankName: string; transactionNum: string
 }
-type FormPart    = { id: number; name: string; qty: number; unitPrice: number; notes: string }
-type FormPartErr = { nameErr: string; qtyErr: string }
+type FormPart    = {
+  id: number; name: string; qty: number; unitPrice: number; notes: string
+  discountType: '' | DiscountType; discountValue: number
+}
+type FormPartErr = { nameErr: string; qtyErr: string; discountErr: string }
+
+// إجمالي البند قبل الخصم
+const partSubtotal = (p: FormPart) => p.qty * p.unitPrice
+// إجمالي البند بعد خصمه الخاص (يعيد استخدام applyDiscount؛ يتجاهل الأخطاء للعرض الحيّ)
+const partAfterDiscount = (p: FormPart): number => {
+  try { return applyDiscount(partSubtotal(p), p.discountType || null, p.discountValue) }
+  catch { return partSubtotal(p) }
+}
+const partDiscountErr = (p: FormPart): string => {
+  if (!p.discountType) return ''
+  if (p.discountValue < 0) return 'قيمة الخصم لا يمكن أن تكون سالبة'
+  if (p.discountType === 'percentage' && p.discountValue > 100) return 'نسبة الخصم يجب أن تكون بين 0 و 100'
+  if (p.discountType === 'fixed' && p.discountValue > partSubtotal(p)) return 'قيمة الخصم لا يمكن أن تتجاوز إجمالي البند'
+  return ''
+}
 
 export const SUPPLIER_DRAFT_KEY = 'garage-sup-draft'
 const today = () => new Date().toISOString().slice(0, 10)
@@ -27,7 +46,7 @@ export const hasSupplierDraft   = () => !!localStorage.getItem(SUPPLIER_DRAFT_KE
 export const clearSupplierDraft = () => localStorage.removeItem(SUPPLIER_DRAFT_KEY)
 
 const emptyForm   = () => ({ supplierName: '', phone: '', purchaseDate: today(), generalNotes: '' })
-const newFormPart = (): FormPart   => ({ id: nextPartId++, name: '', qty: 1, unitPrice: 0, notes: '' })
+const newFormPart = (): FormPart   => ({ id: nextPartId++, name: '', qty: 1, unitPrice: 0, notes: '', discountType: '', discountValue: 0 })
 const emptyPayRow = (): PaymentRow => ({
   id: nextPayId++, method: 'cash', amount: 0,
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
@@ -41,7 +60,10 @@ const fmt = (n: number) => n.toLocaleString('en-US')
 const formFromRecord = (sup: SupplierRecord) => ({ supplierName: sup.supplierName, phone: sup.phone, purchaseDate: sup.purchaseDate, generalNotes: sup.notes })
 const partsFromRecord = (sup: SupplierRecord): FormPart[] =>
   sup.items.length > 0
-    ? sup.items.map(item => ({ id: nextPartId++, name: item.name, qty: item.quantity, unitPrice: item.unitPrice, notes: item.notes }))
+    ? sup.items.map(item => ({
+        id: nextPartId++, name: item.name, qty: item.quantity, unitPrice: item.unitPrice, notes: item.notes,
+        discountType: (item.discountType ?? '') as '' | DiscountType, discountValue: item.discountValue ?? 0,
+      }))
     : [newFormPart()]
 
 export type SupplierInvoiceFormHandle = { save: () => void }
@@ -96,7 +118,8 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
     setPaymentRows(prev => prev.map(r => r.id !== id ? r : { ...r, ...update }))
 
   /* Validation */
-  const formTotal   = parts.reduce((s, p) => s + p.qty * p.unitPrice, 0)
+  // المجموع الكلي = مجموع (إجمالي كل بند بعد خصمه الخاص)
+  const formTotal   = parts.reduce((s, p) => s + partAfterDiscount(p), 0)
   const formPaid    = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
   const supplierErr = form.supplierName.trim() ? '' : 'يجب اختيار المورد'
   const phoneErr    = validatePhone(form.phone)
@@ -106,14 +129,18 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
     partsErrMap[p.id] = {
       nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب',
       qtyErr:  p.qty >= 1   ? '' : 'العدد يجب أن يكون 1 على الأقل',
+      discountErr: partDiscountErr(p),
     }
   }
-  const hasErrors = !!supplierErr || !!phoneErr || Object.values(partsErrMap).some(e => e.nameErr || e.qtyErr)
+  const hasErrors = !!supplierErr || !!phoneErr || Object.values(partsErrMap).some(e => e.nameErr || e.qtyErr || e.discountErr)
 
   const handleSave = async () => {
     setSubmitAttempted(true)
     if (hasErrors) return
-    const newItems = parts.map(p => ({ name: p.name, quantity: p.qty, unitPrice: p.unitPrice, notes: p.notes }))
+    const newItems = parts.map(p => ({
+      name: p.name, quantity: p.qty, unitPrice: p.unitPrice, notes: p.notes,
+      discountType: p.discountType || null, discountValue: p.discountType ? p.discountValue : 0,
+    }))
     const remaining = Math.max(0, formTotal - formPaid)
     const phone = form.phone.trim()
     const supData: SupplierRecord = {
@@ -182,7 +209,10 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
       <div className="mi-parts-table-wrap">
         <table className="mi-parts-table">
           <thead>
-            <tr><th>اسم القطعة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>ملاحظات</th><th></th></tr>
+            <tr>
+              <th>اسم القطعة</th><th>العدد</th><th>سعر الوحدة (₪)</th><th>الإجمالي</th>
+              <th>الخصم</th><th>قيمة الخصم</th><th>بعد الخصم</th><th>ملاحظات</th><th></th>
+            </tr>
           </thead>
           <tbody>
             {parts.map(part => (
@@ -205,6 +235,28 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
                     onChange={e => updatePart(part.id, 'unitPrice', Math.max(0, Number(e.target.value)))}
                     onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'unitPrice', 0) }} />
                 </td>
+                <td className="mi-td-num">{fmt(partSubtotal(part))} ₪</td>
+                <td>
+                  <select className="pay-select mi-td-input" value={part.discountType}
+                    onChange={e => updatePart(part.id, 'discountType', e.target.value as '' | DiscountType)}>
+                    <option value="">بدون خصم</option>
+                    <option value="fixed">مبلغ ثابت</option>
+                    <option value="percentage">نسبة %</option>
+                  </select>
+                </td>
+                <td>
+                  {part.discountType ? (
+                    <>
+                      <input type="number" min={0} max={part.discountType === 'percentage' ? 100 : undefined}
+                        value={part.discountValue || ''} placeholder="0"
+                        className={'mi-td-input mi-td-num' + errCls(submitAttempted && !!partsErrMap[part.id]?.discountErr)}
+                        onChange={e => updatePart(part.id, 'discountValue', Math.max(0, Number(e.target.value)))}
+                        onBlur={(e) => { if (!e.target.value) updatePart(part.id, 'discountValue', 0) }} />
+                      {showPartErr(part.id, 'discountErr')}
+                    </>
+                  ) : <span className="mi-td-center" style={{ color: '#9ca3af' }}>—</span>}
+                </td>
+                <td className="mi-td-num"><strong>{fmt(partAfterDiscount(part))} ₪</strong></td>
                 <td>
                   <input type="text" placeholder="ملاحظة..." value={part.notes} className="mi-td-input"
                     onChange={e => updatePart(part.id, 'notes', e.target.value)} />
@@ -218,7 +270,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
           </tbody>
         </table>
       </div>
-      <div className="mi-total-row">الإجمالي: <strong>{fmt(formTotal)} ₪</strong></div>
+      <div className="mi-total-row">الإجمالي الكلي (بعد الخصومات): <strong>{fmt(formTotal)} ₪</strong></div>
 
       <div className="pay-section-title">طريقة الدفع</div>
       {paymentRows.map(row => (

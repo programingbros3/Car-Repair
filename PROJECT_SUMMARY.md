@@ -58,7 +58,7 @@
 │   │   ├── payments.ts      — دوال الدفعات وتحصيل الديون
 │   │   ├── reports.ts       — دوال التقارير (يومي/شهري/ديون/أعمار ديون/أفضل زبائن)
 │   │   ├── suppliers.ts     — دوال CRUD للموردين وفواتيرهم
-│   │   ├── cheques.ts       — الشيكات المستحقة قريباً (قراءة فقط)
+│   │   ├── cheques.ts       — الشيكات: المستحقة قريباً (getUpcomingCheques) + كل الشيكات (getAllCheques) — قراءة فقط
 │   │   ├── invoiceNumber.ts — nextInvoiceNumber(): توليد رقم الفاتورة المنسّق (INV/PUR) عند الإضافة
 │   │   ├── discount.ts      — applyDiscount(): تطبيق خصم الفاتورة (ثابت/نسبة) على مجموع البنود مع validation
 │   │   └── warranties.ts    — دوال CRUD للكفالات (إضافة/تعديل/حذف يدوي)
@@ -67,7 +67,7 @@
 │   │   └── db.ts            — طبقة الخدمة: تُغلّف window.ipcRenderer.invoke لكل قناة
 │   │
 │   ├── store/
-│   │   └── GarageContext.tsx — React Context: يحمل كل البيانات + reload() + getLinkedOps()
+│   │   └── GarageContext.tsx — React Context: يحمل كل البيانات + reload() + getLinkedOps() (بالهاتف) + getLinkedOpsByPlate() (بنمرة السيارة)
 │   │
 │   ├── utils/
 │   │   ├── auth.ts          — DEFAULT_PASSWORD: بذرة كلمة السر لأول تشغيل فقط (المصدر الحقيقي: hash في app_settings عبر electron/auth.ts)
@@ -80,7 +80,7 @@
 │   │   └── useAutoLock.ts   — hook: يقفل التطبيق تلقائياً (يعيد عرض PasswordGate) بعد فترة خمول
 │   │
 │   ├── components/
-│   │   ├── Sidebar.tsx      — شريط التنقل الجانبي (12 رابط) + التاريخ العربي بأرقام لاتينية
+│   │   ├── Sidebar.tsx      — شريط التنقل الجانبي (13 رابط) + التاريخ العربي بأرقام لاتينية
 │   │   ├── ConfirmDialog.tsx — مودال تأكيد مع اختياري كلمة سر (يستخدم PasswordInput) — الرسالة تدعم أسطراً متعددة (`whiteSpace: pre-line`)
 │   │   ├── PasswordGate.tsx — شاشة إدخال كلمة السر قبل فتح التطبيق (يستخدم PasswordInput)
 │   │   ├── PasswordInput.tsx — حقل إدخال كلمة السر مع زر إظهار/إخفاء
@@ -102,6 +102,7 @@
 │       ├── SalesInvoices.tsx    — فواتير البيع (عرض مجمّع صيانة+بيع مباشر)
 │       ├── PurchaseInvoices.tsx — فواتير الشراء (مجمّع مورد+مصروف+راتب)
 │       ├── PendingDebts.tsx     — الديون المعلقة: عرض + سداد + تعديل
+│       ├── Cheques.tsx          — الشيكات: عرض كل الشيكات (من الجداول الأربعة) + فلاتر (رقم/بنك/تاريخ/مبلغ) — قراءة فقط بالكامل
 │       ├── DailyExpenses.tsx    — المصاريف اليومية: CRUD + بحث + فلترة
 │       ├── Suppliers.tsx        — الموردون: فواتير الشراء CRUD + دفعات + موردون دليل
 │       ├── Employees.tsx        — الموظفون والرواتب: CRUD + اليومية + حساب الراتب تلقائياً
@@ -193,7 +194,8 @@
 | invoice_type | TEXT | 'maintenance' أو 'direct_sale' |
 | payment_date | TEXT | |
 | method | TEXT | 'cash' أو 'cheque' أو 'visa' |
-| amount | REAL | |
+| amount | REAL | مبلغ الدفعة النقدية الفعلية |
+| settlement_discount | REAL NOT NULL DEFAULT 0 | خصم تسوية يُسقَط من `amount_remaining` **دون** تسجيله كنقدية في `cash_ledger` — أُضيف عبر migration، راجع "خصم تسوية عند الدفع" أدناه و"تحديث 2026-07-02 (١١)". صف الخصم يُدرَج مستقلاً (`amount=0`, `method='cash'`, `notes='خصم تسوية'`). |
 | notes | TEXT | |
 | created_at | TEXT | |
 
@@ -214,7 +216,7 @@
 | transaction_number | TEXT |
 
 #### `debt_payments` — دفعات تحصيل ديون الزبائن
-نفس بنية `payments` لكن في جدول منفصل لتمييز دفعات التحصيل.
+نفس بنية `payments` لكن في جدول منفصل لتمييز دفعات التحصيل — بما في ذلك عمود `settlement_discount REAL NOT NULL DEFAULT 0` (خصم التسوية، راجع "خصم تسوية عند الدفع").
 
 #### `debt_payment_cheque` / `debt_payment_visa` — نفس تفاصيل `payment_cheque` / `payment_visa`
 
@@ -233,14 +235,15 @@
 | created_at | TEXT | |
 
 #### `supplier_items` — بنود فواتير الموردين
-يحتوي: id, invoice_id (FK→supplier_invoices CASCADE), item_name, quantity, unit_price, notes, created_at
+يحتوي: id, invoice_id (FK→supplier_invoices CASCADE), item_name, quantity, unit_price, notes, created_at، بالإضافة إلى `discount_type` (TEXT: `'fixed'`/`'percentage'`/NULL) و`discount_value` (REAL DEFAULT 0) — **خصم على مستوى البند الفردي** (لا الفاتورة كاملة)، أُضيفا عبر migration. راجع "خصم بنود فاتورة المورد" أدناه و"تحديث 2026-07-02 (١٠)".
 
 #### `supplier_payments` — دفعات للموردين (عند الشراء)
-يحتوي: id, invoice_id, payment_date, method, amount, notes, created_at
+يحتوي: id, invoice_id, payment_date, method, amount, notes, created_at، بالإضافة إلى `settlement_discount REAL NOT NULL DEFAULT 0` (خصم التسوية عند الدفع للمورد — راجع "خصم تسوية عند الدفع").
 
 #### `supplier_payment_cheque` / `supplier_payment_visa` — تفاصيل دفعات الموردين
 
 #### `supplier_debt_payments` — سداد ديون الموردين لاحقاً
+نفس بنية `supplier_payments` (يشمل `settlement_discount REAL NOT NULL DEFAULT 0` — خصم التسوية عند سداد دين المورد). هذا هو الجدول الذي يستخدمه مودال "إضافة دفعة" في `Suppliers.tsx`.
 #### `supplier_debt_cheque` / `supplier_debt_visa` — تفاصيلها
 
 #### `daily_expenses` — المصاريف اليومية
@@ -276,7 +279,7 @@
 | notes | TEXT | |
 | created_at | TEXT | |
 
-**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه؛ و`discount_type`/`discount_value` في جدولي الصيانة والبيع المباشر، راجع "خصم الفاتورة" أدناه) و`invoice_items` (`warranty`, `part_type`) و`daily_cash_audits` (`actual_cash`, `actual_visa`, `actual_check` — راجع "إحصاء نهاية اليوم حسب طريقة الدفع" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
+**ملاحظة migration:** الأعمدة الجديدة في `employees` و`salary_payments` و`maintenance_invoices`/`direct_sale_invoices`/`supplier_invoices` (`invoice_number`، راجع "ترقيم الفواتير" أدناه؛ و`discount_type`/`discount_value` في جدولي الصيانة والبيع المباشر، راجع "خصم الفاتورة" أدناه) و`invoice_items` (`warranty`, `part_type`) و`supplier_items` (`discount_type`, `discount_value` — خصم البند الفردي، راجع "خصم بنود فاتورة المورد" أدناه) و`daily_cash_audits` (`actual_cash`, `actual_visa`, `actual_check` — راجع "إحصاء نهاية اليوم حسب طريقة الدفع" أدناه) و`payments`/`debt_payments`/`supplier_payments`/`supplier_debt_payments` (`settlement_discount` — خصم التسوية عند الدفع، راجع "خصم تسوية عند الدفع" أدناه) لم تُضَف في `schema.sql` مباشرةً لتجنّب فقدان البيانات في قواعد البيانات الموجودة. تُشغَّل migrations في `src/database.ts → initDB()` بصيغة `ALTER TABLE ... ADD COLUMN` داخل حلقة `for` مع `try/catch` يتجاهل خطأ `duplicate column name` — وبهذا تُشغَّل مرة واحدة فقط ثم تصبح no-op في كل إطلاق لاحق.
 
 #### ترقيم الفواتير (`invoice_number`) — منذ 2026-07-02
 
@@ -296,6 +299,8 @@
 
 #### خصم الفاتورة (`discount_type` / `discount_value`) — منذ 2026-07-02
 
+> ملاحظة: هذا القسم يخص **فواتير الصيانة والبيع المباشر فقط** حيث الخصم على مستوى الفاتورة كاملة. **فواتير الموردين** تستخدم نموذجاً مختلفاً — خصم على مستوى **البند الفردي** — راجع "خصم بنود فاتورة المورد" أدناه.
+
 خصم اختياري **على مستوى الفاتورة كاملة** (وليس على مستوى البند الفردي — قرار تبسيط مقصود) لفواتير الصيانة والبيع المباشر فقط:
 - `discount_type`: `'fixed'` (مبلغ ثابت بالشيكل) أو `'percentage'` (نسبة مئوية من مجموع البنود) أو `NULL` (بدون خصم).
 - `discount_value`: المبلغ أو النسبة (0-100).
@@ -304,6 +309,32 @@
 - **اصطلاح `undefined` مقابل `null` في مدخلات التعديل:** `discount_type === undefined` في `maintenance:update`/`directSale:update` يعني "المستدعي لا يحمل الخصم — أبقِ المخزَّن كما هو" (شاشتا `SalesInvoices.tsx`/`PendingDebts.tsx` اللتان تعدّلان بيانات الفاتورة دون معرفة خصمها)، بينما `null` يعني "أزل الخصم" (اختيار "بدون خصم" في نموذجَي الصيانة/البيع المباشر). التحويل في `dbMapper.ts` يحافظ على هذا التمييز.
 - **إعادة الحساب:** `updateMaintenanceInvoice` يعيد حساب `total_amount`/`amount_remaining` من بنود الجدول الفعلية عند تغيّر البنود **أو** الخصم (البنود والخصم يصلان معاً في نفس الاستدعاء/الـ transaction)؛ `recalcDirectSaleTotals(invoiceId)` (في `direct-sale.ts`) تفعل الشيء نفسه للبيع المباشر وتُستدعى من `updateDirectSaleItems` ومن قناة `directSale:update` عند تمرير خصم.
 - **ذرّية الخصم مع البنود في البيع المباشر:** نموذج التعديل في `DirectSales.tsx` يمرّر الخصم الجديد كوسيط ثالث اختياري لـ `directSale:updateItems` (`{ type, value }`) فيُكتب داخل نفس transaction البنود الجديدة **قبل** إعادة الحساب، ويستدعي `directSale:update` بخصم `undefined` (لا تلمس) — كي لا يُقيَّم الخصم الجديد مقابل البنود القديمة (كان سيرمي خطأً زائفاً لو كان الخصم الثابت الجديد أكبر من مجموع البنود القديمة رغم صلاحيته للبنود الجديدة).
+
+#### خصم بنود فاتورة المورد (`supplier_items.discount_type` / `discount_value`) — منذ 2026-07-02
+
+على عكس خصم الفاتورة الكاملة في الصيانة/البيع المباشر أعلاه، فواتير الموردين تدعم خصماً **على مستوى البند الفردي** — لكل بند في `supplier_items` خصمه الخاص:
+- `discount_type`: `'fixed'` (مبلغ ثابت بالشيكل) أو `'percentage'` (نسبة 0-100 من إجمالي البند) أو `NULL` (بدون خصم). `discount_value`: المبلغ أو النسبة.
+- **المجموع الكلي للفاتورة** `total_amount = Σ applyDiscount(qty × unit_price لكل بند, discount_type, discount_value)` — أي مجموع إجمالي كل بند **بعد خصمه الخاص**. تُعيد استخدام نفس `applyDiscount` من `src/db/discount.ts` (لا تكرار للمنطق) في `calcTotal` داخل `src/db/suppliers.ts`.
+- **الحساب في `src/db/suppliers.ts`:** `addSupplierInvoice` يُدرج البنود مع عمودَي الخصم ويحسب `total_amount` عبر `calcTotal` المحدَّثة. أُضيفت `updateSupplierInvoice(id, input)` (بديلة عن التحديث المباشر السابق في `ipc-handlers.ts` الذي كان يعدّل الترويسة فقط دون البنود): تُعيد إدراج البنود بالكامل داخل transaction واحدة، تعيد حساب `total_amount` من خصومات البنود، ثم `amount_remaining = total_amount − amount_paid` (الدفعات لا تُعدَّل هنا). قناة `supplierInvoice:update` تستدعيها.
+- **الواجهة (`SupplierInvoiceForm.tsx`):** لكل بند في جدول البنود عمود "الإجمالي" (qty × unit_price محسوب حياً)، dropdown خصم (بدون خصم/مبلغ ثابت/نسبة %) + حقل قيمة، وعمود "بعد الخصم" لكل بند حياً. المجموع الكلي أسفل الجدول = مجموع "بعد الخصم" لكل البنود. حسابات العرض الحيّة تعيد استخدام `applyDiscount` (مغلّفة بـ try/catch للعرض) والتحقق من القيم غير الصالحة يمنع الحفظ.
+- **العرض في `Suppliers.tsx`:** مودال التفاصيل والإيصال المطبوع يعرضان لكل بند: العدد، السعر، الإجمالي قبل الخصم، الخصم إن وُجد، والإجمالي بعد الخصم — مع المجموع الكلي في الأسفل (helpers `itemDiscountLabel`/`itemNetTotal` تعيد استخدام `applyDiscount`).
+
+#### خصم تسوية عند الدفع (`settlement_discount`) — منذ 2026-07-02
+
+> ملاحظة تمييز مهمّة: هذا الخصم **مختلف تماماً** عن `discount_type`/`discount_value` على مستوى الفاتورة/البند أعلاه. تلك خصومات تُطبَّق وقت إنشاء/تعديل الفاتورة وتُنقِص `total_amount`. أمّا `settlement_discount` فهو **إسقاط تسوية وقت الدفع**: يُنقِص `amount_remaining` المتبقّي فقط **دون أن يمسّ `total_amount` ولا `amount_paid` ولا `cash_ledger`**.
+
+الغرض: عند التحصيل/الدفع يتّفق الطرفان على إسقاط جزء من المتبقّي (مثلاً المتبقّي 500، دفع الزبون 450 واتُّفِق على إسقاط 50)، فيصبح `amount_remaining = 0` **بدون** تسجيل الـ 50 كنقدية داخلة (`amount_in`) في الصندوق.
+
+- **التخزين:** عمود `settlement_discount REAL NOT NULL DEFAULT 0` في الجداول الأربعة `payments` / `debt_payments` / `supplier_payments` / `supplier_debt_payments` (عبر migration). عند وجود خصم يُدرَج **صف مخصّص** في جدول الدفعات المعني: `amount = 0`, `method = 'cash'`, `settlement_discount = المبلغ`, `notes = 'خصم تسوية'` — فيبقى موثّقاً في سجل الدفعات ومنفصلاً بوضوح عن الدفعات النقدية.
+- **الأثر على المتبقّي:** `amount_remaining` الجديد = `amount_remaining` الحالي − مجموع الدفعات النقدية الفعلية − `settlement_discount`. **`amount_paid` لا يتغيّر بخصم التسوية** (ليس نقدية مقبوضة)، لذا بعد التسوية يصير `total_amount = amount_paid + amount_remaining + settlement_discount` (وليس `paid + remaining` فقط). لهذا حُدِّثت `saleStatus(total, paid, remaining?)` في `dbMapper.ts` لتشتقّ الحالة من `amount_remaining` المخزَّن عند تمريره (كي تُعرَض "مدفوع" عند `remaining ≈ 0` رغم أن `paid < total`).
+- **صفر قيد صندوق:** خصم التسوية **لا يُسجَّل في `cash_ledger` إطلاقاً** (لا `amount_in` ولا `amount_out`) — فلا يؤثّر على الرصيد ولا على التقارير ولا على إحصاء نهاية اليوم (`cashAudit:getSystemBreakdown` يجمع `amount` حسب الطريقة، وصف الخصم `amount=0` فلا يضيف شيئاً).
+- **الحماية (نفس فلسفة حماية تجاوز المتبقّي):** يُرمى خطأ عربي واضح إن كان الخصم سالباً أو إن تجاوز `الدفعات الفعلية + خصم التسوية` المتبقّيَ (هامش تسامح `0.001`). المنطق مركزي في `applySettlementDiscount()` (مُصدَّرة من `src/db/payments.ts`، تُعاد استخدامها في `releaseMaintenanceCar` بـ `src/db/maintenance.ts`)، ونظير له داخل `insertSupplierPayments()` في `src/db/suppliers.ts` (لأن جداول الموردين بلا عمود `invoice_type`).
+- **الأماكن الخمسة (backend):** `addPayment` و`addDebtPayment` (`payments.ts`)، `releaseMaintenanceCar` (`maintenance.ts`)، `addSupplierPayment` و`addSupplierDebtPayment` (`suppliers.ts`) — كلها تقبل وسيطاً اختيارياً `settlementDiscount = 0` يمرّ عبر قنوات IPC (`directSale:addPayment`, `maintenance:deliver`, `debt:addPayment`, `supplierInvoice:addPayment`, `supplierInvoice:addDebtPayment`) ودوال `services/db.ts`.
+- **الواجهة (الإدخال):** حقل رقمي اختياري "خصم / إسقاط مبلغ (تسوية) ₪" بجانب صفوف الدفع في مودالات: تحصيل دين الزبون (`PendingDebts.tsx`)، دفعة البيع المباشر (`DirectSales.tsx`)، تسليم الصيانة (`MaintenanceInvoices.tsx`)، ودفعة/سداد المورد (`Suppliers.tsx`) — مع عرض حيّ لسطر "خصم تسوية" و"المتبقي بعد الدفعة والخصم".
+- **الواجهة (العرض/القراءة) — راجع "تحديث 2026-07-03 (٣)":** خصم التسوية يظهر **بصف/سطر منفصل موسوم "خصم تسوية"** (بلون برتقالي مميّز، ليس نقدية داخلة/خارجة) في **كل** مكان تُعرض فيه تفاصيل الدفعات، لا مكان الإدخال فقط:
+  - **الإيصالات المطبوعة** (صيانة/بيع مباشر/مورد/دين): تفصل الدفعات النقدية (`amount > 0`) في جدول عن سطر "خصم تسوية" (مجموع `settlement_discount`). إيصال الدين المعلّق (`printDebt` في `PendingDebts.tsx`) أُضيف له جدول تفصيل الدفعات + سطر خصم التسوية (كان يعرض المجاميع فقط).
+  - **مودالات التفاصيل** (`MaintenanceInvoices`/`DirectSales`/`PendingDebts`/`Suppliers`): سطر "خصم تسوية (إسقاط — ليس نقداً)" يظهر ضمن مجاميع المودال حين `settlement_discount > 0`، عبر الـ hook المشترك `src/utils/useSettlementTotal.ts` الذي يجلب المجموع من قنوات القراءة أدناه. **لا يُدمج مع "المدفوع" النقدي إطلاقاً** (يبقى `amount_paid` نقدية صرفة).
+- **قنوات القراءة (تُعيد `settlement_discount`) تجمع كلا جدولَي كل مسار:** `payments:getByInvoice` تُوحِّد (`UNION ALL`) جدولَي `payments` + `debt_payments` لنفس الفاتورة (كي يظهر خصم التسوية المسجَّل وقت **تحصيل الدين** لا وقت الاستلام/التسليم فقط)، و`supplierPayments:getByInvoice` تُوحِّد `supplier_payments` + `supplier_debt_payments`. بلا مسّ لأي حساب — قراءة فقط.
 
 #### `cash_ledger` — سجل الصندوق الرئيسي
 | العمود | النوع | الوصف |
@@ -442,7 +473,7 @@ React Page
 | `maintenance:history` | phone | CarRow[] | تاريخ الزبون برقم الهاتف |
 | `maintenance:add` | CarInput | { id } | إضافة فاتورة + بنود + دفعات + مزامنة كفالات |
 | `maintenance:update` | CarRecord | void | تحديث الفاتورة + بنودها + مزامنة كفالات |
-| `maintenance:deliver` | { id, payments, date } | void | تسليم السيارة + دفعة التسليم + Ledger |
+| `maintenance:deliver` | { id, payments, date, settlementDiscount? } | void | تسليم السيارة + دفعة التسليم + خصم تسوية اختياري + Ledger |
 | `maintenance:delete` | id | void | حذف الفاتورة + بنودها + دفعاتها + كفالاتها |
 
 #### البيع المباشر
@@ -453,7 +484,7 @@ React Page
 | `directSale:add` | SaleInput | { id } | إضافة فاتورة + بنود + دفعات + مزامنة كفالات |
 | `directSale:update` | SaleRecord | void | تحديث بيانات الفاتورة + مزامنة كفالات |
 | `directSale:updateItems` | { invoiceId, items[], discount? } | void | حذف البنود القديمة وإعادة إدراجها + كتابة الخصم إن مُرِّر + إعادة حساب total بعد الخصم |
-| `directSale:addPayment` | { id, payments, date } | void | إضافة دفعة + Ledger |
+| `directSale:addPayment` | { id, payments, date, settlementDiscount? } | void | إضافة دفعة + خصم تسوية اختياري + Ledger |
 | `directSale:delete` | id | void | حذف + بنود + دفعات + كفالات |
 
 #### فواتير الموردين
@@ -462,9 +493,9 @@ React Page
 | `supplierInvoice:getAll` | filters? | SupplierRow[] | |
 | `supplierInvoice:getOne` | id | SupplierRow + items[] + payments[] | |
 | `supplierInvoice:add` | SupplierInput | { id } | |
-| `supplierInvoice:update` | SupplierRecord | void | |
-| `supplierInvoice:addPayment` | { id, payments, date } | void | دفعة عادية |
-| `supplierInvoice:addDebtPayment` | { id, payments, date } | void | سداد دين |
+| `supplierInvoice:update` | id, SupplierInput | void | تحديث الترويسة + إعادة إدراج البنود (بخصومات البند) + إعادة حساب `total_amount`/`amount_remaining` عبر `updateSupplierInvoice` |
+| `supplierInvoice:addPayment` | { id, payments, date, settlementDiscount? } | void | دفعة عادية + خصم تسوية اختياري |
+| `supplierInvoice:addDebtPayment` | { id, payments, date, settlementDiscount? } | void | سداد دين + خصم تسوية اختياري (مودال «إضافة دفعة» في Suppliers.tsx) |
 | `supplierInvoice:getDebts` | — | SupplierDebtRow[] | |
 | `supplierInvoice:searchNames` | query | string[] | للـ autocomplete |
 | `supplierInvoice:delete` | id | void | |
@@ -494,7 +525,7 @@ React Page
 | القناة | الوصف |
 |---|---|
 | `debt:getAll` | UNION maintenance+direct_sale WHERE amount_remaining > 0 |
-| `debt:addPayment` | تحصيل دين + Ledger |
+| `debt:addPayment` | تحصيل دين + خصم تسوية اختياري (settlementDiscount) + Ledger |
 
 #### الصندوق
 | القناة | الوصف |
@@ -505,7 +536,7 @@ React Page
 #### التقارير
 | القناة | الوصف |
 |---|---|
-| `report:daily` | تقرير يوم محدد: مجاميع حسب reference_type |
+| `report:daily` | تقرير يوم محدد: مجاميع حسب reference_type (يشمل الحقول المجمّعة `today_sales_income`/`today_expenses`/`today_supplier_payments`/`today_salaries` لبطاقات ملخّص الصندوق — راجع "تحديث 2026-07-02 (١٣)") |
 | `report:monthly` | تقرير شهر: GROUP BY يوم |
 | `report:debts` | كل ديون الزبائن والموردين |
 | `report:topCustomers` | أفضل الزبائن حسب الإنفاق (UNION maintenance+direct_sale, GROUP BY customer) |
@@ -543,18 +574,23 @@ React Page
 #### الدفعات (للطباعة)
 | القناة | الوصف |
 |---|---|
-| `payments:getByInvoice` | { invoiceId, invoiceType } → دفعات فاتورة |
-| `supplierPayments:getByInvoice` | دفعات فاتورة مورد |
+| `payments:getByInvoice` | { invoiceId, invoiceType } → دفعات فاتورة (`UNION ALL` بين `payments` + `debt_payments` — تشمل خصم التسوية وقت التحصيل، راجع "تحديث 2026-07-03 (٣)") |
+| `supplierPayments:getByInvoice` | دفعات فاتورة مورد (`UNION ALL` بين `supplier_payments` + `supplier_debt_payments` — راجع "تحديث 2026-07-03 (٣)") |
 
-#### الشيكات المستحقة قريباً (`cheques:getUpcoming`) — منذ 2026-07-02
+#### الشيكات (`cheques:getUpcoming` + `cheques:getAll`) — منذ 2026-07-02
 
 | القناة | المدخلات | الخرج | الوصف |
 |---|---|---|---|
 | `cheques:getUpcoming` | daysAhead? (افتراضي 14) | `UpcomingChequeRow[]` | UNION من الشيكات (عادية + دين، عملاء + موردين) حيث `cash_date` بين اليوم و(اليوم + daysAhead)، مرتّبة تصاعدياً حسب `cash_date` |
+| `cheques:getAll` | filters? (`ChequeFilters`) | `ChequeRow[]` | **كل** الشيكات التي دخلت البرنامج على الإطلاق (الماضية والمستقبلية، بلا قيد "قادم")، نفس UNION ALL مع إضافة `issue_date`، مرتّبة تنازلياً حسب `cash_date` (الأحدث أولاً) — راجع "صفحة الشيكات" أدناه |
 
-**قراءة فقط بالكامل** — لا تعديل على بنية أي جدول من جداول الشيكات الأربعة الموجودة أصلاً (`payment_cheque`, `debt_payment_cheque`, `supplier_payment_cheque`, `supplier_debt_cheque`)؛ الميزة تعتمد فقط على حقل `cash_date` الموجود فيها مسبقاً.
+**قراءة فقط بالكامل** — لا تعديل على بنية أي جدول من جداول الشيكات الأربعة الموجودة أصلاً (`payment_cheque`, `debt_payment_cheque`, `supplier_payment_cheque`, `supplier_debt_cheque`)؛ الميزة تعتمد فقط على الحقول الموجودة فيها مسبقاً (`cash_date`, `issue_date`, `cheque_number`, `bank_name`).
 
-**المنطق (`src/db/cheques.ts` → `getUpcomingCheques(daysAhead)`):** UNION ALL لست جمل SELECT (شيكات دفعات الصيانة + شيكات دفعات البيع المباشر + شيكات تحصيل ديون العملاء مصنّفة حسب `invoice_type` إلى maintenance/direct_sale + شيكات دفعات الموردين + شيكات سداد ديون الموردين)، مع `JOIN` على جدول الفاتورة المصدر لجلب اسم الطرف (`party_name`: اسم الزبون أو المورد). كل صف يحمل `source` من أربع قيم: `'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'`. `days_remaining` يُحسب داخل SQL بفارق تقويمي صرف بين تاريخين (`julianday(cash_date) - julianday(date('now','localtime'))`، وليس `julianday('now','localtime')` مباشرة) لتفادي انحراف النتيجة حسب ساعة اليوم الحالية — بنفس فلسفة `daysRemaining()` في `warranty.ts`.
+**المنطق (`src/db/cheques.ts` → `getUpcomingCheques(daysAhead)`):** UNION ALL لخمس جمل SELECT (شيكات دفعات الصيانة + شيكات دفعات البيع المباشر + شيكات تحصيل ديون العملاء مصنّفة حسب `invoice_type` إلى maintenance/direct_sale + شيكات دفعات الموردين + شيكات سداد ديون الموردين)، مع `JOIN` على جدول الفاتورة المصدر لجلب اسم الطرف (`party_name`: اسم الزبون أو المورد). كل صف يحمل `source` من أربع قيم: `'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'`. `days_remaining` يُحسب داخل SQL بفارق تقويمي صرف بين تاريخين (`julianday(cash_date) - julianday(date('now','localtime'))`، وليس `julianday('now','localtime')` مباشرة) لتفادي انحراف النتيجة حسب ساعة اليوم الحالية — بنفس فلسفة `daysRemaining()` في `warranty.ts`.
+
+**المنطق (`src/db/cheques.ts` → `getAllCheques(filters)`):** دالة **جديدة منفصلة تماماً** عن `getUpcomingCheques` (لا تعدّلها). نفس UNION ALL للجداول الأربعة وبنفس منطق `JOIN` جلب اسم الطرف، لكن بلا قيد "قادم خلال X يوم" — كل الشيكات بلا استثناء — مع إضافة عمود `issue_date` (تاريخ إصدار الشيك) اللازم للعرض، مرتّبة تنازلياً حسب `cash_date`. تبني جملة `WHERE` ديناميكية من `ChequeFilters` (كلها اختيارية): `chequeNumber` (بحث جزئي `LIKE`), `bankName` (بحث جزئي `LIKE`), `dateFrom`/`dateTo` (على `cash_date`), `amountMin`/`amountMax` (على `amount`) — كلها عبر بارامترات مُهيّأة (prepared params) لا سلاسل مُدمجة.
+
+**صفحة الشيكات (`src/pages/Cheques.tsx`) — منذ 2026-07-03:** شاشة **قراءة فقط بالكامل** (لا إضافة ولا تعديل ولا حذف — أي تعديل على شيك يبقى من صفحته الأصلية، بنفس فلسفة قسم الشيكات المستحقة قريباً). تجلب البيانات عبر `dbService.cheques.getAll(filters)` داخل `useEffect` يُعاد تشغيله عند تغيّر أي فلتر (الفلترة تتمّ في SQL في main process لا في الواجهة). شريط فلاتر `mi-filters` بنفس نمط باقي الصفحات: بحث رقم الشيك، بحث اسم البنك، تاريخ صرف من–إلى، مبلغ من–إلى، وزر "مسح الفلاتر". جدول `mi-table` بأعمدة: رقم الشيك، اسم البنك، تاريخ الإصدار، تاريخ الصرف، المبلغ، الطرف، **نوع العملية** (badge: صيانة `mi-badge-orange` / بيع مباشر `mi-badge-blue` / مورد `mi-badge-purple` / دين مورد `mi-badge-red`)، و**حالة الاستحقاق** (منتهي `mi-badge-gray` عند `daysRemaining < 0` / اليوم `mi-badge-yellow` عند `=0` / قادم `mi-badge-green` عند `>0`، بمقارنة `cash_date` باليوم الحالي). بلا أي CSS جديد. النوع في الواجهة `ChequeRecord` (= `UpcomingCheque` + `issueDate`)، والتحويل عبر `dbRowToCheque` في `dbMapper.ts`.
 
 #### النسخ الاحتياطي
 | القناة | الوصف |
@@ -649,12 +685,12 @@ React Page
 - `PURCHASE_INVOICE_NUMBER_TABLES` = `['supplier_invoices']` — تسلسل `PUR` مستقل
 
 #### `src/db/discount.ts` — منذ 2026-07-02
-- `applyDiscount(subtotal, discountType, discountValue)` — يطبّق خصم الفاتورة (fixed يُطرح كما هو / percentage نسبة من المجموع) ويرمي خطأً عربياً عند القيم غير الصالحة. راجع "خصم الفاتورة" أعلاه.
+- `applyDiscount(subtotal, discountType, discountValue)` — يطبّق خصماً (fixed يُطرح كما هو / percentage نسبة من المجموع) ويرمي خطأً عربياً عند القيم غير الصالحة. دالة عامة تُستخدم لخصم الفاتورة الكاملة (صيانة/بيع مباشر — راجع "خصم الفاتورة" أعلاه) **وأيضاً** لخصم البند الفردي في فواتير الموردين (راجع "خصم بنود فاتورة المورد") — تُستدعى في main process (`suppliers.ts`) وفي الواجهة (`SupplierInvoiceForm.tsx`/`Suppliers.tsx`) دون تكرار المنطق.
 
 #### `src/db/maintenance.ts`
 - `addMaintenanceInvoice(db, input)` — INSERT (يشمل الآن `invoice_number` عبر `nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)` داخل نفس transaction، و`discount_type`/`discount_value` مع `total_amount` بعد الخصم) + insertItems (يكتب warranty وpart_type في DB) + insertPayments
 - `updateMaintenanceInvoice(db, car)` — UPDATE فاتورة (يشمل حقلَي الخصم عند تمريرهما) + يحذف البنود القديمة ويُعيد إدراجها + يعيد حساب `total_amount` (بعد الخصم) و`amount_remaining` من بنود الجدول الفعلية عند تغيّر البنود أو الخصم
-- `deliverMaintenance(db, id, payments, date)` — UPDATE status='delivered' + date_released + دفعات + Ledger
+- `deliverMaintenance(db, id, payments, date)` — UPDATE status='delivered' + date_released + دفعات + Ledger. يقبل الآن `settlementDiscount` اختياري (`ReleaseCarInput.settlementDiscount`) يُطبَّق عبر `applySettlementDiscount` (خصم من المتبقّي بلا Ledger — راجع "خصم تسوية عند الدفع")
 - `deleteMaintenanceInvoice(db, id)` — DELETE + بنودها + دفعاتها
 - `getMaintenanceInvoices(db, filters)` — SELECT مع فلاتر (بحث، تاريخ، حالة)
 - `getMaintenanceInvoice(db, id)` — SELECT + بنود كاملة (يُعيد warranty وpart_type لكل بند)
@@ -674,19 +710,20 @@ React Page
 - `getLedgerByDateRange(db, from, to)` — WHERE transaction_date BETWEEN
 
 #### `src/db/payments.ts`
-- `addPayment(db, invoiceId, invoiceType, payments, date)` — INSERT + تحديث amount_paid/remaining + Ledger. **حماية تجاوز المتبقي (منذ 2026-07-02):** يرفض داخل الـ transaction أي مجموع دفعات (باستثناء طريقة `debt`) يتجاوز `amount_remaining` الحالي (بهامش تسامح `0.001`) ويرمي خطأً عربياً يبيّن مجموع الدفعة والمتبقي. نفس الحماية مطبّقة في `releaseMaintenanceCar` (دفعة التسليم) في `src/db/maintenance.ts`.
-- `addDebtPayment(db, invoiceId, invoiceType, payments, date)` — INSERT debt_payments + تحديث + Ledger
+- `addPayment(db, invoiceId, invoiceType, payments, date, settlementDiscount?)` — INSERT + تحديث amount_paid/remaining + Ledger. **حماية تجاوز المتبقي (منذ 2026-07-02):** يرفض داخل الـ transaction أي مجموع دفعات (باستثناء طريقة `debt`) يتجاوز `amount_remaining` الحالي (بهامش تسامح `0.001`) ويرمي خطأً عربياً يبيّن مجموع الدفعة والمتبقي. نفس الحماية مطبّقة في `releaseMaintenanceCar` (دفعة التسليم) في `src/db/maintenance.ts`. يقبل الآن `settlementDiscount` اختياري (خصم تسوية يُخصم من المتبقّي بلا Ledger).
+- `addDebtPayment(db, invoiceId, invoiceType, payments, date, settlementDiscount?)` — INSERT debt_payments + تحديث + Ledger + خصم تسوية اختياري
+- `applySettlementDiscount(db, paymentsTable, invoiceId, invoiceType, invoiceTable, date, discount, remainingBefore)` — دالة مركزية (مُصدَّرة، تُعاد استخدامها في `maintenance.ts`) تُدرِج صف خصم مخصّص (`amount=0`) وتخصم المبلغ من `amount_remaining` فقط مع حماية تجاوز المتبقّي — بلا `cash_ledger` وبلا مسّ `amount_paid`. راجع "خصم تسوية عند الدفع"
 - `getPendingDebts(db, filters)` — UNION maintenance+direct_sale WHERE amount_remaining > 0
 
 #### `src/db/reports.ts`
-- `getDailyReport(db, date)` — يجمّع Ledger entries لليوم المحدد حسب reference_type
+- `getDailyReport(db, date)` — يجمّع Ledger entries لليوم المحدد حسب reference_type (يُعيد أيضاً الحقول المجمّعة الأربعة `today_sales_income`/`today_expenses`/`today_supplier_payments`/`today_salaries` لبطاقات ملخّص الصندوق — راجع "تحديث 2026-07-02 (١٣)")
 - `getMonthlyReport(db, month, year)` — GROUP BY transaction_date للشهر
 - `getDebtReport(db)` — كل ديون الزبائن + كل ديون الموردين
 - `getTopCustomers(db, limit)` — UNION maintenance+direct_sale, GROUP BY customer, ORDER BY total_spent DESC
 - `getDebtsAging(db)` — منذ 2026-07-02: UNION من maintenance_invoices + direct_sale_invoices + supplier_invoices (WHERE amount_remaining > 0) في صف واحد موحّد لكل دين، مع `days_old` محسوب بـ `julianday(date('now','localtime')) - julianday(invoice_date)` وتصنيف `bucket` عبر دالة داخلية `agingBucket()` إلى أربع شرائح: `'0-30' | '31-60' | '61-90' | '90+'`. دالة مستقلة عن `getDebtReport` (التي تُبقي الزبائن/الموردين في مصفوفتين منفصلتين لتبويب "تقرير الديون" الحالي) لأن الشكل الموحّد المطلوب هنا (جدول واحد لكل الديون بغضّ النظر عن نوعها) لا يتقاطع معها بسهولة.
 
 #### `src/db/suppliers.ts`
-- `addSupplierInvoice` (INSERT يشمل الآن `invoice_number` عبر `nextInvoiceNumber('PUR', PURCHASE_INVOICE_NUMBER_TABLES)`), `updateSupplierInvoice`, `deleteSupplierInvoice`
+- `addSupplierInvoice` (INSERT يشمل الآن `invoice_number` عبر `nextInvoiceNumber('PUR', PURCHASE_INVOICE_NUMBER_TABLES)`، ويُدرج البنود مع خصم كل بند ويحسب `total_amount` عبر `calcTotal` = مجموع `applyDiscount` لكل بند)، `updateSupplierInvoice(id, input)` (يعيد إدراج البنود + إعادة حساب `total_amount`/`amount_remaining` من خصومات البنود داخل transaction — راجع "خصم بنود فاتورة المورد")، `deleteSupplierInvoice`
 - `addSupplierPayment`, `addSupplierDebtPayment`
 - `getSupplierInvoices(filters)`, `getSupplierInvoice(id)`
 - `getSupplierDebts()` — WHERE amount_remaining > 0
@@ -710,6 +747,15 @@ React Page
 **المسار:** `/cash-ledger` (وأيضاً شاشة الهبوط الافتراضية: `/` يُعاد توجيهها إليها عبر `<Navigate>`)
 
 **الأقسام:**
+
+0. **4 بطاقات ملخّص اليوم (منذ 2026-07-02 — أعلى بطاقات الإحصاء في `stats-grid` مستقلة، كلها مرتبطة بنفس `selectedDate` وتتحدّث حياً عند تغييره دون أي زر):**
+   - **إيرادات اليوم (صيانة + بيع مباشر) ₪** (أخضر `#2ECC71`): مجموع `amount_in` من `cash_ledger` حيث `reference_type IN ('maintenance_payment','maintenance_release','direct_sale_payment')` لليوم المحدد.
+   - **مصاريف اليوم ₪** (أحمر `#E74C3C`): مجموع `amount_out` حيث `reference_type = 'daily_expense'`.
+   - **مدفوعات الموردين اليوم ₪** (أحمر): مجموع `amount_out` حيث `reference_type IN ('supplier_payment','supplier_debt')`.
+   - **رواتب اليوم ₪** (أحمر): مجموع `amount_out` حيث `reference_type = 'salary'`.
+
+   القيم الأربع تُشتق من **حقول جديدة أُضيفت لنتيجة `report:daily` نفسها** (`today_sales_income`/`today_expenses`/`today_supplier_payments`/`today_salaries` في `getDailyReport` بـ `src/db/reports.ts` ونوع `DailyReport` بـ `src/db/types.ts`) — بلا قناة IPC جديدة، مجمّعة من نفس `cash_ledger` entries المُجمَّعة أصلاً لليوم حسب `reference_type` (نفس المصدر الذي تجمّعه الدالة للحقول القائمة). تُخزَّن في حالة `dayTotals` وتُملأ داخل `loadDayData` بجانب `dailyNet`. راجع "تحديث 2026-07-02 (١٣)".
+
 1. **5 بطاقات إحصاء — مرتبطة كلها بحقل "تاريخ الحساب" (`selectedDate`) وتتحدّث حياً عند تغييره دون أي زر إضافي:**
    - **إجمالي النظام ₪:** صافي حركات `cash_ledger` لليوم المحدد فقط (`dailyNet`، من `report:daily(selectedDate)`)
    - **المبلغ الفعلي ₪:** إن وُجد سجل محفوظ مسبقاً في `daily_cash_audits` لنفس `audit_date = selectedDate` (يُبحث عنه بالفلترة على `auditRecords` المُحمَّلة أصلاً من `cashAudit:getAll` — بدون قناة IPC جديدة) يُعرض `actual_amount` المحفوظ منه، وإلا تُعرض القيمة الحية المُدخلة في حقل "المبلغ الفعلي في الصندوق" أو "—" إن كانت فارغة
@@ -745,6 +791,8 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warrantyValue, warrantyUnit, notes }]
 ```
 
+**عمود "الإجمالي" في جدول البنود (منذ 2026-07-02):** جدول البنود يعرض عموداً محسوباً "الإجمالي (₪)" = الكمية × سعر الوحدة لكل بند، يُحدَّث حياً أثناء الكتابة (خدمة → الكمية = 1). حقل عرض/واجهة بحت — لا عمود جديد في `invoice_items` ولا تعديل على منطق الحفظ؛ منفصل تماماً عن خصم الفاتورة العام (يوضّح مجموع البند **قبل** تطبيق الخصم). راجع "تحديث 2026-07-02 (٩)".
+
 **خصم الفاتورة في النموذج (منذ 2026-07-02):** أسفل جدول البنود مباشرة: صف "المجموع قبل الخصم" ثم dropdown نوع الخصم (بدون خصم / مبلغ ثابت ₪ / نسبة مئوية %) + حقل رقمي للقيمة (يظهر فقط عند اختيار نوع) + **عرض حي "الإجمالي بعد الخصم"** بنفس أسلوب صندوق "صافي الراتب" الأخضر في `Employees.tsx` (يتحدّث فورياً مع كل تعديل على البنود أو الخصم). validation: نسبة 0-100، مبلغ ثابت ≤ مجموع البنود (`discountErr` يظهر بعد أول محاولة حفظ كباقي الحقول). مودال التفاصيل والإيصال المطبوع يعرضان عند وجود خصم: "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" بدل سطر "الإجمالي الكلي" (عبر `discountBreakdown()` المحلية التي تشتق المجموع قبل الخصم من البنود عند توفّرها أو عكسياً من الإجمالي المخصوم).
 
 **الضريبة (VAT) في العرض (منذ 2026-07-02):** عند تفعيل الضريبة من الإعدادات فقط (`vat_enabled='1'`)، يُضاف بعد سطر الإجمالي (بعد الخصم إن وُجد) في مودال التفاصيل والإيصال المطبوع ثلاثة أسطر: "المجموع قبل الضريبة" / "الضريبة (X%)" / "الإجمالي شامل الضريبة" — محسوبة وقت العرض فقط من `total` المخزَّن (بعد الخصم) عبر `vatBreakdown(base, vat)` المحلية، ولا تُخزَّن في قاعدة البيانات. الإعدادات تُحمَّل مرة واحدة عبر `dbService.vat.getSettings()` إلى حالة `vat`. عند التعطيل (الافتراضي) لا يظهر أي سطر ضريبة. راجع قسم "الضريبة (VAT)" في الـ Backend أعلاه.
@@ -768,13 +816,14 @@ parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warr
 
 **الإجراءات في كل صف:**
 - **تعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnCar`/`confirmEditCar`) — لكل الفواتير بلا استثناء. الرسالة تختلف: إن كانت الفاتورة "مُسلَّمة" تُضمَّن تفاصيل إضافية (الزبون، النمرة، الإجمالي، تاريخ التسليم) ضمن نص التحذير؛ غير ذلك رسالة عامة. بعد التأكيد يُستدعى `dbService.maintenance.getOne(car.id)` لجلب البنود الكاملة (مع warranty وpart_type) ثم يملأ النموذج بها. يتجنّب الاعتماد على بيانات GarageContext التي لا تحمل البنود. *(سابقاً كانت الفواتير المُسلَّمة فقط تعرض تحذيراً مخصصاً بدون ConfirmDialog ولا كلمة سر، وبقية الفواتير تُفتح للتعديل مباشرة بلا أي تأكيد — تم توحيدها في 2026-07-01.)*
-- **تسليم:** يفتح مودال التسليم (دفعات + تأكيد) → `maintenance:deliver`
+- **تسليم:** يفتح مودال التسليم (دفعات + حقل "خصم / إسقاط مبلغ (تسوية) ₪" اختياري + تأكيد) → `maintenance:deliver` (يمرّر `settlementDiscount`) — راجع "خصم تسوية عند الدفع"
 - **طباعة:** async يجلب `getOne` + `payments:getByInvoice` ثم يطبع HTML كامل
 - **حذف:** ConfirmDialog مع كلمة سر
 
 **مودال التفاصيل:** (عند الضغط على الصف)
-- بيانات الفاتورة + بطاقة بنود (جدول: اسم القطعة، النوع، الكمية، السعر، الكفالة بصيغة نصية عربية، ملاحظات)
-- قسم "عمليات سابقة لهذا الزبون" (LinkedOps)
+- بيانات الفاتورة + بطاقة بنود (جدول: اسم القطعة، النوع، الكمية، السعر، الإجمالي (الكمية × السعر)، الكفالة بصيغة نصية عربية، ملاحظات)
+- قسم "عمليات سابقة لهذا الزبون" (LinkedOps بالهاتف عبر `getLinkedOps`)
+- قسم "عمليات سابقة لهذه السيارة" (LinkedOps بنمرة السيارة عبر `getLinkedOpsByPlate` — صيانة + الكفالات المرتبطة؛ يظهر بجانب قسم الهاتف، كلاهما معاً) — راجع "تحديث 2026-07-02 (١٢)"
 - بنود قابلة للحذف
 
 **نموذج الدفع (عند الإضافة أو التسليم):**
@@ -793,6 +842,8 @@ parts: FormPart[] = [{ id, partType:'part'|'service', name, qty, unitPrice, warr
 customerName, phone, saleDate, warrantyValue:'1', warrantyUnit:''|WarrantyPeriodUnit, generalNotes
 discountType: ''|'fixed'|'percentage', discountValue: string
 ```
+
+**عمود "الإجمالي" في جدول البنود (منذ 2026-07-02):** نفس عمود "الإجمالي (₪)" المحسوب حياً (الكمية × سعر الوحدة لكل بند) الموجود في `MaintenanceForm` — حقل عرض بحت منفصل عن الخصم العام، بلا أي عمود جديد في `invoice_items`. راجع "تحديث 2026-07-02 (٩)".
 
 **خصم الفاتورة في النموذج (منذ 2026-07-02):** نفس كتلة الخصم والعرض الحي الموجودة في `MaintenanceInvoices.tsx` بالضبط (dropdown + حقل قيمة + صندوق "الإجمالي بعد الخصم" الأخضر أسفل جدول البنود، مع نفس الـ validation). ملخّص الدفع عند الإضافة ("إجمالي الفاتورة"/"المتبقي") يعتمد الإجمالي **بعد الخصم**، وكذلك اشتقاق الحالة (مدفوع/دين جزئي/دين كامل). مودال التفاصيل والإيصال يعرضان تسلسل "المجموع قبل الخصم" / "الخصم" / "الإجمالي بعد الخصم" عند وجود خصم (`discountBreakdownDS()`).
 
@@ -822,7 +873,7 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 - بعد التأكيد يستدعي `dbService.directSale.getOne(id)` لجلب البنود الحالية، ثم عند الحفظ يستدعي `dbService.directSale.updateItems(id, newItems, { type, value })` لتحديث البنود والخصم معاً ذرّياً (وقناة `update` تُستدعى بخصم `undefined` = لا تغيير)
 
 **البنود في البيع المباشر:**
-- جدول قابل للتعديل المباشر: اسم البند، الكمية، السعر، ملاحظات (بدون كفالة فردية)
+- جدول قابل للتعديل المباشر: اسم البند، الكمية، السعر، الإجمالي (محسوب حياً = الكمية × السعر، عرض فقط)، ملاحظات (بدون كفالة فردية)
 - عند **إضافة** فاتورة جديدة: البنود تُحفظ مع الفاتورة
 
 **دالة `warrantyLabelDS(raw)`:**
@@ -836,9 +887,9 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 **المصدر:** `salesInvoice:getAll` — UNION من maintenance_invoices + direct_sale_invoices
 
 **الفلاتر:**
-- بحث Fuse.js باسم الزبون
+- بحث Fuse.js باسم الزبون + رقم الفاتورة + **نمرة السيارة** (`carPlate` — أُضيف كمفتاح Fuse، راجع "تحديث 2026-07-02 (١٢)")
 - بحث برقم الهاتف
-- بحث بنمرة السيارة (`plateSearch`)
+- بحث بنمرة السيارة (`plateSearch` — فلتر مباشر بجانب مفتاح Fuse)
 - تبويبات النوع: الكل / صيانة / بيع مباشر
 - تبويبات الحالة: الكل / مدفوع / دين جزئي / دين كامل
 - فلتر تاريخ + فلتر مبلغ
@@ -854,7 +905,7 @@ discountType: ''|'fixed'|'percentage', discountValue: string
   - direct_sale → `dbService.directSale.update(sale)`
 
 **إضافة دفعة:** (للفواتير ذات المتبقي > 0)
-- يستخدم `dbService.debt.addPayment` — نفس قناة الديون
+- يستخدم `dbService.debt.addPayment` — نفس قناة الديون (يشمل حقل "خصم / إسقاط مبلغ (تسوية) ₪" الاختياري — راجع "خصم تسوية عند الدفع")
 
 **LinkedOps في مودال التفاصيل:** يعرض عمليات سابقة لنفس الزبون (phone) من maintenance + direct_sale
 
@@ -881,7 +932,7 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 - `supplier` → `dbService.supplierInvoice.update()`
 - `salary` → يعرض رسالة "يتم من صفحة الموظفين"
 
-**إضافة دفعة:** للموردين فقط عبر `supplierInvoice:addDebtPayment`
+**إضافة دفعة:** للموردين فقط عبر `supplierInvoice:addDebtPayment` (مع حقل "خصم / إسقاط مبلغ (تسوية) ₪" اختياري — راجع "خصم تسوية عند الدفع")
 
 **الحذف:** يوجّه حسب النوع لـ expense/supplierInvoice/salary delete
 
@@ -895,8 +946,9 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 **البيانات:** من `debt:getAll` — UNION maintenance+direct_sale WHERE amount_remaining > 0
 
 **الفلاتر:**
-- بحث Fuse.js باسم الزبون
+- بحث Fuse.js باسم الزبون + **نمرة السيارة** (`carPlate` — أُضيف كمفتاح Fuse، راجع "تحديث 2026-07-02 (١٢)")
 - بحث برقم الهاتف
+- بحث بنمرة السيارة (`plateSearch` — فلتر مباشر جزئي `includes` بجانب مفتاح Fuse؛ يعمل فعلياً على ديون الصيانة فقط لأن البيع المباشر بلا نمرة فتُستبعد صفوفه تلقائياً — راجع "تحديث 2026-07-03 (٢)")
 - تبويبات: الكل / صيانة / بيع مباشر
 - فلتر مبلغ المتبقي (min-max)
 
@@ -904,7 +956,7 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 
 **الإجراءات:**
 1. **تعديل:** ConfirmDialog أولاً (مع كلمة سر، `warnDebt`/`confirmEditDebt`) *(أُضيف بتاريخ 2026-07-01 — سابقاً بلا تأكيد)*، ثم مودال يُعدّل بيانات الفاتورة الأصلية (يوجّه حسب `debt.type`)
-2. **إضافة دفعة:** مودال الدفع (كاش/شيك/فيزا) → `debt:addPayment` + Ledger
+2. **إضافة دفعة:** مودال الدفع (كاش/شيك/فيزا + حقل "خصم / إسقاط مبلغ (تسوية) ₪" اختياري) → `debt:addPayment` + Ledger — خصم التسوية يُسقَط من المتبقّي بلا نقدية (راجع "خصم تسوية عند الدفع")
 3. **حذف:** ConfirmDialog مع كلمة سر، يحذف الفاتورة المصدر بالكامل
 
 **LinkedOps:** تظهر في مودال التفاصيل
@@ -943,10 +995,13 @@ discountType: ''|'fixed'|'percentage', discountValue: string
 **نموذج فاتورة المورد:**
 - اسم المورد (مع autocomplete من `supplierInvoice:searchNames`)
 - رقم الهاتف، تاريخ الشراء، ملاحظات
-- جدول البنود: اسم البند، الكمية، السعر، ملاحظات
+- جدول البنود: اسم البند، الكمية، السعر، **الإجمالي** (محسوب حياً)، **الخصم** (بدون/مبلغ ثابت/نسبة % — على مستوى البند الفردي)، **بعد الخصم** (محسوب حياً)، ملاحظات — راجع "خصم بنود فاتورة المورد" و"تحديث 2026-07-02 (١٠)"
+- المجموع الكلي أسفل الجدول = مجموع إجمالي كل بند بعد خصمه الخاص
 - قسم الدفع: كاش/شيك/فيزا (يمكن دين جزئي)
 
-**الفلاتر على الفواتير:** بحث باسم المورد + فلتر تاريخ (منذ 2026-07-02: البحث Fuse.js يشمل أيضاً `invoiceNumber`)
+**تفاصيل الفاتورة والإيصال المطبوع:** يعرضان لكل بند العدد والسعر والإجمالي قبل الخصم والخصم إن وُجد والإجمالي بعد الخصم، مع المجموع الكلي في الأسفل.
+
+**الفلاتر على الفواتير:** بحث Fuse.js باسم المورد + رقم الفاتورة (`invoiceNumber` — منذ 2026-07-02) + بحث برقم الهاتف (`phoneSearch`) + **فلتر تاريخ الشراء (من-إلى — حقلان منفصلان `filterFrom`/`filterTo`)** + فلتر مبلغ الإجمالي (min-max). كل الفلاتر تُطبَّق **client-side** على `supplierInvoices` من الـ Context ضمن `filteredSuppliers` — بنفس نمط `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`DailyExpenses.tsx`. راجع "تحديث 2026-07-02 (١٤)". (الـ backend `getSupplierInvoices` وقناة `supplierInvoice:getAll` يدعمان `date_from`/`date_to` أصلاً في `SupplierFilters`، غير مستخدَمَين من هذه الصفحة لأن الفلترة تجري client-side.)
 
 **ترقيم الفواتير (منذ 2026-07-02):** جدول فواتير الموردين يعرض عمود "رقم الفاتورة" (بصيغة `PUR-{سنة}-{تسلسل}`) كأول عمود، ويظهر أيضاً كأول حقل في مودال التفاصيل وفي عنوان الإيصال المطبوع.
 
@@ -1031,7 +1086,8 @@ export function daysRemaining(endDate: string): number
 - يدوي (source_id=0) → يظهر النوع المسجّل
 
 **الفلاتر:**
-- بحث Fuse.js باسم الزبون + اسم القطعة
+- بحث Fuse.js باسم الزبون + **نمرة السيارة** (`carPlate` — أُضيف كمفتاح Fuse، راجع "تحديث 2026-07-02 (١٢)")
+- بحث برقم الهاتف
 - تبويبات: نشطة / منتهية
 - فلتر المصدر: الكل / صيانة / بيع مباشر / يدوي
 
@@ -1133,7 +1189,7 @@ export function daysRemaining(endDate: string): number
 ## 6. المكونات المشتركة
 
 ### `src/components/Sidebar.tsx`
-- **12 رابط تنقل (بهذا الترتيب بالضبط):** الصندوق الرئيسي / فواتير البيع / البيع المباشر / سيارات الصيانة / فواتير الشراء / الموردون / المصاريف اليومية / الموظفون والرواتب / الديون المعلقة / الكفالات / التقارير / **الإعدادات** (أيقونة ⚙) *(أُعيد ترتيبها بتاريخ 2026-07-01)*
+- **13 رابط تنقل (بهذا الترتيب بالضبط):** الصندوق الرئيسي / فواتير البيع / البيع المباشر / سيارات الصيانة / فواتير الشراء / الموردون / المصاريف اليومية / الموظفون والرواتب / الديون المعلقة / **الشيكات** (أُضيف 2026-07-03) / الكفالات / التقارير / **الإعدادات** (أيقونة ⚙) *(أُعيد ترتيبها بتاريخ 2026-07-01)*
 - يعرض التاريخ الحالي بالعربي في الأسفل (`toLocaleDateString('ar-EG-u-nu-latn', ...)` — أرقام لاتينية)
 - شعار "**كراج الخط الأخضر**" في الأعلى
 - `.sidebar` يستخدم `overflow: hidden` (بدلاً من `position: sticky`)
@@ -1182,9 +1238,10 @@ export function daysRemaining(endDate: string): number
 **ملاحظة تاريخية:** كان المكوّن يتضمّن سابقاً ميزة "مؤشر Caps Lock" (تحذير نصي يظهر عند تفعيل Caps Lock أثناء إدخال كلمة السر)، اعتمدت في محاولاتها المتعاقبة على `onKeyDown`/`onKeyUp`/`onFocus` محليّين ثم على مستمعين على مستوى `window` مرتبطين بحالة تركيز الحقل. تبيّن أن الفائدة لا تستحق التعقيد المصاحب لها، فأُزيلت الميزة بالكامل (الـ state، الـ useEffect، عنصر JSX الخاص بالتحذير، وتنسيق `pwd-capslock-warning` في `App.css`)، وأبقي المكوّن مقتصراً على وظيفته الأصلية: إظهار/إخفاء كلمة السر عبر زر أيقونة العين.
 
 ### `src/store/GarageContext.tsx`
-- **يوفّر:** جميع البيانات المحمّلة من DB + `reload()` + `loading` + `getLinkedOps()`
+- **يوفّر:** جميع البيانات المحمّلة من DB + `reload()` + `loading` + `getLinkedOps()` + `getLinkedOpsByPlate()`
 - **يُحمّل عند الإطلاق:** 11 استدعاء متوازٍ (Promise.all) لكل قنوات `getAll`
-- **`getLinkedOps(phone, currentSource, currentId)`:** يُعيد عمليات سابقة لنفس رقم الهاتف من maintenance + direct_sale + supplier invoices
+- **`getLinkedOps(phone, currentSource, currentId)`:** يُعيد عمليات سابقة لنفس رقم الهاتف من maintenance + direct_sale + sales/purchase/supplier invoices + debts
+- **`getLinkedOpsByPlate(carPlate, currentSource, currentId)`:** نظيرتها بنمرة السيارة (وسيلة ربط رئيسية إضافية بأهمية الهاتف، لا بديل عن أي مفتاح داخلي). البيع المباشر بلا عمود `car_plate` في القاعدة (SaleRecord بلا `carPlate`)، لذا تبحث فعلياً في فواتير الصيانة (`maintenance_invoices`) والكفالات المرتبطة (`warranties.car_plate` — للصيانة فقط) بمقارنة النمرة بعد إزالة الفراغات وتوحيد الحالة. راجع "تحديث 2026-07-02 (١٢)"
 - **`reload()`:** يُعيد تشغيل كل الاستدعاءات → يُحدّث كل الشاشات
 
 **الأنواع المُعرَّفة في GarageContext:**
@@ -1196,6 +1253,8 @@ export function daysRemaining(endDate: string): number
 | `SaleRecord` | فاتورة بيع مباشر في UI (يشمل discountType?/discountValue?) |
 | `SaleItem` | بند بيع مباشر في UI |
 | `PaymentRow` | صف دفع (مع تفاصيل شيك/فيزا) |
+| `UpcomingCheque` | شيك مستحق قريباً في UI (قراءة فقط) |
+| `ChequeRecord` | شيك في صفحة الشيكات = `UpcomingCheque` + `issueDate` (قراءة فقط) |
 | `DebtRecord` | دين معلق |
 | `DebtType` | `'maintenance'` \| `'direct_sale'` |
 | `SaleInvoice` | فاتورة بيع مجمّعة |
@@ -1284,6 +1343,7 @@ const normalizeAr = (s: string) =>
 - `ignoreLocation: true` — البحث في أي موقع من النص
 - النمط: تُنشأ `fuseItems` من البيانات مع `_idx` للرجوع للعنصر الأصلي
 - النتائج: `fuse.search(normalizeAr(q)).map(r => data[r.item._idx])`
+- **مفاتيح البحث (`keys`) لكل شاشة:** نمرة السيارة (`carPlate`) مُضافة كمفتاح بحث في كل الشاشات التي تحمل بيانات سيارة — `MaintenanceInvoices` (بجانب فلتر النمرة المباشر `plate` عبر `includes`)، `SalesInvoices` (بجانب `customerName`+`invoiceNumber`)، `Warranties` و`PendingDebts` (بجانب `customerName`) — راجع "تحديث 2026-07-02 (١٢)"
 
 ### الـ Validation
 
@@ -1398,8 +1458,9 @@ printPdf(title: string, bodyHtml: string): void
 - [x] نظام الكفالات المنظّم (dropdown وحدة + عدد) مخزّن كـ JSON
 - [x] عمود "نوع العملية" في شاشة الكفالات
 - [x] دليل الموردين منفصل
-- [x] بحث Fuse.js مع تطبيع عربي في كل الشاشات
-- [x] LinkedOps (عمليات سابقة لنفس الزبون) في التفاصيل
+- [x] بحث Fuse.js مع تطبيع عربي في كل الشاشات (يشمل نمرة السيارة `carPlate` في كل شاشة تحمل بيانات سيارة — راجع "تحديث 2026-07-02 (١٢)")
+- [x] LinkedOps (عمليات سابقة لنفس الزبون بالهاتف) في التفاصيل
+- [x] LinkedOps بنمرة السيارة (`getLinkedOpsByPlate` — "عمليات سابقة لهذه السيارة" في مودال فاتورة الصيانة، بجانب قسم الهاتف) — راجع "تحديث 2026-07-02 (١٢)"
 - [x] PasswordGate + ConfirmDialog مع كلمة سر
 - [x] مكوّن PasswordInput مع إظهار/إخفاء كلمة السر
 - [x] Draft localStorage للنماذج الطويلة
@@ -1425,13 +1486,17 @@ printPdf(title: string, bodyHtml: string): void
 - [x] **سجل نشاط** (`activity_log`) لكل عمليات التعديل/الحذف الحساسة — قراءة فقط في الإعدادات
 - [x] **ضمان atomic كامل لكل عمليات الكتابة المركّبة:** لفّ `maintenance:add/update` و`directSale:add/update` بـ transaction خارجي واحد يضمّ كتابة الفاتورة ومزامنة الكفالات معاً (بقية عمليات الكتابة المركّبة كانت ملفوفة بالفعل)
 - [x] **تقرير/تنبيه الشيكات المستحقة قريباً:** قناة `cheques:getUpcoming` (قراءة فقط بالكامل) + قسم جديد في `CashLedger.tsx` مع فلتر مدى 7/14/30 يوماً وتلوين حسب الإلحاح — بدون أي تعديل على بنية جداول الشيكات الأربعة الموجودة
+- [x] **صفحة "الشيكات" (كل الشيكات):** قناة `cheques:getAll(filters)` + دالة `getAllCheques` (منفصلة عن `getUpcomingCheques`) تعرض **كل** الشيكات من الجداول الأربعة (الماضية والمستقبلية) مرتّبة تنازلياً حسب `cash_date`، صفحة `Cheques.tsx` جديدة (قراءة فقط) بفلاتر رقم الشيك/البنك/التاريخ/المبلغ + badge نوع العملية + حالة الاستحقاق (منتهي/اليوم/قادم)، رابط في `Sidebar.tsx` وRoute في `App.tsx` — بدون أي تعديل على بنية جداول الشيكات — راجع "تحديث 2026-07-03"
 - [x] **تبويب "أعمار الديون" في Reports.tsx:** قناة `report:debtsAging` (قراءة فقط) تصنّف كل الديون المعلقة (زبائن + موردين) إلى 4 شرائح عمرية حسب تاريخ الفاتورة الأصلي، مع بطاقات إحصاء لكل شريحة، جدول موحّد قابل للفرز حسب عدد الأيام، وطباعة/تصدير CSV بنفس نمط بقية تبويبات Reports.tsx
 - [x] **خصم على مستوى الفاتورة (صيانة + بيع مباشر):** `discount_type` (`fixed`/`percentage`/NULL) + `discount_value` عبر migration، منطق مركزي `applyDiscount` في `src/db/discount.ts` (يضمن ألا يصبح الإجمالي سالباً)، `total_amount` يُخزَّن بعد الخصم ويُعاد حساب `amount_remaining` منه، نموذج خصم + عرض حي للإجمالي بعد الخصم في `MaintenanceInvoices.tsx`/`DirectSales.tsx`، وعرض "المجموع قبل الخصم/الخصم/الإجمالي بعد الخصم" في مودالات التفاصيل والإيصالات المطبوعة
+- [x] **خصم على مستوى البند الفردي في فواتير الموردين:** `supplier_items.discount_type`/`discount_value` عبر migration، `total_amount` = مجموع `applyDiscount` لكل بند (إعادة استخدام نفس `src/db/discount.ts`)، عمودا "الإجمالي" و"بعد الخصم" + dropdown خصم لكل بند في `SupplierInvoiceForm.tsx`، `updateSupplierInvoice` يعيد إدراج البنود ويعيد الحساب، وعرض الخصم/الإجمالي بعد الخصم في مودال التفاصيل والإيصال المطبوع في `Suppliers.tsx` — راجع "تحديث 2026-07-02 (١٠)"
 - [x] **رقم فاتورة منسّق يظهر للزبون (`invoice_number`):** `INV-{سنة}-{تسلسل}` مشترك بين فواتير الصيانة والبيع المباشر (تسلسل واحد لضمان التفرّد بينهما بما أنهما يُعرضان مجتمعين)، و`PUR-{سنة}-{تسلسل}` مستقل لفواتير الموردين. عمود جديد + بحث Fuse.js + عنوان الإيصال المطبوع في `MaintenanceInvoices.tsx`/`DirectSales.tsx`/`SalesInvoices.tsx`/`Suppliers.tsx`. مُضاف عبر migration `ALTER TABLE ... ADD COLUMN` + تعبئة رجعية للسجلات القديمة (`backfillInvoiceNumbers`) بترتيب زمني صرف حسب `created_at`؛ الـ `id` الداخلي لم يتغيّر ولم يُحذف.
 - [x] **إحصاء نهاية اليوم مقسّماً حسب طريقة الدفع (كاش/فيزا/شيك):** أعمدة `actual_cash`/`actual_visa`/`actual_check` عبر migration + قناة `cashAudit:getSystemBreakdown` (صافي كل طريقة من جداول الدفعات مباشرة) + جدول مقارنة ثلاثي + تعديل/حذف السجلات (`cashAudit:delete`) — راجع "تحديث 2026-07-02 (٥)"
 - [x] **رسائل خطأ Toast غير مُجمِّدة بدل `alert()`:** حدث `app-error` + مكوّن `ErrorToast.tsx` (اختفاء تلقائي 8 ثوانٍ) — راجع "رسائل الخطأ (Toast)"
-- [x] **حماية تجاوز المتبقي في الدفعات:** `addPayment`/`releaseMaintenanceCar` يرفضان أي دفعة تتجاوز `amount_remaining` داخل الـ transaction
+- [x] **حماية تجاوز المتبقي في الدفعات (موحّدة على كل القنوات الخمس):** `addPayment` + `addDebtPayment` (`payments.ts`) + `releaseMaintenanceCar` (`maintenance.ts`) + `addSupplierPayment` + `addSupplierDebtPayment` (`suppliers.ts`) يرفضون أي مجموع دفعات (عدا طريقة `debt`) يتجاوز `amount_remaining` الحالي داخل الـ transaction بهامش تسامح `0.001` بنفس الرسالة العربية — راجع "تحديث 2026-07-02 (١٥)"
+- [x] **خصم تسوية عند الدفع (`settlement_discount`):** إسقاط اختياري لمبلغ من `amount_remaining` وقت التحصيل/الدفع دون تسجيله كنقدية في `cash_ledger`. عمود جديد عبر migration في `payments`/`debt_payments`/`supplier_payments`/`supplier_debt_payments`، منطق مركزي `applySettlementDiscount` (+ نظير في `insertSupplierPayments`) مع نفس حماية تجاوز المتبقّي، حقل "خصم / إسقاط مبلغ (تسوية) ₪" في مودالات الدفع الأربعة، وسطر "خصم تسوية" منفصل في الإيصالات المطبوعة — راجع "خصم تسوية عند الدفع" و"تحديث 2026-07-02 (١١)"
 - [x] **منع إدخال تواريخ مستقبلية:** `useDateClampGuard` في `App.tsx` يقيّد أي `<input type="date">` له `max` عبر مستمع عام على مستوى التطبيق
+- [x] **بطاقات ملخّص اليوم الأربع في الصندوق (إيرادات/مصاريف/موردين/رواتب):** 4 بطاقات `stat-card` أعلى بطاقات الإحصاء في `CashLedger.tsx`، مرتبطة بنفس `selectedDate` وتتحدّث حياً — مغذّاة بأربعة حقول مجمّعة جديدة أُضيفت لنتيجة `report:daily` (`today_sales_income`/`today_expenses`/`today_supplier_payments`/`today_salaries`) بلا قناة IPC جديدة — راجع "تحديث 2026-07-02 (١٣)"
 
 ### غير مكتمل / قيود معروفة
 
@@ -1602,7 +1667,7 @@ const dbPath = app.getPath('userData') + '/garage.db'
 
 2. **رسائل الخطأ (Toast) بدل `alert()`:** `showError()` في `src/utils/notify.ts` صار يُطلق `window.dispatchEvent(new CustomEvent('app-error', {detail}))` بدل `alert()` الذي كان يُجمّد نافذة Electron. مكوّن جديد `src/components/ErrorToast.tsx` (مُركَّب في `App.tsx` داخل `GarageProvider`) يستمع للحدث ويعرض toasts حمراء أسفل الشاشة تختفي تلقائياً بعد 8 ثوانٍ (مع زر إغلاق يدوي) وتدعم أسطراً متعددة. `ConfirmDialog` صار كذلك يعرض رسائله بـ `whiteSpace: pre-line`.
 
-3. **حماية تجاوز المتبقي في الدفعات:** `addPayment` (كل الفواتير) و`releaseMaintenanceCar` (دفعة التسليم) يرفضان الآن — داخل الـ transaction — أي مجموع دفعات (عدا طريقة `debt`) يتجاوز `amount_remaining` الحالي (هامش تسامح `0.001`) ويرميان خطأً عربياً يبيّن مجموع الدفعة والمتبقي.
+3. **حماية تجاوز المتبقي في الدفعات:** `addPayment` (كل الفواتير) و`releaseMaintenanceCar` (دفعة التسليم) يرفضان الآن — داخل الـ transaction — أي مجموع دفعات (عدا طريقة `debt`) يتجاوز `amount_remaining` الحالي (هامش تسامح `0.001`) ويرميان خطأً عربياً يبيّن مجموع الدفعة والمتبقي. *(لاحقاً وُحِّدت هذه الحماية لتشمل كل قنوات الدفع الخمس — تحصيل ديون الزبائن ودفعات/ديون الموردين أيضاً — راجع "تحديث 2026-07-02 (١٥)".)*
 
 4. **منع إدخال تواريخ مستقبلية (`useDateClampGuard` في `App.tsx`):** hook عام يُركَّب مرة واحدة على مستوى التطبيق، يلتقط أحداث `change`/`blur` (capture) لأي `<input type="date">` له `max`، فإن تجاوزت قيمته `max` يعيدها إلى `max` عبر setter الأصلي لـ `HTMLInputElement.value` ويُطلق حدث `input` — يحمي حقول التاريخ من الإدخال اليدوي (الكيبورد) لتاريخ لاحق دون الحاجة لتعديل كل شاشة على حدة.
 
@@ -1611,12 +1676,12 @@ const dbPath = app.getPath('userData') + '/garage.db'
 **تحديث 2026-07-02 (٦) — إثراء تفاصيل الفواتير في الشاشات المجمّعة (ديون/كفالات/فواتير بيع/فواتير شراء):** تعديل **عرض بيانات فقط (read paths)** — لا كتابة، لا لمس لأي عمود موجود، لا تغيير على منطق التعديل/الحذف/ConfirmDialog. الشاشات التي تعرض بيانات مُجمَّعة (UNION) من عدة مصادر لم تكن تسحب كامل أعمدة الفاتورة المصدر في استعلامها، فمودالات تفاصيلها كانت تُخفي حقولاً موجودة أصلاً في القاعدة.
 
 **المبدأ المتَّبع — كل حقل حسب مصدره فقط (لا حقول وهمية):** الحقول تُعرض فقط عندما تكون منطقية للمصدر، وتُخفى تماماً (شرط `{field && …}`) لا تُعرض فارغة أو "—" حين لا تنطبق:
-- **maintenance (صيانة):** `car_type` / `car_color` / `notes` / `date_released` / `status` — كلها موجودة أصلاً في `maintenance_invoices`.
+- **maintenance (صيانة):** `car_plate` / `car_type` / `car_color` / `notes` / `date_released` / `status` — كلها موجودة أصلاً في `maintenance_invoices`.
 - **direct_sale (بيع مباشر):** لا سيارة إطلاقاً — فقط `notes` (وحقول السيارة تُمرَّر `NULL`/`''` في فروع UNION المقابلة لتطابق الأعمدة كما تتطلب SQLite).
 - **supplier / expense / salary (فواتير الشراء):** `supplier_phone` و`notes` كانا **معروضين أصلاً** في `PurchaseInvoices.tsx` (عبر `phone` و`details`) — لذا لم تلزم أي تعديلات على هذه الشاشة.
 - **manual warranty (`source_id=0`):** تبقى `car_type`/`car_color` = `NULL` (لا مصدر فاتورة).
 
-1. **الديون المعلقة (`getPendingDebts` في `src/db/payments.ts` + `PendingDebts.tsx`):** أُضيف `car_type`/`car_color`/`notes` لكلا فرعي UNION (صيانة حقيقية، بيع مباشر `NULL` لحقول السيارة و`notes` حقيقية). أنواع: `PendingDebt` (اختيارية) + `DebtRecord` (`carType?`/`carColor?`/`notes?`) + `pendingDebtToRecord`. المودال والإيصال المطبوع يعرضان نوع/لون السيارة **فقط عند `type==='maintenance'`** والملاحظات بلا شرط نوع.
+1. **الديون المعلقة (`getPendingDebts` في `src/db/payments.ts` + `PendingDebts.tsx`):** أُضيف `car_plate`/`car_type`/`car_color`/`notes` لكلا فرعي UNION (صيانة حقيقية، بيع مباشر `NULL` لحقول السيارة و`notes` حقيقية). أنواع: `PendingDebt` (اختيارية، تشمل `car_plate`) + `DebtRecord` (`carPlate` موجود أصلاً + `carType?`/`carColor?`/`notes?`) + `pendingDebtToRecord` (`carPlate: d.car_plate ?? ''`). عمود «نمرة السيارة» في الجدول والمودال والإيصال المطبوع يعرض نمرة/نوع/لون السيارة **فقط عند `type==='maintenance'`** (خلية الجدول تبقى فارغة للبيع المباشر لا "—")، والملاحظات بلا شرط نوع. **تصحيح لاحق (2026-07-02):** `car_plate` كان مفقوداً من استعلام الصيانة رغم وجود `car_type`/`car_color`، فكانت النمرة تظهر فارغة/"—" دائماً — أُكمِل سحبها في هذا التحديث.
 2. **الكفالات (`warranties` + `Warranties.tsx`):** عمودان جديدان `car_type`/`car_color TEXT` في جدول `warranties` عبر `ALTER TABLE` في `src/database.ts` (نفس نمط migrations). `syncWarrantiesForMaintenance` يجلب `car_type`/`car_color` من الفاتورة ويكتبهما في كل سجل كفالة؛ `syncWarrantiesForDirectSale` يكتب `NULL` صراحةً؛ الكفالات اليدوية القديمة (`source_id=0`) تبقى `NULL` تلقائياً. **`warranty:update` لم يُعدَّل** (لا يمسّ العمودين فيُحافَظ عليهما عند تعديل الكفالة). أنواع: `WarrantyRow.car_type`/`car_color` + `WarrantyRecord.carType?`/`carColor?` + `dbRowToWarranty`. المودال والإيصال يعرضانهما عند `source==='maintenance'`.
 3. **فواتير البيع (`salesInvoice:getAll` في `electron/ipc-handlers.ts` + `SalesInvoices.tsx`):** أُضيف لفرعي UNION `car_color`، و`date_released`، و`status AS car_status` (بيع مباشر: `''`/`NULL`). (`car_plate`/`car_type`/`notes` كانت موجودة أصلاً؛ و`date_received` معروض أصلاً كحقل `date`.) أنواع: `SaleInvoiceRow` (`car_color`/`date_released`/`car_status`) + `SaleInvoice` (`carColor?`/`dateReleased?`/`carStatus?`) + `dbRowToSaleInvoice`. المودال والإيصال يعرضان لون السيارة/حالة الصيانة (badge أخضر مُسلَّم / أصفر قيد الصيانة)/تاريخ التسليم **فقط عند `type==='maintenance'`**.
 4. **فواتير الشراء (`PurchaseInvoices.tsx`):** لا تعديل — `supplier_phone` (عبر `phone`) و`notes` (عبر `details`) معروضان أصلاً في استعلام `purchaseInvoice:getAll` والمودال؛ لا حقول ناقصة تُضاف.
@@ -1639,3 +1704,119 @@ const dbPath = app.getPath('userData') + '/garage.db'
 4. **لا تعارض مسودات:** المكوّنات المشتركة تُستخدم في الصفحات المجمّعة بـ `useDraft=false` فلا تكتب في مفاتيح المسودة الخاصة بصفحتي الصيانة/البيع/الموردين/المصاريف (تبقى المسودة سلوكاً حصرياً لنموذج الإضافة inline في صفحته الأصلية).
 5. **الكفالات:** أُعيد زر «إضافة كفالة» (كان مُزالاً بقرار سابق) لكنه لا يُدرج في جدول `warranties` مباشرةً ولا يستخدم `source_id=0` — بل يفتح نموذج فاتورة صيانة/بيع مباشر، والكفالة تُنشأ عبر منطق المزامنة التلقائية الحالي دون تعديل. نموذج **تعديل** كفالة قائمة في `Warranties.tsx` (`warranty:update`) لم يتغيّر.
 6. **إضافات طفيفة:** سكربت `typecheck` (`tsc --noEmit`) في `package.json`. `npm run typecheck` و`npm run build` (بما فيه electron-builder) ينجحان.
+
+**تحديث 2026-07-02 (٩) — عمود "الإجمالي" المحسوب حياً في جدول بنود نموذجَي الصيانة والبيع المباشر:** تعديل **عرض/واجهة بحت (presentation only)** — لا عمود جديد في `invoice_items`، لا تعديل على القاعدة/الـ schema/الأنواع/قنوات IPC/منطق الحفظ أو إعادة الحساب. مجرّد خلية عرض مشتقة من قيمتين موجودتين أصلاً في حالة النموذج.
+
+1. **الفورمان (`src/components/forms/MaintenanceForm.tsx` و`DirectSaleForm.tsx`):** أُضيف عمود جديد "الإجمالي (₪)" في جدول البنود بعد عمود "سعر الوحدة" مباشرة، يعرض لكل بند حاصل **الكمية × سعر الوحدة** ويُحسب ويُعرض حياً أثناء الكتابة عبر نفس القيم الموجودة في حالة الصف (`qty`/`unitPrice`) ودالة `fmt` الموجودة — بلا أي state جديد. في نموذج الصيانة الكمية للخدمة تُعامَل 1 (كما في بقية حساباته). القيمة معروضة فقط (`<td className="mi-td-center">`)، غير قابلة للتعديل.
+2. **العلاقة بخصم الفاتورة:** مستقلّ تماماً عن خصم الفاتورة العام (`discount_type`/`discount_value` على مستوى الفاتورة كاملة) الذي لم يتغيّر إطلاقاً — هذا العمود يوضّح مجموع كل بند **قبل** تطبيق الخصم العام، بينما صفوف "المجموع قبل الخصم"/"الإجمالي بعد الخصم" أسفل الجدول تبقى كما هي.
+3. **مودال التفاصيل والإيصال المطبوع (`MaintenanceInvoices.tsx`/`DirectSales.tsx`):** كانا يعرضان عمود "الإجمالي" (`item.quantity * item.unitPrice`) أصلاً في جدول البنود — لم يلزم تعديلهما (حُدِّث التوثيق فقط في قسمي الشاشتين ليطابق ذلك).
+4. `tsc --noEmit` ينجح بعد التعديل.
+
+**تحديث 2026-07-02 (١٠) — خصم على مستوى البند الفردي في فواتير الموردين:** ميزة جديدة لفواتير الموردين **فقط**، بنموذج مختلف عن خصم الفاتورة الكاملة في الصيانة/البيع المباشر (الذي لم يُلمَس إطلاقاً). هنا الخصم يخص **كل بند على حدة** في `supplier_items`، والمجموع الكلي للفاتورة = مجموع إجمالي كل بند بعد خصمه الخاص. راجع القسم المفصّل "خصم بنود فاتورة المورد" في قسم قاعدة البيانات أعلاه.
+
+1. **القاعدة:** عمودان جديدان في `supplier_items` — `discount_type` (TEXT: `'fixed'`/`'percentage'`/NULL) و`discount_value` (REAL DEFAULT 0) — أُضيفا عبر migration بنمط `ALTER TABLE ... ADD COLUMN` مع `try/catch` يتجاهل `duplicate column name` (نفس أسلوب بقية migrations في `src/database.ts`).
+2. **المنطق (`src/db/suppliers.ts`):** `calcTotal` صارت تجمع `applyDiscount(qty × unit_price, discount_type, discount_value)` لكل بند — **إعادة استخدام** `applyDiscount` من `src/db/discount.ts` بلا تكرار للمنطق. `addSupplierInvoice` يُدرج عمودَي الخصم لكل بند. أُضيفت `updateSupplierInvoice(id, input)` تعيد إدراج البنود بالكامل وتعيد حساب `total_amount` من خصومات البنود ثم `amount_remaining = total_amount − amount_paid` داخل transaction واحدة؛ قناة `supplierInvoice:update` صارت تستدعيها (بدل تحديث الترويسة فقط كما كانت سابقاً — كان تعديل البنود لا يُحفَظ أصلاً).
+3. **الأنواع:** `SupplierItemInput`/`SupplierItemRow` في `src/db/types.ts`، و`SupplierItem` في `GarageContext.tsx`، ومحوّلات `supplierItemToDbInput`/`dbRowToSupplierItem` في `dbMapper.ts` — كلها أُضيف لها `discountType`/`discountValue` (snake_case في DB، camelCase في الواجهة).
+4. **النموذج (`SupplierInvoiceForm.tsx`):** جدول البنود صار يحوي عمود "الإجمالي" (qty × unit_price حياً)، dropdown خصم (بدون خصم/مبلغ ثابت/نسبة %) + حقل قيمة، وعمود "بعد الخصم" لكل بند حياً. المجموع الكلي أسفل الجدول = مجموع "بعد الخصم" لكل البنود. الحسابات الحية تعيد استخدام `applyDiscount` (مغلّفة بـ try/catch للعرض)، والتحقق من القيم غير الصالحة (سالبة/نسبة > 100/ثابت > إجمالي البند) يمنع الحفظ عبر `partDiscountErr`.
+5. **العرض (`Suppliers.tsx`):** مودال التفاصيل والإيصال المطبوع صارا يعرضان لكل بند: العدد، السعر، الإجمالي قبل الخصم، الخصم إن وُجد، والإجمالي بعد الخصم — مع المجموع الكلي في الأسفل (helpers `itemDiscountLabel`/`itemNetTotal` تعيدان استخدام `applyDiscount`).
+6. **لم يُلمَس** خصم الفاتورة الكاملة في الصيانة/البيع المباشر ولا أي جدول/قناة أخرى. `tsc --noEmit` ينجح بعد التعديل.
+
+**تحديث 2026-07-02 (١١) — خصم تسوية عند الدفع (`settlement_discount`):** مسار خصم/إسقاط جديد **وقت الدفع** لا يمسّ الصندوق إطلاقاً — منفصل تماماً عن خصومات الفاتورة/البند (`discount_type`/`discount_value`) التي تُطبَّق وقت إنشاء الفاتورة وتنقص `total_amount`. الغرض: المتبقّي 500، دفع الزبون 450 واتُّفِق على إسقاط 50 → `amount_remaining = 0` **بدون** تسجيل الـ 50 كنقدية داخلة. راجع القسم المفصّل "خصم تسوية عند الدفع" في قسم قاعدة البيانات أعلاه.
+
+1. **القاعدة:** عمود `settlement_discount REAL NOT NULL DEFAULT 0` أُضيف عبر migration (`ALTER TABLE ... ADD COLUMN` مع `try/catch` يتجاهل `duplicate column name`) إلى الجداول الأربعة `payments` / `debt_payments` / `supplier_payments` / `supplier_debt_payments`، وأُضيف أيضاً إلى `electron/schema.sql` للقواعد الجديدة.
+2. **المنطق:** دالة مركزية `applySettlementDiscount()` مُصدَّرة من `src/db/payments.ts` (تُدرِج صف خصم مخصّصاً `amount=0`/`method='cash'`/`notes='خصم تسوية'` وتخصم المبلغ من `amount_remaining` فقط — بلا `cash_ledger` وبلا مسّ `amount_paid`)، تُعاد استخدامها في `releaseMaintenanceCar` (`maintenance.ts`)، ونظير مكافئ داخل `insertSupplierPayments` (`suppliers.ts`، لأن جداول الموردين بلا عمود `invoice_type`). الحماية: يُرمى خطأ عربي إن كان الخصم سالباً أو إن تجاوز `الدفعات الفعلية + الخصم` المتبقّيَ (هامش `0.001`).
+3. **الأماكن الخمسة (backend + IPC + services):** `addPayment`/`addDebtPayment` (`payments.ts`)، `releaseMaintenanceCar` (`maintenance.ts` عبر `ReleaseCarInput.settlementDiscount`)، `addSupplierPayment`/`addSupplierDebtPayment` (`suppliers.ts`) — كلها تقبل `settlementDiscount = 0` يمرّ عبر قنوات `directSale:addPayment`/`maintenance:deliver`/`debt:addPayment`/`supplierInvoice:addPayment`/`supplierInvoice:addDebtPayment` ودوال `services/db.ts`.
+4. **الحالة (`saleStatus`):** حُدِّثت `saleStatus(total, paid, remaining?)` في `dbMapper.ts` لتشتقّ الحالة من `amount_remaining` المخزَّن عند تمريره — لأن خصم التسوية يجعل `total ≠ paid + remaining` (فبدونه كانت فاتورة مُسوّاة بالكامل ستظهر "دين جزئي" خطأً). مرِّر `amount_remaining` في `dbRowToSaleRecord`/`dbRowToSaleInvoice`/`dbRowToPurchaseInvoice`؛ السلوك للفواتير بلا تسوية لم يتغيّر (متوافق رجعياً).
+5. **الواجهة:** حقل رقمي اختياري "خصم / إسقاط مبلغ (تسوية) ₪" بجانب صفوف الدفع في مودالات `PendingDebts.tsx` (تحصيل دين)، `DirectSales.tsx` (دفعة)، `MaintenanceInvoices.tsx` (تسليم)، `Suppliers.tsx` (سداد مورد) — مع سطر حيّ "خصم تسوية" و"المتبقي بعد الدفعة والخصم". قناتا القراءة `payments:getByInvoice`/`supplierPayments:getByInvoice` تُعيدان الآن `settlement_discount`، والإيصالات المطبوعة تفصل الدفعات النقدية (`amount > 0`) عن سطر "خصم تسوية" (مجموع `settlement_discount`).
+6. **لم يُلمَس** حساب `cash_ledger` ولا `balance_after` ولا خصومات الفاتورة/البند القائمة. `tsc --noEmit` ينجح بعد التعديل.
+
+**تحديث 2026-07-02 (١٢) — نمرة السيارة (`car_plate`) كوسيلة ربط وبحث رئيسية إضافية:** جعل نمرة السيارة وسيلة ربط/بحث بنفس مستوى أهمية رقم الهاتف الحالي، **دون أي تغيير على بنية قاعدة البيانات** (لا migration، لا عمود جديد، لا مسّ بأي مفتاح داخلي `id`). تعديل واجهة/منطق عرض بحت في طبقة React.
+
+1. **دالة جديدة `getLinkedOpsByPlate(carPlate, currentSource, currentId)` في `src/store/GarageContext.tsx`:** نظير `getLinkedOps` الحالي (بالهاتف) لكن الربط بنمرة السيارة. المقارنة تجري بعد إزالة الفراغات وتوحيد حالة الأحرف. **قيد مهم موثّق في اسم/تعليق الدالة:** فواتير البيع المباشر (`direct_sale_invoices`) **لا تحمل عمود `car_plate`** في القاعدة (`SaleRecord` بلا `carPlate`)، لذا لا يمكن ربطها بالنمرة — تبحث الدالة فعلياً في فواتير الصيانة (`maintenance_invoices`) والكفالات المرتبطة (`warranties.car_plate` — تُملأ للصيانة فقط؛ كفالات البيع المباشر واليدوي بنمرة فارغة فلا تُطابق). صفوف الكفالة بلا إجمالي مالي (`total = 0`) وحالتها سارية/منتهية عبر `calcEndDate`/`daysRemaining` المعادة استخدامها من `src/utils/warranty.ts`. أُضيفت الدالة إلى `GarageContextType` وقيمة الـ Context ومصفوفة اعتماديات `useMemo`.
+
+2. **مودال تفاصيل فاتورة الصيانة (`src/pages/MaintenanceInvoices.tsx`):** أُضيف مكوّن `LinkedOpsByPlateSection` (نسخة موازية لـ `LinkedOpsSection`) يعرض قسم **"عمليات سابقة لهذه السيارة"** بجانب القسم القائم **"عمليات سابقة لهذا الزبون"** (بالهاتف) — **كلاهما يظهران معاً، والقسم القديم لم يُحذف**. يُمرَّر `carPlate={detailsCar.carPlate}`.
+
+3. **نمرة السيارة كمفتاح بحث Fuse.js حيثما نقص:** أُضيف `carPlate` (بعد `normalizeAr`) إلى `fuseItems` و`keys` في `Warranties.tsx` و`PendingDebts.tsx` و`SalesInvoices.tsx`. (`MaintenanceInvoices.tsx` و`DirectSales.tsx` تستخدمان `customerName`+`invoiceNumber` في Fuse أصلاً؛ والبيع المباشر بلا نمرة.)
+
+4. **فلتر النمرة المباشر في `MaintenanceInvoices.tsx` (تحقّق، بلا تغيير):** فلتر النمرة القائم داخل `applySectionFilters` يعمل بمطابقة **مباشرة exact/partial** عبر `normalizeAr(c.carPlate).includes(normalizeAr(plate))` — مستقلّ تماماً عن بحث Fuse الضبابي، فيلتقط أي تطابق جزئي/تام مباشر للنمرة. لم يلزم تعديله.
+
+5. **بلا مسّ للقاعدة/القنوات/الأنواع الأساسية:** لا تغيير على `schema.sql` ولا migrations ولا قنوات IPC ولا `id`؛ `car_plate` وسيلة ربط/بحث إضافية فقط. `tsc --noEmit` ينجح بعد التعديل.
+
+---
+
+**تحديث 2026-07-02 (١٣) — 4 بطاقات ملخّص اليوم في الصندوق الرئيسي (إيرادات/مصاريف/موردين/رواتب):** إضافة **عرض بحتة معتمدة على تجميع قائم** — لا قناة IPC جديدة، لا تغيير على قاعدة البيانات/الـ schema/الـ migrations/الـ Ledger، ولا لمس لبطاقات الإحصاء أو منطق إحصاء نهاية اليوم القائمة. أُضيفت 4 بطاقات `stat-card` أعلى بطاقات الإحصاء في `src/pages/CashLedger.tsx`، كلها مرتبطة بنفس `selectedDate` الموجود وتتحدّث حياً معه دون أي زر.
+
+1. **مصدر البيانات — حقول جديدة على نتيجة `report:daily` القائمة (لا قناة جديدة):** أُضيفت 4 حقول إلى واجهة `DailyReport` (`src/db/types.ts`) وإلى الكائن المُرجَع من `getDailyReport` (`src/db/reports.ts`): `today_sales_income` (= `maintenance_income + direct_sale_income`)، `today_expenses` (= `daily_expenses`)، `today_supplier_payments` (= `supplier_expenses`)، `today_salaries` (= `salaries`). كلها مشتقّة من نفس `cash_ledger` entries التي تجمّعها الدالة أصلاً لليوم المحدد حسب `reference_type` — أي `sumIn`/`sumOut` القائمة نفسها، فقط أُعيدت كحقول جاهزة للعرض. **الحقول القائمة التي تستخدمها `Reports.tsx` من نفس القناة لم تُغيَّر ولم تُحذف** (إضافة صرفة).
+
+2. **العرض (`CashLedger.tsx`):** حالة `dayTotals` جديدة تُملأ داخل `loadDayData` من `report` بجانب `dailyNet` (نفس `Promise.all` القائم، بلا استدعاء إضافي). تُعرض في `stats-grid` مستقلة فوق بطاقات الإحصاء الخمس، بأصناف `stat-card`/`stat-label`/`stat-value` القائمة: إيرادات اليوم بلون أخضر (`#2ECC71`)، والمصاريف/الموردين/الرواتب بلون أحمر (`#E74C3C`) — نفس ألوان `cl-amount-in`/`cl-amount-out`.
+
+3. **بلا مسّ للقائم:** بطاقات الإحصاء الخمس ومنطقها، جدول مقارنة نهاية اليوم، سجل العمليات، وسجل الإحصاءات — كلها كما هي. `tsc --noEmit` ينجح بعد التعديل.
+
+---
+
+**تحديث 2026-07-02 (١٤) — فلتر نطاق تاريخ (من-إلى) على فواتير الموردين في `Suppliers.tsx`:** توحيد فلاتر صفحة الموردين مع باقي الصفحات بإضافة فلتر تاريخ نطاقي كامل. **تعديل واجهة بحت في طبقة React** — لا تغيير على قاعدة البيانات ولا الـ schema ولا القنوات ولا الأنواع.
+
+1. **الحالة السابقة:** جدول "فواتير الموردين" في `Suppliers.tsx` كان يحمل فلاتر: بحث باسم المورد/رقم الفاتورة (Fuse.js) + بحث برقم الهاتف + فلتر مبلغ الإجمالي (min-max) — **بلا أي فلتر تاريخ في الواجهة إطلاقاً** (رغم أن وثيقة الملف كانت تذكر "فلتر تاريخ" خطأً). الـ backend كان (ولا يزال) يدعم `date_from`/`date_to` في `SupplierFilters`/`getSupplierInvoices`/قناة `supplierInvoice:getAll`، لكن الصفحة لا تستدعيها بفلاتر لأنها تعتمد بيانات الـ Context وتفلتر client-side.
+
+2. **التعديل (`src/pages/Suppliers.tsx` فقط):** أُضيف حقلا تاريخ منفصلان `filterFrom`/`filterTo` (نفس أسماء وأسلوب `DailyExpenses.tsx`) — حقلا `<input type="date">` بصنف `mi-date-input` مع `max={today()}` وقصّ أي تاريخ مستقبلي، مُدرَجان داخل `mi-date-range` قبل حقلي المبلغ. الفلترة تُطبَّق في `filteredSuppliers` عبر `s.purchaseDate >= filterFrom` و`s.purchaseDate <= filterTo`، وأُضيف الحقلان إلى `hasFilters` و`clearFilters` وإلى مصفوفة اعتماديات `useMemo`.
+
+3. **بلا مسّ للباقي:** نموذج إضافة الفاتورة، البنود، الدفعات، دليل الموردين، والمودالات — كلها كما هي تماماً. لم يلزم أي تغيير على `src/db/suppliers.ts` ولا القنوات لأن الدعم موجود أصلاً في الـ backend والفلترة client-side مثل باقي الصفحات. `tsc --noEmit` ينجح بعد التعديل.
+
+**تحديث 2026-07-02 (١٥) — توحيد حماية تجاوز المتبقي على كل قنوات إضافة الدفعات:** قبل هذا التحديث كانت حماية "رفض أي دفعة تتجاوز `amount_remaining`" (تحديث (٥)) مطبَّقة فقط في قناتين — `addPayment` (`src/db/payments.ts`) و`releaseMaintenanceCar` (`src/db/maintenance.ts`). أمّا بقية قنوات الدفع فكانت تسجّل الدفعة وتُنقِص `amount_remaining` إلى ما دون الصفر دون أي اعتراض (الحماية الوحيدة فيها كانت على خصم التسوية فقط، لا على مجموع الدفعة النقدية نفسه). **تعديل منطق تحقّق حساس فقط — لا تغيير على أي حساب آخر (الخصومات، الإجماليات، الـ Ledger، خصم التسوية).**
+
+**القنوات الخمس بعد التوحيد (كلها داخل نفس الـ transaction، هامش تسامح `0.001`، ونفس الرسالة العربية `مجموع الدفعة (X ₪) يتجاوز المتبقي (Y ₪)`):**
+1. `addPayment` — صيانة/بيع مباشر (`src/db/payments.ts`) — كانت موجودة، بلا تغيير.
+2. `releaseMaintenanceCar` — دفعة التسليم (`src/db/maintenance.ts`) — كانت موجودة، بلا تغيير.
+3. `addDebtPayment` — تحصيل ديون الزبائن (`src/db/payments.ts`) — **أُضيفت**: كانت تحسب `totalNew` وتجلب الفاتورة لكن دون التحقّق من التجاوز؛ أُضيف الشرط بعد جلب الفاتورة مباشرة.
+4. `addSupplierPayment` — دفعة للمورد (`src/db/suppliers.ts`) — **أُضيفت**.
+5. `addSupplierDebtPayment` — سداد دين المورد (`src/db/suppliers.ts`) — **أُضيفت**.
+
+**آلية التنفيذ في قنوات الموردين:** أُضيفت دالة مساعدة `assertSupplierPaymentWithinRemaining(invoiceId, payments)` في `src/db/suppliers.ts` (تجلب `amount_remaining` الحالي وتقارنه بمجموع `calcPaid(payments)`)، وتُستدعى **داخل transaction** كلٍّ من `addSupplierPayment` و`addSupplierDebtPayment` **قبل** `insertSupplierPayments`. لم تُوضَع الحماية داخل `insertSupplierPayments` نفسها لأنها تُستدعى أيضاً عند **إنشاء** الفاتورة (`addSupplierInvoice`) حيث يكون `amount_remaining` محسوباً مسبقاً بعد طرح دفعات الإنشاء (فوضعها هناك كان سيرفض دفعات إنشاء مشروعة خطأً).
+
+**التكامل مع خصم التسوية:** الترتيب في كل قناة يضمن أن **الدفعة النقدية + خصم التسوية معاً** لا يتجاوزان `amount_remaining`: أولاً يُرفض تجاوز مجموع الدفعة النقدية، ثم يُتحقَّق من خصم التسوية مقابل ما يتبقّى بعد الدفعة (`applySettlementDiscount` / الفرع النظير في `insertSupplierPayments`).
+
+**السطح والانتشار:** كل الأخطاء تُرمى من main process وتصل المستخدم عبر `showError`/Toast (`src/utils/notify.ts`) في مواضع الاستدعاء (`PendingDebts.tsx`, `Suppliers.tsx`, …) بنفس نمط `addPayment` الحالي — لا اعتماد على `console` فقط. لم تُمسّ القنوات ولا الأنواع ولا الـ schema. `tsc --noEmit` ينجح بعد التعديل.
+
+---
+
+**تحديث 2026-07-03 — صفحة "الشيكات" (كل الشيكات):** ميزة **قراءة فقط بالكامل** ومنفصلة تماماً عن "الشيكات المستحقة قريباً" الموجودة في `CashLedger.tsx`/`getUpcomingCheques` (التي لم تُلمَس إطلاقاً). لا أي تعديل على بنية جداول الشيكات الأربعة (`payment_cheque`, `debt_payment_cheque`, `supplier_payment_cheque`, `supplier_debt_cheque`) ولا على أي قناة/سلوك سابق — إضافة صرفة تعتمد فقط على الحقول الموجودة فيها مسبقاً.
+
+1. **قناة IPC جديدة `cheques:getAll(filters)`** (`electron/ipc-handlers.ts`) تستدعي دالة **جديدة** `getAllCheques(filters)` في `src/db/cheques.ts` — **بجانب `getUpcomingCheques` الموجودة، دون تعديلها**. نفس UNION ALL للجداول الأربعة وبنفس منطق `JOIN` جلب اسم الطرف، لكن **بلا قيد "قادم خلال X يوم"** — كل الشيكات بلا استثناء (الماضية والمستقبلية) — مع إضافة عمود `issue_date`، مرتّبة **تنازلياً** حسب `cash_date` (الأحدث أولاً).
+
+2. **فلاتر SQL (`ChequeFilters`، كلها اختيارية):** `chequeNumber` (بحث جزئي `LIKE`)، `bankName` (بحث جزئي `LIKE`)، `dateFrom`/`dateTo` (على `cash_date`)، `amountMin`/`amountMax` (على `amount`) — جملة `WHERE` تُبنى ديناميكياً عبر بارامترات مُهيّأة (prepared params) لا سلاسل مُدمجة. الفلترة كلها في main process؛ الصفحة تُعيد الجلب عبر `useEffect` عند تغيّر أي فلتر.
+
+3. **أنواع جديدة:** `ChequeRow` (= `UpcomingChequeRow` + `issue_date`) و`ChequeFilters` في `src/db/types.ts`، و`ChequeRecord` (= `UpcomingCheque` + `issueDate`) في `src/store/GarageContext.tsx` — مع دالة تحويل `dbRowToCheque` جديدة في `dbMapper.ts` (تعيد استخدام `dbRowToUpcomingCheque`) ودالة خدمة `dbService.cheques.getAll(filters)` جديدة في `src/services/db.ts` بجانب `getUpcoming`.
+
+4. **صفحة جديدة `src/pages/Cheques.tsx`** (قراءة فقط، بلا إضافة/تعديل/حذف — أي تعديل على شيك يبقى من صفحته الأصلية): شريط فلاتر `mi-filters` (رقم الشيك/البنك/تاريخ الصرف من–إلى/المبلغ من–إلى + مسح الفلاتر) وجدول `mi-table` بأعمدة رقم الشيك/البنك/تاريخ الإصدار/تاريخ الصرف/المبلغ/الطرف/**نوع العملية** (badge: صيانة `mi-badge-orange` / بيع مباشر `mi-badge-blue` / مورد `mi-badge-purple` / دين مورد `mi-badge-red`)/**حالة الاستحقاق** (منتهي `mi-badge-gray` / اليوم `mi-badge-yellow` / قادم `mi-badge-green` حسب مقارنة `cash_date` باليوم الحالي عبر `daysRemaining`). بلا أي CSS جديد — أصناف `mi-card`/`mi-table`/`mi-badge` القائمة فقط.
+
+5. **التنقل:** رابط "الشيكات" (أيقونة 🧾) في `src/components/Sidebar.tsx` بين "الديون المعلقة" و"الكفالات" (صار 13 رابطاً)، وRoute `/cheques` جديد في `src/App.tsx`. `tsc --noEmit` ينجح بعد التعديل.
+
+---
+
+**تحديث 2026-07-03 (٢) — فلتر بحث بنمرة السيارة في صفحة الديون المعلقة (`src/pages/PendingDebts.tsx`):** إضافة حقل فلتر مستقل للبحث بنمرة السيارة، بنفس أسلوب `plateSearch` الموجود في `SalesInvoices.tsx`. **تعديل واجهة/فلترة بحت في طبقة React** — لا تغيير على قاعدة البيانات ولا الـ schema ولا القنوات ولا الأنواع، ولا مسّ بمنطق الإضافة/التعديل/الحذف/الدفعات.
+
+1. **الحالة السابقة:** كانت الصفحة تحمل فلاتر: بحث Fuse.js باسم الزبون + نمرة السيارة، بحث برقم الهاتف، تبويبات النوع (الكل/صيانة/بيع مباشر)، وفلتر مبلغ المتبقي (min-max). نمرة السيارة كانت متاحة فقط ضمن مفتاح Fuse الضبابي — بلا حقل بحث مباشر جزئي مخصّص لها. `carPlate` كانت **موجودة أصلاً** في `DebtRecord` ومملوءة من `getPendingDebts` (`src/db/payments.ts`: `car_plate` لصفوف الصيانة، `NULL` لصفوف البيع المباشر) — راجع "تحديث 2026-07-02 (١٢)"، فلم يلزم أي تعديل على المصدر.
+
+2. **التعديل:** أُضيف حقل `plateSearch` (`<input>` بصنف `mi-search-input` ونص إرشادي "🚗 بحث بنمرة السيارة...") بجانب حقل "بحث برقم الهاتف" مباشرة. الفلترة تُطبَّق في `filteredDebts` عبر `d.carPlate.toLowerCase().includes(plateSearch.toLowerCase())` — **مطابقة جزئية مباشرة** مطابِقة لنمط `SalesInvoices.tsx`. يعمل الفلتر بالتوازي مع باقي الفلاتر (AND). أُضيف `plateSearch` إلى `hasFilters` و`clearFilters` وإلى مصفوفة اعتماديات `useMemo`.
+
+3. **البيع المباشر يُستبعد تلقائياً:** صفوف `direct_sale` تحمل `carPlate = ''` (لا نمرة سيارة)، فأي قيمة غير فارغة في `plateSearch` تُخرجها من النتائج تلقائياً عبر `includes` — أي أن الفلتر يعمل فعلياً على ديون الصيانة فقط دون حاجة لشرط نوع صريح. `tsc --noEmit` ينجح بعد التعديل.
+
+---
+
+**تحديث 2026-07-03 (٣) — إظهار "خصم التسوية" (`settlement_discount`) في كل أماكن عرض تفاصيل الدفعات، لا مكان الإدخال فقط:** استكمال لتحديث (١١). قبل هذا التحديث كان خصم التسوية يظهر بوضوح **وقت الإدخال** فقط (المودالات الحيّة) وفي الإيصالات المطبوعة لكن بتغطية **ناقصة**: قنوات القراءة كانت تقرأ جدول الدفعات "الأصلي" فقط فتُخفي أي خصم تسوية سُجِّل وقت **تحصيل الدين** — وهي الحالة الأكثر شيوعاً للخصم. **تعديل مسارات قراءة/عرض بحت (read paths) — لا مساس بمنطق `amount_remaining` ولا حمايات تجاوز الدفعات ولا `cash_ledger`.**
+
+1. **قنوات القراءة توحِّد جدولَي كل مسار (`electron/ipc-handlers.ts`):**
+   - `payments:getByInvoice` صارت `UNION ALL` بين `payments` (دفعات الاستلام/التسليم) و`debt_payments` (تحصيل الدين لاحقاً) لنفس `invoice_id`/`invoice_type` — فيظهر خصم التسوية المسجَّل وقت التحصيل. كانت تقرأ `payments` فقط.
+   - `supplierPayments:getByInvoice` صارت `UNION ALL` بين `supplier_payments` و`supplier_debt_payments`. كانت تقرأ `supplier_payments` فقط.
+   - كلاهما ما زال يُعيد نفس الأعمدة (`method, amount, payment_date, settlement_discount`) — لا تغيير على النوع المُعاد ولا على المستدعين. المستدعون الوحيدون هما إيصالات الطباعة والـ hook الجديد.
+
+2. **hook مشترك جديد `src/utils/useSettlementTotal.ts`:** يجلب مجموع `settlement_discount` لفاتورة مفتوحة عبر القناة المناسبة (صيانة/بيع مباشر/مورد) ويعيده رقماً (0 حين لا مودال أو لا خصم). يُستدعى في المكوّن الأعلى لكل صفحة مع الـ id للمودال المفتوح.
+
+3. **مودالات التفاصيل تعرض سطر خصم التسوية (حين > 0):**
+   - `MaintenanceInvoices.tsx` / `DirectSales.tsx` / `Suppliers.tsx`: سطر `mi-total-row` برتقالي "خصم تسوية (إسقاط — ليس نقداً): −X ₪" ضمن مجاميع المودال.
+   - `PendingDebts.tsx`: صف `mi-detail-item` بوسم `mi-badge-orange` "خصم تسوية (ليس نقداً): −X ₪".
+   - في كل الحالات لا يُدمج الخصم مع "المدفوع" النقدي — فتتّسق المجاميع (`الإجمالي = المدفوع + المتبقي + خصم التسوية`).
+
+4. **إيصال الدين المعلّق (`printDebt` في `PendingDebts.tsx`):** صار غير متزامن (`async`) يجلب دفعات الفاتورة ويعرض **جدول تفصيل الدفعات النقدية + سطر "خصم تسوية"** (كان يعرض مجاميع الإجمالي/المدفوع/المتبقي فقط بلا أي تفصيل دفعات). إيصالات الصيانة/البيع المباشر/المورد كانت أصلاً تفصل خصم التسوية (تحديث ١١) والآن تشمله كاملاً بفضل الـ `UNION`.
+
+5. **`SalesInvoices.tsx` و`PurchaseInvoices.tsx`:** لا تعرضان أصلاً أي سجل/تفصيل دفعات (مجاميع فقط)، فلا تعديل عليهما — مطابق لشرط "إن كان يعرض سجل دفعات". `tsc --noEmit` ينجح بعد التعديل.

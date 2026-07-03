@@ -7,6 +7,7 @@ import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { useSettlementTotal } from '../utils/useSettlementTotal'
 
 /* ════════════════════════════════════════
    Local-only types (payment modal)
@@ -40,14 +41,33 @@ const emptyPayRow = (): PaymentRow => ({
 const PAY_LABELS: Record<PayMethod, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
 const fmt = (n: number) => n.toLocaleString('en-US')
 
-function printDebt(debt: DebtRecord): void {
+async function printDebt(debt: DebtRecord): Promise<void> {
+  const PAY_AR: Record<string, string> = { cash: 'نقداً', cheque: 'شيك', check: 'شيك', visa: 'فيزا', debt: 'دين' }
+  let payments: Array<{ method: string; amount: number; settlement_discount?: number }> = []
+  try {
+    payments = await dbService.invoicePayments.get(debt.id, debt.type)
+  } catch (err) {
+    showError('تعذّر جلب دفعات الدين للطباعة', err)
+    return
+  }
+  const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
+  const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
+    <tr>
+      <td>${PAY_AR[p.method] || p.method}</td>
+      <td class="amount-in">${fmt(p.amount)} ₪</td>
+    </tr>`).join('')
+    + (settlementTotal > 0 ? `
+    <tr>
+      <td>خصم تسوية</td>
+      <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
+    </tr>` : '')
   const body = `
     <div class="detail-grid">
       <div class="detail-item"><label>اسم الزبون</label><span>${debt.customerName}</span></div>
       <div class="detail-item"><label>رقم الهاتف</label><span>${debt.phone && debt.phone !== '0000' ? debt.phone : 'غير معروف'}</span></div>
       <div class="detail-item"><label>النوع</label><span>${debt.typeLabel}</span></div>
       <div class="detail-item"><label>التاريخ</label><span>${debt.date}</span></div>
-      ${debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${debt.carPlate}</span></div>` : ''}
+      ${debt.type === 'maintenance' && debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${debt.carPlate}</span></div>` : ''}
       ${debt.type === 'maintenance' && debt.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${debt.carType}</span></div>` : ''}
       ${debt.type === 'maintenance' && debt.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${debt.carColor}</span></div>` : ''}
     </div>
@@ -56,7 +76,12 @@ function printDebt(debt: DebtRecord): void {
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(debt.amountPaid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
       ${debt.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${debt.notes}</span></div>` : ''}
-    </div>`
+    </div>
+    ${payRows ? `
+    <table style="margin-top:12px;">
+      <thead><tr><th>طريقة الدفع</th><th>المبلغ</th></tr></thead>
+      <tbody>${payRows}</tbody>
+    </table>` : ''}`
   printPdf('دين معلق', body)
 }
 
@@ -112,12 +137,14 @@ export default function PendingDebts() {
   /* filters */
   const [search,      setSearch]      = useState('')
   const [phoneSearch, setPhoneSearch] = useState('')
+  const [plateSearch, setPlateSearch] = useState('')
   const [typeFilter,  setTypeFilter]  = useState<'all' | DebtType>('all')
   const [amtMin,      setAmtMin]      = useState('')
   const [amtMax,      setAmtMax]      = useState('')
 
   /* modals */
   const [detailsDebt, setDetailsDebt] = useState<DebtRecord | null>(null)
+  const detailsSettlement = useSettlementTotal(detailsDebt ? detailsDebt.type : null, detailsDebt?.id ?? null)
   const [deleteDebt,  setDeleteDebt]  = useState<DebtRecord | null>(null)
   const [warnDebt,    setWarnDebt]    = useState<DebtRecord | null>(null)
 
@@ -131,15 +158,16 @@ export default function PendingDebts() {
   const [payDate,      setPayDate]      = useState(today())
   const [payNotes,     setPayNotes]     = useState('')
   const [paymentRows,  setPaymentRows]  = useState<PaymentRow[]>([])
+  const [settleDiscount, setSettleDiscount] = useState('')
   const [paySubmitted, setPaySubmitted] = useState(false)
 
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
-    () => debts.map((d, i) => ({ _idx: i, customerName: normalizeAr(d.customerName) })),
+    () => debts.map((d, i) => ({ _idx: i, customerName: normalizeAr(d.customerName), carPlate: normalizeAr(d.carPlate) })),
     [debts],
   )
   const fuse = useMemo(
-    () => new Fuse(fuseItems, { keys: ['customerName'], threshold: 0.4, ignoreLocation: true }),
+    () => new Fuse(fuseItems, { keys: ['customerName', 'carPlate'], threshold: 0.4, ignoreLocation: true }),
     [fuseItems],
   )
 
@@ -150,14 +178,16 @@ export default function PendingDebts() {
       ? fuse.search(normalizeAr(q)).map(r => debts[r.item._idx])
       : [...debts]
     if (phoneSearch)          result = result.filter(d => d.phone.includes(phoneSearch))
+    /* بحث بنمرة السيارة (maintenance فقط — direct_sale بلا نمرة فتُستبعد تلقائياً) */
+    if (plateSearch)          result = result.filter(d => d.carPlate.toLowerCase().includes(plateSearch.toLowerCase()))
     if (typeFilter !== 'all') result = result.filter(d => d.type === typeFilter)
     if (amtMin)               result = result.filter(d => d.amountRemaining >= Number(amtMin))
     if (amtMax)               result = result.filter(d => d.amountRemaining <= Number(amtMax))
     return result
-  }, [debts, search, phoneSearch, typeFilter, amtMin, amtMax, fuse])
+  }, [debts, search, phoneSearch, plateSearch, typeFilter, amtMin, amtMax, fuse])
 
-  const hasFilters   = !!search.trim() || !!phoneSearch || typeFilter !== 'all' || !!amtMin || !!amtMax
-  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setTypeFilter('all'); setAmtMin(''); setAmtMax('') }
+  const hasFilters   = !!search.trim() || !!phoneSearch || !!plateSearch || typeFilter !== 'all' || !!amtMin || !!amtMax
+  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setPlateSearch(''); setTypeFilter('all'); setAmtMin(''); setAmtMax('') }
 
   const totalRemaining = debts.reduce((s, d) => s + d.amountRemaining, 0)
   const debtCount      = debts.length
@@ -165,7 +195,7 @@ export default function PendingDebts() {
   /* ── Payment modal ── */
   const openPay = (debt: DebtRecord) => {
     setPayDebt(debt); setPayDate(today()); setPayNotes('')
-    setPaymentRows([emptyPayRow()]); setPaySubmitted(false)
+    setPaymentRows([emptyPayRow()]); setSettleDiscount(''); setPaySubmitted(false)
   }
   const addPaymentRow    = () => setPaymentRows(prev => [...prev, emptyPayRow()])
   const removePaymentRow = (id: number) => setPaymentRows(prev => prev.filter(r => r.id !== id))
@@ -173,8 +203,9 @@ export default function PendingDebts() {
     setPaymentRows(prev => prev.map(r => r.id !== id ? r : { ...r, ...update }))
 
   const thisPaymentTotal = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
-  const remainingAfter   = (payDebt?.amountRemaining ?? 0) - thisPaymentTotal
-  const payExceedsDebt   = thisPaymentTotal > (payDebt?.amountRemaining ?? 0)
+  const settleNum        = Math.max(0, Number(settleDiscount || 0))
+  const remainingAfter   = (payDebt?.amountRemaining ?? 0) - thisPaymentTotal - settleNum
+  const payExceedsDebt   = thisPaymentTotal + settleNum > (payDebt?.amountRemaining ?? 0) + 0.001
 
   /* ── Edit flow ── */
   const doOpenEdit = (debt: DebtRecord) => { setEditDebt(debt); setEditForm(debtToForm(debt)); setEditSubmitted(false) }
@@ -225,10 +256,10 @@ export default function PendingDebts() {
 
   const handlePayConfirm = async () => {
     setPaySubmitted(true)
-    if (thisPaymentTotal <= 0 || payExceedsDebt || !payDebt) return
+    if ((thisPaymentTotal <= 0 && settleNum <= 0) || payExceedsDebt || !payDebt) return
     const rows = paymentRows.filter(r => r.amount > 0)
     try {
-      await dbService.debt.addPayment(payDebt.id, payDebt.type, rows, payDate)
+      await dbService.debt.addPayment(payDebt.id, payDebt.type, rows, payDate, settleNum)
       await reload()
       setPayDebt(null)
     } catch (err) {
@@ -270,6 +301,10 @@ export default function PendingDebts() {
           <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
             <input type="text" className="mi-search-input" placeholder="📞  بحث برقم الهاتف..."
               value={phoneSearch} onChange={e => setPhoneSearch(e.target.value)} />
+          </div>
+          <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
+            <input type="text" className="mi-search-input" placeholder="🚗  بحث بنمرة السيارة..."
+              value={plateSearch} onChange={e => setPlateSearch(e.target.value)} />
           </div>
           <div className="pd-type-tabs">
             {([['all', 'الكل'], ['maintenance', 'صيانة'], ['direct_sale', 'بيع مباشر']] as const).map(([val, label]) => (
@@ -321,7 +356,7 @@ export default function PendingDebts() {
                       : <span className="mi-badge-blue">{debt.typeLabel}</span>}
                   </td>
                   <td>{debt.date}</td>
-                  <td>{debt.carPlate || '—'}</td>
+                  <td>{debt.type === 'maintenance' ? (debt.carPlate || '—') : ''}</td>
                   <td className="mi-amount">{fmt(debt.total)} ₪</td>
                   <td className="pd-paid">{fmt(debt.amountPaid)} ₪</td>
                   <td className="pd-remaining">{fmt(debt.amountRemaining)} ₪</td>
@@ -370,7 +405,7 @@ export default function PendingDebts() {
                   <span className="mi-detail-label">التاريخ</span>
                   <span>{detailsDebt.date}</span>
                 </div>
-                {detailsDebt.carPlate && (
+                {detailsDebt.type === 'maintenance' && detailsDebt.carPlate && (
                   <div className="mi-detail-item">
                     <span className="mi-detail-label">نمرة السيارة</span>
                     <span className="mi-plate">{detailsDebt.carPlate}</span>
@@ -400,6 +435,12 @@ export default function PendingDebts() {
                   <span className="mi-detail-label">المتبقي</span>
                   <span className="pd-remaining">{fmt(detailsDebt.amountRemaining)} ₪</span>
                 </div>
+                {detailsSettlement > 0 && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">خصم تسوية (ليس نقداً)</span>
+                    <span className="mi-badge-orange">−{fmt(detailsSettlement)} ₪</span>
+                  </div>
+                )}
                 {detailsDebt.notes && (
                   <div className="mi-detail-item mi-detail-full">
                     <span className="mi-detail-label">ملاحظات</span>
@@ -493,11 +534,21 @@ export default function PendingDebts() {
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
 
-              {paySubmitted && thisPaymentTotal <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
+              <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
+                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <input type="number" min={0} placeholder="0" value={settleDiscount}
+                  className="mi-td-input"
+                  onChange={e => setSettleDiscount(e.target.value)} />
+                <span className="mi-field-hint" style={{ fontSize: '0.72rem', color: '#888' }}>
+                  يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق
+                </span>
+              </label>
+
+              {paySubmitted && thisPaymentTotal <= 0 && settleNum <= 0 && (
+                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة أو خصم التسوية</p>
               )}
               {payExceedsDebt && (
-                <p className="pd-pay-error">مجموع الدفعة ({fmt(thisPaymentTotal)} ₪) يتجاوز المتبقي ({fmt(payDebt.amountRemaining)} ₪)</p>
+                <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPaymentTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(payDebt.amountRemaining)} ₪)</p>
               )}
 
               <div className="pay-summary">
@@ -505,9 +556,15 @@ export default function PendingDebts() {
                   <span>إجمالي هذه الدفعة</span>
                   <strong className="pay-paid">{fmt(thisPaymentTotal)} ₪</strong>
                 </div>
+                {settleNum > 0 && (
+                  <div className="pay-summary-row">
+                    <span>خصم تسوية</span>
+                    <strong className="pay-over">−{fmt(settleNum)} ₪</strong>
+                  </div>
+                )}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعدها</span>
-                  <strong className={remainingAfter <= 0 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
+                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <strong className={remainingAfter <= 0.001 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
                     {fmt(Math.max(0, remainingAfter))} ₪
                   </strong>
                 </div>

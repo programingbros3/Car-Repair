@@ -50,6 +50,13 @@ export function initDB(): void {
     `ALTER TABLE daily_cash_audits ADD COLUMN actual_check REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE warranties ADD COLUMN car_type TEXT`,
     `ALTER TABLE warranties ADD COLUMN car_color TEXT`,
+    `ALTER TABLE supplier_items ADD COLUMN discount_type TEXT`,
+    `ALTER TABLE supplier_items ADD COLUMN discount_value REAL DEFAULT 0`,
+    // خصم تسوية عند الدفع: يُخصم من amount_remaining دون أن يُسجَّل كنقدية في cash_ledger
+    `ALTER TABLE payments               ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE debt_payments          ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE supplier_payments      ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE supplier_debt_payments ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
   ]
   for (const sql of migrations) {
     try { db.exec(sql) }

@@ -10,6 +10,7 @@ const navItems = [
   { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
   { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
   { to: '/pending-debts',      icon: '💰', label: 'الديون المعلقة'    },
+  { to: '/cheques',            icon: '🧾', label: 'الشيكات'           },
   { to: '/warranties',         icon: '🛡️', label: 'الكفالات'           },
   { to: '/reports',            icon: '📊', label: 'التقارير'           },
   { to: '/settings',           icon: '⚙', label: 'الإعدادات'          },

@@ -6,6 +6,7 @@ import DirectSaleForm, { hasDirectSaleDraft, clearDirectSaleDraft, type DirectSa
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { useSettlementTotal } from '../utils/useSettlementTotal'
 import type { VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -127,10 +128,12 @@ export default function DirectSales() {
 
   /* modals */
   const [detailsInvoice, setDetailsInvoice] = useState<SaleRecord | null>(null)
+  const detailsSettlement = useSettlementTotal(detailsInvoice ? 'direct_sale' : null, detailsInvoice?.id ?? null)
   const [payInvoice,     setPayInvoice]     = useState<SaleRecord | null>(null)
   const [paymentRows,    setPaymentRows]    = useState<PaymentRow[]>([])
   const [payDate,        setPayDate]        = useState(today())
   const [payNotes,       setPayNotes]       = useState('')
+  const [settleDiscount, setSettleDiscount] = useState('')
   const [deleteInvoice,  setDeleteInvoice]  = useState<SaleRecord | null>(null)
   const [warnInv,        setWarnInv]        = useState<SaleRecord | null>(null)
 
@@ -177,7 +180,7 @@ export default function DirectSales() {
   const onEditSaved  = () => setEditingInvoice(null)
 
   /* Payment modal */
-  const openPay          = (inv: SaleRecord) => { setPayInvoice(inv); setPaymentRows([emptyPayRow()]); setPayDate(today()); setPayNotes('') }
+  const openPay          = (inv: SaleRecord) => { setPayInvoice(inv); setPaymentRows([emptyPayRow()]); setPayDate(today()); setPayNotes(''); setSettleDiscount('') }
   const addPaymentRow    = () => setPaymentRows(prev => [...prev, emptyPayRow()])
   const removePaymentRow = (id: number) => setPaymentRows(prev => prev.filter(r => r.id !== id))
   const updatePaymentRow = (id: number, u: Partial<Omit<PaymentRow, 'id'>>) =>
@@ -187,14 +190,15 @@ export default function DirectSales() {
   const invPaid       = payInvoice?.amountPaid ?? 0
   const invRemaining  = payInvoice?.amountRemaining ?? 0
   const thisPayTotal  = paymentRows.reduce((s, r) => s + Number(r.amount || 0), 0)
-  const afterRemaining = invRemaining - thisPayTotal
-  const payExceeds    = thisPayTotal > invRemaining + 0.001
+  const settleNum     = Math.max(0, Number(settleDiscount || 0))
+  const afterRemaining = invRemaining - thisPayTotal - settleNum
+  const payExceeds    = thisPayTotal + settleNum > invRemaining + 0.001
 
   const handlePaySave = async () => {
-    if (thisPayTotal <= 0 || payExceeds || !payInvoice) return
+    if ((thisPayTotal <= 0 && settleNum <= 0) || payExceeds || !payInvoice) return
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
-      await dbService.directSale.addPayment(payInvoice.id, rows, payDate)
+      await dbService.directSale.addPayment(payInvoice.id, rows, payDate, settleNum)
       await reload()
       setPayInvoice(null)
     } catch (err) {
@@ -221,11 +225,17 @@ export default function DirectSales() {
           <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
           <td>${item.notes || '—'}</td>
         </tr>`).join('')
-      const payRows = payments.map(p => `
+      const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
+      const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
         <tr>
           <td>${PAY_AR[p.method] || p.method}</td>
           <td class="amount-in">${fmt(p.amount)} ₪</td>
         </tr>`).join('')
+        + (settlementTotal > 0 ? `
+        <tr>
+          <td>خصم تسوية</td>
+          <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
+        </tr>` : '')
       const body = `
         <div class="detail-grid">
           <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
@@ -454,6 +464,11 @@ export default function DirectSales() {
                   </>
                 )
               })()}
+              {detailsSettlement > 0 && (
+                <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
+                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                </div>
+              )}
               <LinkedOpsSection phone={detailsInvoice.phone} id={detailsInvoice.id} />
             </div>
             <div className="mi-modal-footer">
@@ -521,17 +536,25 @@ export default function DirectSales() {
                 </div>
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
-              {payExceeds && <p className="pd-pay-error">مجموع الدفعة ({fmt(thisPayTotal)} ₪) يتجاوز المتبقي ({fmt(invRemaining)} ₪)</p>}
+              <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
+                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <input type="number" min={0} placeholder="0" value={settleDiscount}
+                  className="mi-td-input"
+                  onChange={e => setSettleDiscount(e.target.value)} />
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+              </label>
+              {payExceeds && <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPayTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(invRemaining)} ₪)</p>}
               <div className="pay-summary">
                 <div className="pay-summary-row"><span>إجمالي هذه الدفعة</span><strong className="pay-paid">{fmt(thisPayTotal)} ₪</strong></div>
+                {settleNum > 0 && <div className="pay-summary-row"><span>خصم تسوية</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعدها</span>
-                  <strong className={afterRemaining <= 0 ? 'pay-ok' : payExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, afterRemaining))} ₪</strong>
+                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <strong className={afterRemaining <= 0.001 ? 'pay-ok' : payExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, afterRemaining))} ₪</strong>
                 </div>
               </div>
             </div>
             <div className="mi-modal-footer">
-              <button className="btn btn-primary" onClick={handlePaySave} disabled={payExceeds || thisPayTotal <= 0}>تأكيد الدفعة</button>
+              <button className="btn btn-primary" onClick={handlePaySave} disabled={payExceeds || (thisPayTotal <= 0 && settleNum <= 0)}>تأكيد الدفعة</button>
               <button className="btn btn-ghost" onClick={() => setPayInvoice(null)}>إلغاء</button>
             </div>
           </div>

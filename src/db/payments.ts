@@ -10,6 +10,36 @@ function invoiceMeta(type: InvoiceType) {
     : { table: 'direct_sale_invoices', label: 'بيع مباشر', refType: REF.DIRECT_SALE_PAYMENT }
 }
 
+// ─── خصم التسوية (settlement discount) ────────────────────────────────────────
+// يُسقِط مبلغاً من amount_remaining دون أن يُحسب كنقدية داخلة في cash_ledger.
+// يُدرَج في صف مخصّص بجدول الدفعات (amount = 0، settlement_discount = المبلغ) كي
+// يبقى موثّقاً في سجل الدفعات ومنفصلاً عن الدفعات النقدية. لا قيد صندوق إطلاقاً.
+// remainingBefore = المتبقّي بعد خصم الدفعات النقدية الفعلية (للتحقّق من عدم التجاوز).
+type SettlementPaymentsTable = 'payments' | 'debt_payments'
+export function applySettlementDiscount(
+  db: ReturnType<typeof getDB>,
+  paymentsTable: SettlementPaymentsTable,
+  invoiceId: number,
+  invoiceType: InvoiceType,
+  invoiceTable: string,
+  paymentDate: string,
+  settlementDiscount: number,
+  remainingBefore: number,
+): void {
+  const disc = settlementDiscount || 0
+  if (disc <= 0) return
+  if (disc < 0) throw new Error('خصم التسوية لا يمكن أن يكون سالباً')
+  if (disc > remainingBefore + 0.001) {
+    throw new Error(`خصم التسوية (${disc.toFixed(2)} ₪) يتجاوز المتبقي بعد الدفعة (${Math.max(0, remainingBefore).toFixed(2)} ₪)`)
+  }
+  db.prepare(`
+    INSERT INTO ${paymentsTable} (invoice_id, invoice_type, payment_date, method, amount, settlement_discount, notes)
+    VALUES (?, ?, ?, 'cash', 0, ?, 'خصم تسوية')
+  `).run(invoiceId, invoiceType, paymentDate, disc)
+  // يُخصم من المتبقّي فقط — لا يمسّ amount_paid ولا cash_ledger
+  db.prepare(`UPDATE ${invoiceTable} SET amount_remaining = amount_remaining - ? WHERE id = ?`).run(disc, invoiceId)
+}
+
 // ─── Day 3: Add payment to an existing invoice (not debt repayment) ───────────
 // Used when customer wants to pay more toward an in-progress or delivered invoice.
 
@@ -18,12 +48,13 @@ export function addPayment(
   invoiceType: InvoiceType,
   payments: PaymentInput[],
   paymentDate: string,
+  settlementDiscount = 0,
 ): void {
   const db = getDB()
   const { table, label, refType } = invoiceMeta(invoiceType)
 
   const run = db.transaction(() => {
-    // التحقق من عدم تجاوز المبلغ المدفوع للمتبقي
+    // التحقق من عدم تجاوز المبلغ المدفوع (+ خصم التسوية) للمتبقي
     const invoice = db.prepare(`SELECT amount_remaining FROM ${table} WHERE id = ?`).get(invoiceId) as { amount_remaining: number } | undefined
     if (!invoice) throw new Error('الفاتورة غير موجودة')
     const totalNew = payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
@@ -68,6 +99,10 @@ export function addPayment(
         notes: `دفعة ${label} #${invoiceId}`,
       })
     }
+
+    // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية في cash_ledger
+    applySettlementDiscount(db, 'payments', invoiceId, invoiceType, table, paymentDate,
+      settlementDiscount, invoice.amount_remaining - totalNew)
   })
 
   run()
@@ -80,11 +115,20 @@ export function addDebtPayment(
   invoiceType: InvoiceType,
   payments: PaymentInput[],
   paymentDate: string,
+  settlementDiscount = 0,
 ): void {
   const db = getDB()
   const { table, label } = invoiceMeta(invoiceType)
 
   const run = db.transaction(() => {
+    const totalNew = payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
+    const invoice = db.prepare(`SELECT amount_remaining FROM ${table} WHERE id = ?`).get(invoiceId) as { amount_remaining: number } | undefined
+    if (!invoice) throw new Error('الفاتورة غير موجودة')
+    // التحقق من عدم تجاوز مجموع الدفعة للمتبقي (خصم التسوية يُتحقَّق منه لاحقاً مقابل ما يتبقّى بعد الدفعة)
+    if (totalNew > invoice.amount_remaining + 0.001) {
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+    }
+
     for (const p of payments) {
       if (p.amount <= 0 || p.method === 'debt') continue
 
@@ -122,6 +166,10 @@ export function addDebtPayment(
         notes: `سداد دين ${label} #${invoiceId}`,
       })
     }
+
+    // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية في cash_ledger
+    applySettlementDiscount(db, 'debt_payments', invoiceId, invoiceType, table, paymentDate,
+      settlementDiscount, invoice.amount_remaining - totalNew)
   })
 
   run()
@@ -154,6 +202,7 @@ export function getPendingDebts(filters: DebtFilters = {}): PendingDebt[] {
           total_amount,
           amount_paid,
           amount_remaining,
+          car_plate,
           car_type,
           car_color,
           notes
@@ -173,6 +222,7 @@ export function getPendingDebts(filters: DebtFilters = {}): PendingDebt[] {
           total_amount,
           amount_paid,
           amount_remaining,
+          NULL          AS car_plate,
           NULL          AS car_type,
           NULL          AS car_color,
           notes
