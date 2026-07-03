@@ -120,8 +120,14 @@ export function addSupplierInvoice(input: SupplierInvoiceInput): number {
   const db = getDB()
 
   const total_amount = calcTotal(input.items)
-  const amount_paid = calcPaid(input.payments)
-  const amount_remaining = total_amount - amount_paid
+  // حماية دفاعية: مجموع الدفعة الأولية النقدية لا يتجاوز إجمالي الفاتورة (وإلا صار المتبقّي سالباً)
+  const initialPaid = calcPaid(input.payments)
+  if (initialPaid > total_amount + 0.001) {
+    throw new Error(`مجموع الدفعة (${initialPaid.toFixed(2)} ₪) يتجاوز إجمالي الفاتورة (${total_amount.toFixed(2)} ₪)`)
+  }
+  // الترويسة تُدرَج بلا مدفوع؛ insertSupplierPayments أدناه يراكم الدفعة الأولية مرة واحدة.
+  const amount_paid = 0
+  const amount_remaining = total_amount
 
   const run = db.transaction(() => {
     const invoice_number = nextInvoiceNumber('PUR', PURCHASE_INVOICE_NUMBER_TABLES)
@@ -174,6 +180,20 @@ export function updateSupplierInvoice(id: number, input: SupplierInvoiceInput): 
   const total_amount = calcTotal(input.items)
 
   const run = db.transaction(() => {
+    // حماية: لا يجوز أن يهبط الإجمالي تحت (المدفوع + خصم التسوية) وإلا صار المتبقّي سالباً
+    const cur = db.prepare('SELECT amount_paid FROM supplier_invoices WHERE id = ?').get(id) as { amount_paid: number } | undefined
+    const paid = cur?.amount_paid ?? 0
+    // خصومات التسوية المطبّقة سابقاً تُطرح كي يبقى الثابت: total = paid + remaining + settlement
+    const settle = (db.prepare(`
+      SELECT COALESCE(SUM(settlement_discount),0) v FROM (
+        SELECT settlement_discount FROM supplier_payments      WHERE invoice_id=?
+        UNION ALL
+        SELECT settlement_discount FROM supplier_debt_payments WHERE invoice_id=?
+      )`).get(id, id) as { v: number }).v
+    if (total_amount < paid + settle - 0.001) {
+      throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total_amount.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+    }
+
     db.prepare(`
       UPDATE supplier_invoices
       SET supplier_name = ?, supplier_phone = ?, purchase_date = ?, notes = ?, total_amount = ?
@@ -183,10 +203,10 @@ export function updateSupplierInvoice(id: number, input: SupplierInvoiceInput): 
       input.notes ?? null, total_amount, id,
     )
 
-    // amount_remaining يُشتق من amount_paid المخزَّن الحالي
+    // amount_remaining = total − paid − settlement
     db.prepare(`
-      UPDATE supplier_invoices SET amount_remaining = ? - amount_paid WHERE id = ?
-    `).run(total_amount, id)
+      UPDATE supplier_invoices SET amount_remaining = ? - amount_paid - ? WHERE id = ?
+    `).run(total_amount, settle, id)
 
     db.prepare('DELETE FROM supplier_items WHERE invoice_id = ?').run(id)
 

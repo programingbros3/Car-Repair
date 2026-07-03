@@ -40,6 +40,24 @@ export function recordLedgerEntry(entry: LedgerEntryInput): void {
   })
 }
 
+// ─── إعادة حساب الرصيد التراكمي (balance_after) لكل الصفوف بترتيب id ──────────────
+// تُستدعى بعد أي حذف/تعديل يزيل أو يغيّر قيود cash_ledger، كي يبقى عمود "الرصيد بعد
+// العملية" المعروض صحيحاً (وإلا بقيت أرصدة الصفوف اللاحقة للصف المحذوف قديمة). يجب
+// استدعاؤها داخل نفس الـ transaction. آمنة على قاعدة فارغة (لا صفوف = no-op).
+export function recomputeLedgerBalances(): void {
+  const db = getDB()
+  const rows = db.prepare(
+    'SELECT id, amount_in, amount_out FROM cash_ledger ORDER BY id ASC'
+  ).all() as { id: number; amount_in: number; amount_out: number }[]
+
+  const upd = db.prepare('UPDATE cash_ledger SET balance_after = ? WHERE id = ?')
+  let balance = 0
+  for (const r of rows) {
+    balance += r.amount_in - r.amount_out
+    upd.run(balance, r.id)
+  }
+}
+
 // ─── Public queries ───────────────────────────────────────────────────────────
 
 export function getLedgerSummary(): LedgerSummary {

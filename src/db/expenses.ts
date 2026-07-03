@@ -1,5 +1,5 @@
 import { getDB } from '../database'
-import { recordLedgerEntry, REF } from './ledger'
+import { recordLedgerEntry, recomputeLedgerBalances, REF } from './ledger'
 import type {
   DailyExpenseInput,
   DailyExpenseRow,
@@ -163,23 +163,16 @@ export function updateSalaryPayment(id: number, input: SalaryInput): void {
     `).run(input.days_worked, input.bonus, input.deduction, amount,
            input.payment_date, input.notes ?? null, id)
 
-    // Follow expense:update pattern — replace ledger entry so financial totals stay consistent
+    // تحديث قيد الصندوق في مكانه (يحافظ على ترتيبه الزمني) ثم إعادة حساب الأرصدة
     const emp = db.prepare(
       'SELECT name FROM employees WHERE id = ?'
     ).get(existing.employee_id) as { name: string } | undefined
 
     db.prepare(
-      'DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?'
-    ).run(REF.SALARY, id)
+      'UPDATE cash_ledger SET transaction_date=?, amount_out=?, notes=? WHERE reference_type=? AND reference_id=?'
+    ).run(input.payment_date, amount, `راتب: ${emp?.name ?? `موظف #${existing.employee_id}`}`, REF.SALARY, id)
 
-    recordLedgerEntry({
-      transaction_date: input.payment_date,
-      reference_type: REF.SALARY,
-      reference_id: id,
-      amount_in: 0,
-      amount_out: amount,
-      notes: `راتب: ${emp?.name ?? `موظف #${existing.employee_id}`}`,
-    })
+    recomputeLedgerBalances()
   })()
 }
 

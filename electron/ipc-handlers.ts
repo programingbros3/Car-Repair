@@ -33,7 +33,7 @@ import {
   addSalaryPayment, updateSalaryPayment, getSalaryHistory, getAllSalaries,
 } from '../src/db/expenses'
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
-import { getLedgerSummary, getLedgerByDateRange, recordLedgerEntry, REF } from '../src/db/ledger'
+import { getLedgerSummary, getLedgerByDateRange, recomputeLedgerBalances, REF } from '../src/db/ledger'
 import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers, getDebtsAging } from '../src/db/reports'
 import { getUpcomingCheques, getAllCheques } from '../src/db/cheques'
 import {
@@ -172,6 +172,7 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM invoice_items WHERE invoice_id=? AND invoice_type='maintenance'`).run(id)
       db.prepare(`DELETE FROM warranties WHERE source='maintenance' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM maintenance_invoices WHERE id=?`).run(id)
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'maintenance_invoice', id, `حذف فاتورة صيانة #${id}`)
     return { id }
@@ -219,6 +220,7 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`DELETE FROM invoice_items WHERE invoice_id=? AND invoice_type='direct_sale'`).run(id)
       db.prepare(`DELETE FROM warranties WHERE source='direct_sale' AND source_id=?`).run(id)
       db.prepare(`DELETE FROM direct_sale_invoices WHERE id=?`).run(id)
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'direct_sale_invoice', id, `حذف فاتورة بيع مباشر #${id}`)
     return { id }
@@ -245,6 +247,7 @@ export function registerIpcHandlers(db: DB): void {
       clearLedgerForPayments(db, [REF.SUPPLIER_PAYMENT], payIds)
       clearLedgerForPayments(db, [REF.SUPPLIER_DEBT], debtIds)
       db.prepare(`DELETE FROM supplier_invoices WHERE id=?`).run(id) // FK cascade للعناصر والدفعات
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'supplier_invoice', id, `حذف فاتورة مورد #${id}`)
     return { id }
@@ -258,11 +261,11 @@ export function registerIpcHandlers(db: DB): void {
       db.prepare(`UPDATE daily_expenses SET description=?, amount=?, expense_date=?, notes=? WHERE id=?`).run(
         input.description, input.amount, input.expense_date, input.notes ?? null, id,
       )
-      db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.DAILY_EXPENSE, id)
-      recordLedgerEntry({
-        transaction_date: input.expense_date, reference_type: REF.DAILY_EXPENSE,
-        reference_id: id, amount_in: 0, amount_out: input.amount, notes: input.description,
-      })
+      // تحديث قيد الصندوق في مكانه (يحافظ على ترتيبه الزمني) ثم إعادة حساب الأرصدة
+      db.prepare(
+        `UPDATE cash_ledger SET transaction_date=?, amount_out=?, notes=? WHERE reference_type=? AND reference_id=?`
+      ).run(input.expense_date, input.amount, input.description, REF.DAILY_EXPENSE, id)
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'update', 'daily_expense', id, `تعديل مصروف #${id} — ${input.description}`)
   })
@@ -270,6 +273,7 @@ export function registerIpcHandlers(db: DB): void {
     db.transaction(() => {
       db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.DAILY_EXPENSE, id)
       db.prepare(`DELETE FROM daily_expenses WHERE id=?`).run(id)
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'daily_expense', id, `حذف مصروف #${id}`)
     return { id }
@@ -300,6 +304,7 @@ export function registerIpcHandlers(db: DB): void {
     db.transaction(() => {
       db.prepare(`DELETE FROM cash_ledger WHERE reference_type=? AND reference_id=?`).run(REF.SALARY, id)
       db.prepare(`DELETE FROM salary_payments WHERE id=?`).run(id)
+      recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'salary_payment', id, `حذف دفعة راتب #${id}`)
     return { id }

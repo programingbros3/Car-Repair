@@ -11,7 +11,14 @@ type BetterSqlite3 = import('better-sqlite3').Database
 let db: BetterSqlite3
 
 export function initDB(): void {
-  const dbPath = path.join(app.getPath('userData'), 'garage.db')
+  // مسار قاعدة اختياري عبر متغيّر بيئة GARAGE_DB_PATH — يُستخدم فقط لمعاينة بيانات
+  // محاكاة معزولة (garage-simulation-preview.db) بعيداً عن قاعدة الإنتاج. حين لا
+  // يكون المتغيّر موجوداً يبقى السلوك الافتراضي كما هو تماماً (قاعدة المستخدم في
+  // userData) — لا أثر إطلاقاً على الإنتاج.
+  const dbPath = process.env.GARAGE_DB_PATH
+    ? path.resolve(process.env.GARAGE_DB_PATH)
+    : path.join(app.getPath('userData'), 'garage.db')
+  if (process.env.GARAGE_DB_PATH) fs.mkdirSync(path.dirname(dbPath), { recursive: true })
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')

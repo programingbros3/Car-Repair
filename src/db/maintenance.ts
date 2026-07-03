@@ -23,12 +23,6 @@ function calcTotal(items: InvoiceItemInput[]): number {
   }, 0)
 }
 
-function calcPaid(payments: PaymentInput[]): number {
-  return payments
-    .filter(p => p.method !== 'debt' && p.amount > 0)
-    .reduce((sum, p) => sum + p.amount, 0)
-}
-
 // Insert items into invoice_items — call inside a transaction
 function insertItems(invoiceId: number, items: InvoiceItemInput[]): void {
   const db = getDB()
@@ -109,8 +103,15 @@ export function addMaintenanceInvoice(input: MaintenanceInvoiceInput): number {
   const discount_type = input.discount_type ?? null
   const discount_value = discount_type ? (input.discount_value ?? 0) : 0
   const total_amount = applyDiscount(calcTotal(input.items), discount_type, discount_value)
-  const amount_paid = calcPaid(input.payments)
-  const amount_remaining = total_amount - amount_paid
+  // حماية دفاعية: مجموع الدفعة الأولية النقدية لا يتجاوز إجمالي الفاتورة (وإلا صار المتبقّي سالباً)
+  const initialPaid = input.payments.filter(p => p.method !== 'debt' && p.amount > 0).reduce((s, p) => s + p.amount, 0)
+  if (initialPaid > total_amount + 0.001) {
+    throw new Error(`مجموع الدفعة (${initialPaid.toFixed(2)} ₪) يتجاوز إجمالي الفاتورة (${total_amount.toFixed(2)} ₪)`)
+  }
+  // الترويسة تُدرَج بلا مدفوع؛ insertPayments أدناه يراكم الدفعة الأولية مرة واحدة
+  // (المصدر الوحيد لتحديث amount_paid/amount_remaining، المشترك مع التسليم).
+  const amount_paid = 0
+  const amount_remaining = total_amount
 
   const run = db.transaction(() => {
     const invoice_number = nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)
@@ -215,7 +216,20 @@ export function updateMaintenanceInvoice(
       ).get(invoiceId) as { amount_paid: number; discount_type: DiscountType | null; discount_value: number } | undefined
 
       const total_amount = applyDiscount(subtotal, current?.discount_type, current?.discount_value)
-      const amount_remaining = total_amount - (current?.amount_paid ?? 0)
+      const paid = current?.amount_paid ?? 0
+      // خصومات التسوية المطبّقة سابقاً أُسقِطت من المتبقّي ولم تُحسب نقدية — يجب طرحها
+      // عند إعادة الحساب كي يبقى الثابت: total = paid + remaining + settlement.
+      const settle = (db.prepare(`
+        SELECT COALESCE(SUM(settlement_discount),0) v FROM (
+          SELECT settlement_discount FROM payments      WHERE invoice_id=? AND invoice_type='maintenance'
+          UNION ALL
+          SELECT settlement_discount FROM debt_payments WHERE invoice_id=? AND invoice_type='maintenance'
+        )`).get(invoiceId, invoiceId) as { v: number }).v
+      // حماية: لا يجوز أن يهبط الإجمالي تحت (المدفوع + خصم التسوية) وإلا صار المتبقّي سالباً
+      if (total_amount < paid + settle - 0.001) {
+        throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total_amount.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+      }
+      const amount_remaining = total_amount - paid - settle
 
       db.prepare(`
         UPDATE maintenance_invoices

@@ -18,12 +18,6 @@ function calcTotal(items: DirectSaleInput['items']): number {
   return items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0)
 }
 
-function calcPaid(payments: PaymentInput[]): number {
-  return payments
-    .filter(p => p.method !== 'debt' && p.amount > 0)
-    .reduce((sum, p) => sum + p.amount, 0)
-}
-
 function insertPayments(
   invoiceId: number,
   paymentDate: string,
@@ -78,8 +72,14 @@ export function addDirectSaleInvoice(input: DirectSaleInput): number {
   const discount_type = input.discount_type ?? null
   const discount_value = discount_type ? (input.discount_value ?? 0) : 0
   const total_amount = applyDiscount(calcTotal(input.items), discount_type, discount_value)
-  const amount_paid = calcPaid(input.payments)
-  const amount_remaining = total_amount - amount_paid
+  // حماية دفاعية: مجموع الدفعة الأولية النقدية لا يتجاوز إجمالي الفاتورة (وإلا صار المتبقّي سالباً)
+  const initialPaid = input.payments.filter(p => p.method !== 'debt' && p.amount > 0).reduce((s, p) => s + p.amount, 0)
+  if (initialPaid > total_amount + 0.001) {
+    throw new Error(`مجموع الدفعة (${initialPaid.toFixed(2)} ₪) يتجاوز إجمالي الفاتورة (${total_amount.toFixed(2)} ₪)`)
+  }
+  // الترويسة تُدرَج بلا مدفوع؛ insertPayments أدناه يراكم الدفعة الأولية مرة واحدة.
+  const amount_paid = 0
+  const amount_remaining = total_amount
 
   const run = db.transaction(() => {
     const invoice_number = nextInvoiceNumber('INV', SALES_INVOICE_NUMBER_TABLES)
@@ -168,9 +168,21 @@ export function recalcDirectSaleTotals(invoiceId: number): void {
   ).get(invoiceId) as { amount_paid: number; discount_type: DiscountType | null; discount_value: number } | undefined
 
   const total = applyDiscount(subtotal, row?.discount_type, row?.discount_value)
+  const paid = row?.amount_paid ?? 0
+  // خصومات التسوية المطبّقة سابقاً تُطرح كي يبقى الثابت: total = paid + remaining + settlement
+  const settle = (db.prepare(`
+    SELECT COALESCE(SUM(settlement_discount),0) v FROM (
+      SELECT settlement_discount FROM payments      WHERE invoice_id=? AND invoice_type='direct_sale'
+      UNION ALL
+      SELECT settlement_discount FROM debt_payments WHERE invoice_id=? AND invoice_type='direct_sale'
+    )`).get(invoiceId, invoiceId) as { v: number }).v
+  // حماية: لا يجوز أن يهبط الإجمالي تحت (المدفوع + خصم التسوية) وإلا صار المتبقّي سالباً
+  if (total < paid + settle - 0.001) {
+    throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+  }
   db.prepare(
     `UPDATE direct_sale_invoices SET total_amount = ?, amount_remaining = ? WHERE id = ?`,
-  ).run(total, total - (row?.amount_paid ?? 0), invoiceId)
+  ).run(total, total - paid - settle, invoiceId)
 }
 
 // ─── Update items for an existing direct sale invoice ────────────────────────
