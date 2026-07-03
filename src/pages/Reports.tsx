@@ -14,13 +14,60 @@ import type {
 ════════════════════════════════════════ */
 type Tab = 'daily' | 'monthly' | 'yearly' | 'debts' | 'top_customers' | 'debts_aging'
 
-type YearlyReport = {
+// الحقول المالية المفصّلة المشتركة بين التقرير الشهري والسنوي
+type PeriodDetail = {
+  maintenance_income: number
+  direct_sale_income: number
+  daily_expenses: number
+  salaries: number
+  supplier_payments: number
+  debt_collected: number
+  new_debts: number
+  maintenance_count: number
+  direct_sale_count: number
+  purchase_count: number
+  invoice_discounts: number
+  settlement_discounts: number
+  warranties_count: number
+}
+
+type YearlyReport = PeriodDetail & {
   year: number
   total_in: number
   total_out: number
   net: number
   months: { month: number; total_in: number; total_out: number; net: number }[]
 }
+
+type DetailKind = 'in' | 'out' | 'neutral' | 'count'
+type DetailDef = { key: keyof PeriodDetail; label: string; kind: DetailKind }
+
+// مجموعات منطقية للعرض (بطاقات + طباعة + تصدير)
+const DETAIL_GROUPS: { title: string; items: DetailDef[] }[] = [
+  { title: 'الإيرادات', items: [
+    { key: 'maintenance_income', label: 'دخل الصيانة',        kind: 'in' },
+    { key: 'direct_sale_income', label: 'دخل البيع المباشر',  kind: 'in' },
+    { key: 'debt_collected',     label: 'الديون المُحصَّلة',   kind: 'in' },
+  ]},
+  { title: 'المصروفات', items: [
+    { key: 'daily_expenses',    label: 'المصاريف اليومية',        kind: 'out' },
+    { key: 'salaries',          label: 'الرواتب المدفوعة (الصافي)', kind: 'out' },
+    { key: 'supplier_payments', label: 'مدفوعات الموردين',        kind: 'out' },
+  ]},
+  { title: 'الديون والخصومات', items: [
+    { key: 'new_debts',            label: 'ديون جديدة متراكمة (متبقّي)', kind: 'out' },
+    { key: 'invoice_discounts',    label: 'خصومات الفواتير الممنوحة',   kind: 'neutral' },
+    { key: 'settlement_discounts', label: 'خصومات التسوية الممنوحة',    kind: 'neutral' },
+  ]},
+  { title: 'الأعداد', items: [
+    { key: 'maintenance_count', label: 'عدد فواتير الصيانة',      kind: 'count' },
+    { key: 'direct_sale_count', label: 'عدد فواتير البيع المباشر', kind: 'count' },
+    { key: 'purchase_count',    label: 'عدد فواتير المشتريات',     kind: 'count' },
+    { key: 'warranties_count',  label: 'كفالات جديدة مُصدَرة',     kind: 'count' },
+  ]},
+]
+
+const DETAIL_ITEMS = DETAIL_GROUPS.flatMap(g => g.items)
 
 /* ════════════════════════════════════════
    Labels & helpers
@@ -121,14 +168,28 @@ export default function Reports() {
         const reports = await Promise.all(
           Array.from({ length: 12 }, (_, i) => dbService.report.monthly(i + 1, year)),
         )
+        const sum = (pick: (r: MonthlyReport) => number) => reports.reduce((s, r) => s + pick(r), 0)
         const agg: YearlyReport = {
           year,
-          total_in:  reports.reduce((s, r) => s + r.total_in, 0),
-          total_out: reports.reduce((s, r) => s + r.total_out, 0),
-          net:       reports.reduce((s, r) => s + r.net, 0),
+          total_in:  sum(r => r.total_in),
+          total_out: sum(r => r.total_out),
+          net:       sum(r => r.net),
           months: reports.map((r, i) => ({
             month: i + 1, total_in: r.total_in, total_out: r.total_out, net: r.net,
           })),
+          maintenance_income:   sum(r => r.maintenance_income),
+          direct_sale_income:   sum(r => r.direct_sale_income),
+          daily_expenses:       sum(r => r.daily_expenses),
+          salaries:             sum(r => r.salaries),
+          supplier_payments:    sum(r => r.supplier_payments),
+          debt_collected:       sum(r => r.debt_collected),
+          new_debts:            sum(r => r.new_debts),
+          maintenance_count:    sum(r => r.maintenance_count),
+          direct_sale_count:    sum(r => r.direct_sale_count),
+          purchase_count:       sum(r => r.purchase_count),
+          invoice_discounts:    sum(r => r.invoice_discounts),
+          settlement_discounts: sum(r => r.settlement_discounts),
+          warranties_count:     sum(r => r.warranties_count),
         }
         setYearly(agg)
       } else if (tab === 'debts') {
@@ -256,6 +317,11 @@ export default function Reports() {
         <div class="detail-item"><label>مشتريات الموردين</label><span class="amount-out">${fmt(daily.supplier_expenses)} ₪</span></div>
         <div class="detail-item"><label>المصاريف</label><span class="amount-out">${fmt(daily.daily_expenses)} ₪</span></div>
         <div class="detail-item"><label>الرواتب</label><span class="amount-out">${fmt(daily.salaries)} ₪</span></div>`
+    } else if (periodDetail) {
+      breakdown = DETAIL_ITEMS.map(def => {
+        const cls = def.kind === 'in' ? 'amount-in' : def.kind === 'out' ? 'amount-out' : ''
+        return `<div class="detail-item"><label>${def.label}</label><span class="${cls}">${detailStr(periodDetail, def)}</span></div>`
+      }).join('')
     }
 
     let rowsHtml = ''
@@ -316,14 +382,24 @@ export default function Reports() {
       exportToCsv(
         `تقرير-شهري-${month}.csv`,
         ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
-        monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net]),
+        [
+          ...monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net] as (string | number)[]),
+          ['', '', '', ''],
+          ['— ملخص الفترة —', '', '', ''],
+          ...periodSummaryRows(monthly),
+        ],
       )
     } else if (tab === 'yearly') {
       if (!yearly) return
       exportToCsv(
         `تقرير-سنوي-${year}.csv`,
         ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
-        yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net]),
+        [
+          ...yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net] as (string | number)[]),
+          ['', '', '', ''],
+          ['— ملخص الفترة —', '', '', ''],
+          ...periodSummaryRows(yearly),
+        ],
       )
     } else if (tab === 'debts_aging') {
       if (!sortedAging.length) return
@@ -388,7 +464,12 @@ export default function Reports() {
       exportToXlsx(
         `تقرير-شهري-${month}.xlsx`,
         ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
-        monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net]),
+        [
+          ...monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net] as (string | number)[]),
+          ['', '', '', ''],
+          ['— ملخص الفترة —', '', '', ''],
+          ...periodSummaryRows(monthly),
+        ],
         'تقرير شهري',
       )
     } else if (tab === 'yearly') {
@@ -396,7 +477,12 @@ export default function Reports() {
       exportToXlsx(
         `تقرير-سنوي-${year}.xlsx`,
         ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
-        yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net]),
+        [
+          ...yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net] as (string | number)[]),
+          ['', '', '', ''],
+          ['— ملخص الفترة —', '', '', ''],
+          ...periodSummaryRows(yearly),
+        ],
         'تقرير سنوي',
       )
     } else if (tab === 'debts_aging') {
@@ -451,6 +537,18 @@ export default function Reports() {
     if (tab === 'yearly')  return yearly  ? { in: yearly.total_in,  out: yearly.total_out,  net: yearly.net }  : null
     return null
   }, [tab, daily, monthly, yearly])
+
+  /* التفصيل المالي الكامل للشهري/السنوي (نفس شكل الحقول) */
+  const periodDetail: PeriodDetail | null =
+    tab === 'monthly' ? monthly : tab === 'yearly' ? yearly : null
+
+  const detailStr = (d: PeriodDetail, def: DetailDef) =>
+    def.kind === 'count' ? String(d[def.key]) : `${fmt(d[def.key])} ₪`
+  const detailCls = (kind: DetailKind) =>
+    kind === 'in' ? 'incoming' : kind === 'out' ? 'outgoing' : 'balance'
+  /* صفوف ملخّص الفترة للتصدير (label في العمود الأول، القيمة في الثاني) */
+  const periodSummaryRows = (d: PeriodDetail): (string | number)[][] =>
+    DETAIL_ITEMS.map(def => [def.label, d[def.key], '', ''])
 
   /* ════════════════════════════════════════
      JSX
@@ -576,6 +674,23 @@ export default function Reports() {
             )}
           </div>
 
+          {/* ── تفصيل مالي كامل (شهري/سنوي) — مجموعات منطقية ── */}
+          {periodDetail && DETAIL_GROUPS.map(group => (
+            <div key={group.title} style={{ marginTop: '1.25rem' }}>
+              <h3 className="mi-section-title" style={{ marginBottom: '0.6rem' }}>{group.title}</h3>
+              <div className="stats-grid">
+                {group.items.map(def => (
+                  <div className="stat-card" key={def.key}>
+                    <span className="stat-label">{def.label}</span>
+                    <span className={`stat-value ${detailCls(def.kind)}`}>
+                      {detailStr(periodDetail, def)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
           {/* ── Operations / breakdown table ── */}
           <div className="mi-card" style={{ marginTop: '1.5rem' }}>
             <h2 className="mi-section-title">
@@ -627,7 +742,7 @@ export default function Reports() {
                           <td>{d.date}</td>
                           <td className="cl-amount-in">{fmt(d.total_in)} ₪</td>
                           <td className="cl-amount-out">{fmt(d.total_out)} ₪</td>
-                          <td className="mi-amount">{fmt(d.net)} ₪</td>
+                          <td className={d.net < 0 ? 'cl-amount-out' : 'mi-amount'}>{fmt(d.net)} ₪</td>
                         </tr>
                       ))
                     ) : (
@@ -638,7 +753,7 @@ export default function Reports() {
                           <td>{MONTH_NAMES[m.month - 1]}</td>
                           <td className="cl-amount-in">{fmt(m.total_in)} ₪</td>
                           <td className="cl-amount-out">{fmt(m.total_out)} ₪</td>
-                          <td className="mi-amount">{fmt(m.net)} ₪</td>
+                          <td className={m.net < 0 ? 'cl-amount-out' : 'mi-amount'}>{fmt(m.net)} ₪</td>
                         </tr>
                       ))
                     )}

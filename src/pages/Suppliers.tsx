@@ -3,6 +3,8 @@ import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { Supplier, SupplierRecord, SupplierItem } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import CollapsibleCard from '../components/CollapsibleCard'
+import NameAutocomplete from '../components/NameAutocomplete'
 import SupplierInvoiceForm, { hasSupplierDraft, clearSupplierDraft, type SupplierInvoiceFormHandle } from '../components/forms/SupplierInvoiceForm'
 import { printPdf } from '../utils/printPdf'
 import { applyDiscount } from '../db/discount'
@@ -163,6 +165,7 @@ export default function Suppliers() {
   const [filterTo,    setFilterTo]    = useState('')
   const [amtMin,      setAmtMin]      = useState('')
   const [amtMax,      setAmtMax]      = useState('')
+  const [debtFilter,  setDebtFilter]  = useState<'all' | 'debt' | 'paid'>('all')
 
   /* modals */
   const [detailsSup, setDetailsSup] = useState<SupplierRecord | null>(null)
@@ -199,11 +202,16 @@ export default function Suppliers() {
     if (filterTo)    result = result.filter(s => s.purchaseDate <= filterTo)
     if (amtMin)      result = result.filter(s => s.total >= Number(amtMin))
     if (amtMax)      result = result.filter(s => s.total <= Number(amtMax))
+    if (debtFilter === 'debt') result = result.filter(s => s.amountRemaining > 0.001)
+    if (debtFilter === 'paid') result = result.filter(s => s.amountRemaining <= 0.001)
     return result
-  }, [supplierInvoices, search, phoneSearch, filterFrom, filterTo, amtMin, amtMax, fuse])
+  }, [supplierInvoices, search, phoneSearch, filterFrom, filterTo, amtMin, amtMax, debtFilter, fuse])
 
-  const hasFilters   = !!search.trim() || !!phoneSearch || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
-  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('') }
+  const hasFilters   = !!search.trim() || !!phoneSearch || !!filterFrom || !!filterTo || !!amtMin || !!amtMax || debtFilter !== 'all'
+  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax(''); setDebtFilter('all') }
+
+  /* أسماء دليل الموردين للـ autocomplete (كل الموردين المسجّلين، لا من ظهر بفاتورة فقط) */
+  const supplierNames = useMemo(() => suppliers.map(s => s.name), [suppliers])
 
   /* ════════════════════════════════════════
      Suppliers list helpers
@@ -380,15 +388,14 @@ export default function Suppliers() {
       )}
 
       {/* ════ Suppliers List ════ */}
-      <div className="mi-card">
-        <div className="mi-parts-header">
-          <h2 className="mi-section-title">قائمة الموردين</h2>
-          {!showSupForm && (
-            <button className="btn btn-primary" onClick={() => { setEditingSup(null); setShowSupForm(true) }}>
-              + إضافة مورد جديد
-            </button>
-          )}
-        </div>
+      <CollapsibleCard
+        title="قائمة الموردين"
+        headerRight={!showSupForm && (
+          <button className="btn btn-primary" onClick={() => { setEditingSup(null); setShowSupForm(true) }}>
+            + إضافة مورد جديد
+          </button>
+        )}
+      >
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
@@ -418,7 +425,7 @@ export default function Suppliers() {
             </tbody>
           </table>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ Add Invoice Form (inline — نموذج الإضافة المشترك) ════ */}
       {showInvForm && (
@@ -452,20 +459,29 @@ export default function Suppliers() {
       )}
 
       {/* ════ Supplier invoices list ════ */}
-      <div className="mi-card">
-        <div className="mi-parts-header">
-          <h2 className="mi-section-title">فواتير الموردين</h2>
-          {!showForm && (
-            <button className="btn btn-primary" onClick={openInvForm}>
-              + إضافة فاتورة شراء
+      <CollapsibleCard
+        title="فواتير الموردين"
+        headerRight={!showForm && (
+          <button className="btn btn-primary" onClick={openInvForm}>
+            + إضافة فاتورة شراء
+          </button>
+        )}
+      >
+        {/* فلتر دين / مدفوع */}
+        <div className="pd-type-tabs" style={{ marginBottom: '0.75rem' }}>
+          {([['all', 'الكل'], ['debt', 'دين'], ['paid', 'مدفوع']] as [typeof debtFilter, string][]).map(([val, label]) => (
+            <button key={val}
+              className={`pd-tab${debtFilter === val ? ' pd-tab-active' : ''}`}
+              onClick={() => setDebtFilter(val)}>
+              {label}
             </button>
-          )}
+          ))}
         </div>
 
         <div className="mi-filters pd-filter-bar">
           <div className="mi-search-wrap">
-            <input type="text" className="mi-search-input" placeholder="🔍  بحث باسم المورد..."
-              value={search} onChange={e => setSearch(e.target.value)} />
+            <NameAutocomplete value={search} onChange={setSearch} options={supplierNames}
+              placeholder="🔍  بحث باسم المورد..." />
           </div>
           <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
             <input type="text" className="mi-search-input" placeholder="📞  بحث برقم الهاتف..."
@@ -548,7 +564,7 @@ export default function Suppliers() {
             </tbody>
           </table>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ Invoice Details Modal ════ */}
       {detailsSup && (

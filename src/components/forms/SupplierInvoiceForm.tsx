@@ -1,6 +1,7 @@
-import { useState, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useState, useEffect, forwardRef, useImperativeHandle, useMemo } from 'react'
 import { useGarage } from '../../store/GarageContext'
 import type { SupplierRecord, DiscountType } from '../../store/GarageContext'
+import NameAutocomplete from '../NameAutocomplete'
 import { applyDiscount } from '../../db/discount'
 import { dbService } from '../../services/db'
 import { showError } from '../../utils/notify'
@@ -107,6 +108,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
   const updatePart = (id: number, field: keyof FormPart, value: string | number) =>
     setParts(prev => prev.map(p => p.id !== id ? p : { ...p, [field]: value }))
 
+  const supplierNames = useMemo(() => suppliers.map(s => s.name), [suppliers])
   const selectSupplier = (name: string) => {
     const found = suppliers.find(s => s.name === name)
     setForm(prev => ({ ...prev, supplierName: name, phone: found?.phone ?? '' }))
@@ -174,12 +176,13 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
       <div className="mi-form-grid">
         <label className="mi-field">
           <span>اسم المورد <span className="mi-required">*</span></span>
-          <select value={form.supplierName}
-            onChange={e => selectSupplier(e.target.value)}
-            className={'pay-select' + errCls(submitAttempted && !!supplierErr)}>
-            <option value="">— اختر المورد —</option>
-            {suppliers.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
-          </select>
+          <NameAutocomplete
+            value={form.supplierName}
+            onChange={selectSupplier}
+            options={supplierNames}
+            placeholder="ابحث أو اختر المورد..."
+            inputClassName={submitAttempted && !!supplierErr ? 'mi-input-err' : ''}
+          />
           {showErr(supplierErr)}
         </label>
         <label className="mi-field">

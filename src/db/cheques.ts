@@ -104,10 +104,14 @@ export function getAllCheques(filters: ChequeFilters = {}): ChequeRow[] {
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : ''
 
   const rows = db.prepare(`
-    SELECT source, party_name, cheque_number, bank_name, amount, issue_date, cash_date,
+    SELECT source, party_name, party_phone, invoice_number,
+           invoice_date, invoice_total, car_plate, car_type, car_color, date_released,
+           cheque_number, bank_name, amount, issue_date, cash_date,
            CAST(ROUND(julianday(cash_date) - julianday(date('now', 'localtime'))) AS INTEGER) AS days_remaining
     FROM (
-      SELECT 'maintenance' AS source, mi.customer_name AS party_name,
+      SELECT 'maintenance' AS source, mi.customer_name AS party_name, mi.customer_phone AS party_phone,
+             mi.invoice_number, mi.date_received AS invoice_date, mi.total_amount AS invoice_total,
+             mi.car_plate, mi.car_type, mi.car_color, mi.date_released,
              pc.cheque_number, pc.bank_name, p.amount, pc.issue_date, pc.cash_date
         FROM payment_cheque pc
         JOIN payments p ON p.id = pc.payment_id AND p.invoice_type = 'maintenance'
@@ -115,7 +119,9 @@ export function getAllCheques(filters: ChequeFilters = {}): ChequeRow[] {
 
       UNION ALL
 
-      SELECT 'direct_sale' AS source, ds.customer_name AS party_name,
+      SELECT 'direct_sale' AS source, ds.customer_name AS party_name, ds.customer_phone AS party_phone,
+             ds.invoice_number, ds.sale_date AS invoice_date, ds.total_amount AS invoice_total,
+             NULL AS car_plate, NULL AS car_type, NULL AS car_color, NULL AS date_released,
              pc.cheque_number, pc.bank_name, p.amount, pc.issue_date, pc.cash_date
         FROM payment_cheque pc
         JOIN payments p ON p.id = pc.payment_id AND p.invoice_type = 'direct_sale'
@@ -125,6 +131,11 @@ export function getAllCheques(filters: ChequeFilters = {}): ChequeRow[] {
 
       SELECT CASE dp.invoice_type WHEN 'maintenance' THEN 'maintenance' ELSE 'direct_sale' END AS source,
              COALESCE(mi2.customer_name, ds2.customer_name) AS party_name,
+             COALESCE(mi2.customer_phone, ds2.customer_phone) AS party_phone,
+             COALESCE(mi2.invoice_number, ds2.invoice_number) AS invoice_number,
+             COALESCE(mi2.date_received, ds2.sale_date) AS invoice_date,
+             COALESCE(mi2.total_amount, ds2.total_amount) AS invoice_total,
+             mi2.car_plate, mi2.car_type, mi2.car_color, mi2.date_released,
              dc.cheque_number, dc.bank_name, dp.amount, dc.issue_date, dc.cash_date
         FROM debt_payment_cheque dc
         JOIN debt_payments dp ON dp.id = dc.payment_id
@@ -133,7 +144,9 @@ export function getAllCheques(filters: ChequeFilters = {}): ChequeRow[] {
 
       UNION ALL
 
-      SELECT 'supplier' AS source, si.supplier_name AS party_name,
+      SELECT 'supplier' AS source, si.supplier_name AS party_name, si.supplier_phone AS party_phone,
+             si.invoice_number, si.purchase_date AS invoice_date, si.total_amount AS invoice_total,
+             NULL AS car_plate, NULL AS car_type, NULL AS car_color, NULL AS date_released,
              spc.cheque_number, spc.bank_name, sp.amount, spc.issue_date, spc.cash_date
         FROM supplier_payment_cheque spc
         JOIN supplier_payments sp ON sp.id = spc.payment_id
@@ -141,7 +154,9 @@ export function getAllCheques(filters: ChequeFilters = {}): ChequeRow[] {
 
       UNION ALL
 
-      SELECT 'supplier_debt' AS source, si2.supplier_name AS party_name,
+      SELECT 'supplier_debt' AS source, si2.supplier_name AS party_name, si2.supplier_phone AS party_phone,
+             si2.invoice_number, si2.purchase_date AS invoice_date, si2.total_amount AS invoice_total,
+             NULL AS car_plate, NULL AS car_type, NULL AS car_color, NULL AS date_released,
              sdc.cheque_number, sdc.bank_name, sdp.amount, sdc.issue_date, sdc.cash_date
         FROM supplier_debt_cheque sdc
         JOIN supplier_debt_payments sdp ON sdp.id = sdc.payment_id

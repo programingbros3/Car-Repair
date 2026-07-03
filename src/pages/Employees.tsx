@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from 'react'
 import { useGarage } from '../store/GarageContext'
 import type { Employee, SalaryRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import CollapsibleCard from '../components/CollapsibleCard'
 import SalaryForm, { type SalaryFormHandle } from '../components/forms/SalaryForm'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
@@ -226,15 +227,14 @@ export default function Employees() {
       )}
 
       {/* ════ Employees List ════ */}
-      <div className="mi-card">
-        <div className="mi-parts-header">
-          <h2 className="mi-section-title">قائمة الموظفين</h2>
-          {!showEmpForm && (
-            <button className="btn btn-primary" onClick={() => { setEditingEmp(null); setShowEmpForm(true) }}>
-              + إضافة موظف جديد
-            </button>
-          )}
-        </div>
+      <CollapsibleCard
+        title="قائمة الموظفين"
+        headerRight={!showEmpForm && (
+          <button className="btn btn-primary" onClick={() => { setEditingEmp(null); setShowEmpForm(true) }}>
+            + إضافة موظف جديد
+          </button>
+        )}
+      >
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
@@ -265,7 +265,7 @@ export default function Employees() {
             </tbody>
           </table>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ Salary Add Form (inline) ════ */}
       {showSalaryForm && !editingSalary && (
@@ -299,7 +299,14 @@ export default function Employees() {
       )}
 
       {/* ════ Salary Records List ════ */}
-      <div className="mi-card">
+      <CollapsibleCard
+        title="سجل الرواتب"
+        headerRight={!showSalaryForm && (
+          <button className="btn btn-primary" onClick={() => { setEditingSalary(null); setShowSalaryForm(true) }}>
+            + تسجيل راتب
+          </button>
+        )}
+      >
         <div className="stat-card" style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           background: 'transparent', boxShadow: 'none', borderRadius: 0, padding: 0,
@@ -308,14 +315,6 @@ export default function Employees() {
         }}>
           <span className="stat-label">إجمالي الرواتب المدفوعة (الصافي)</span>
           <span className="stat-value outgoing">{totalSalaries.toLocaleString('en-US')} ₪</span>
-        </div>
-        <div className="mi-parts-header">
-          <h2 className="mi-section-title">سجل الرواتب</h2>
-          {!showSalaryForm && (
-            <button className="btn btn-primary" onClick={() => { setEditingSalary(null); setShowSalaryForm(true) }}>
-              + تسجيل راتب
-            </button>
-          )}
         </div>
         <div className="mi-filters">
           <div className="mi-search-wrap">
@@ -379,7 +378,7 @@ export default function Employees() {
             </tbody>
           </table>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ Employee Details Modal ════ */}
       {detailsEmp && (

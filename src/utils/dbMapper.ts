@@ -595,6 +595,14 @@ export function dbRowToCheque(r: ChequeRow): ChequeRecord {
   return {
     ...dbRowToUpcomingCheque(r),
     issueDate: r.issue_date,
+    invoiceNumber: r.invoice_number,
+    partyPhone: r.party_phone,
+    invoiceDate: r.invoice_date,
+    invoiceTotal: r.invoice_total,
+    carPlate: r.car_plate,
+    carType: r.car_type,
+    carColor: r.car_color,
+    dateReleased: r.date_released,
   }
 }
 

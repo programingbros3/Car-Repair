@@ -3,6 +3,7 @@ import type { ChequeRecord, UpcomingChequeSource } from '../store/GarageContext'
 import type { ChequeFilters } from '../db/types'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
+import { printPdf } from '../utils/printPdf'
 
 /* ════════════════════════════════════════
    صفحة الشيكات — عرض كل الشيكات التي دخلت البرنامج على الإطلاق
@@ -25,6 +26,51 @@ function dueStatus(days: number): { label: string; cls: string } {
   return { label: 'قادم', cls: 'mi-badge-green' }
 }
 
+/* تفاصيل الشيك + العملية المصدر — تُبنى مرة واحدة وتُعرض في المودال والطباعة بلا تكرار.
+   كل حقل يُعرض فقط عند توفّره لمصدره (لا حقول وهمية). */
+function chequeDetailRows(c: ChequeRecord): { label: string; value: string }[] {
+  const phone = c.partyPhone && c.partyPhone !== '0000' ? c.partyPhone : 'غير معروف'
+  const rows: { label: string; value: string }[] = []
+
+  if (c.source === 'maintenance') {
+    rows.push({ label: 'اسم الزبون', value: c.partyName })
+    rows.push({ label: 'رقم الهاتف', value: phone })
+    if (c.carPlate)     rows.push({ label: 'نمرة السيارة', value: c.carPlate })
+    if (c.carType)      rows.push({ label: 'نوع السيارة', value: c.carType })
+    if (c.carColor)     rows.push({ label: 'لون السيارة', value: c.carColor })
+    if (c.invoiceDate)  rows.push({ label: 'تاريخ الاستلام', value: c.invoiceDate })
+    if (c.dateReleased) rows.push({ label: 'تاريخ التسليم', value: c.dateReleased })
+  } else if (c.source === 'direct_sale') {
+    rows.push({ label: 'اسم الزبون', value: c.partyName })
+    rows.push({ label: 'رقم الهاتف', value: phone })
+    if (c.invoiceDate) rows.push({ label: 'تاريخ البيع', value: c.invoiceDate })
+  } else {
+    rows.push({ label: 'اسم المورد', value: c.partyName })
+    rows.push({ label: 'رقم الهاتف', value: phone })
+    if (c.invoiceDate) rows.push({ label: 'تاريخ الشراء', value: c.invoiceDate })
+  }
+
+  rows.push({ label: 'رقم الفاتورة', value: c.invoiceNumber || '—' })
+  if (c.invoiceTotal != null) rows.push({ label: 'إجمالي الفاتورة', value: `${fmt(c.invoiceTotal)} ₪` })
+
+  rows.push({ label: 'نوع العملية', value: SOURCE_LABELS[c.source] })
+  rows.push({ label: 'رقم الشيك', value: c.chequeNumber || '—' })
+  rows.push({ label: 'اسم البنك', value: c.bankName || '—' })
+  rows.push({ label: 'تاريخ الإصدار', value: c.issueDate || '—' })
+  rows.push({ label: 'تاريخ الصرف', value: c.cashDate })
+  rows.push({ label: 'مبلغ الشيك', value: `${fmt(c.amount)} ₪` })
+  rows.push({ label: 'حالة الاستحقاق', value: dueStatus(c.daysRemaining).label })
+  return rows
+}
+
+function printCheque(c: ChequeRecord): void {
+  const body = `
+    <div class="detail-grid">
+      ${chequeDetailRows(c).map(r => `<div class="detail-item"><label>${r.label}</label><span>${r.value}</span></div>`).join('')}
+    </div>`
+  printPdf('إيصال شيك', body)
+}
+
 export default function Cheques() {
   /* ── Filters ── */
   const [chequeNumber, setChequeNumber] = useState('')
@@ -35,6 +81,7 @@ export default function Cheques() {
   const [amtMax,       setAmtMax]       = useState('')
 
   const [rows, setRows] = useState<ChequeRecord[]>([])
+  const [detailsCheque, setDetailsCheque] = useState<ChequeRecord | null>(null)
 
   /* ── جلب الشيكات من الـ backend مع الفلاتر (SQL) ── */
   useEffect(() => {
@@ -130,16 +177,18 @@ export default function Cheques() {
                 <th>الطرف</th>
                 <th>نوع العملية</th>
                 <th>حالة الاستحقاق</th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={8} className="mi-empty-row">لا توجد شيكات تطابق البحث</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">لا توجد شيكات تطابق البحث</td></tr>
               ) : rows.map((c, i) => {
                 const due = dueStatus(c.daysRemaining)
                 return (
                   <tr key={`${c.source}-${c.chequeNumber}-${c.cashDate}-${i}`}
-                    className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                    className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                    onClick={() => setDetailsCheque(c)}>
                     <td>{c.chequeNumber || '—'}</td>
                     <td>{c.bankName || '—'}</td>
                     <td>{c.issueDate || '—'}</td>
@@ -148,13 +197,46 @@ export default function Cheques() {
                     <td>{c.partyName}</td>
                     <td><span className={SOURCE_CLS[c.source]}>{SOURCE_LABELS[c.source]}</span></td>
                     <td><span className={due.cls}>{due.label}</span></td>
+                    <td>
+                      <div className="mi-actions" onClick={e => e.stopPropagation()}>
+                        <button className="btn btn-sm-outline" onClick={() => setDetailsCheque(c)}>تفاصيل</button>
+                        <button className="btn btn-secondary btn-sm-outline" onClick={() => printCheque(c)}>طباعة</button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
         </div>
+        <p className="mi-row-hint">اضغط على أي صف لعرض تفاصيل الشيك والعملية المصدر</p>
       </div>
+
+      {/* ════ Details Modal ════ */}
+      {detailsCheque && (
+        <div className="mi-modal-overlay" onClick={() => setDetailsCheque(null)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تفاصيل الشيك</h3>
+              <button className="mi-modal-close" onClick={() => setDetailsCheque(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid">
+                {chequeDetailRows(detailsCheque).map((r, idx) => (
+                  <div className="mi-detail-item" key={idx}>
+                    <span className="mi-detail-label">{r.label}</span>
+                    <span>{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-secondary" onClick={() => printCheque(detailsCheque)}>طباعة</button>
+              <button className="btn btn-ghost" onClick={() => setDetailsCheque(null)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

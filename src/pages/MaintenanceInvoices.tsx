@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage, CarRecord, PayMethod, PaymentRow, WarrantyPeriodUnit, DiscountType } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import CollapsibleCard from '../components/CollapsibleCard'
 import MaintenanceForm, { hasMaintenanceDraft, clearMaintenanceDraft, type MaintenanceFormHandle } from '../components/forms/MaintenanceForm'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
@@ -441,8 +442,7 @@ export default function MaintenanceInvoices() {
       )}
 
       {/* ════ Section 1: قيد الصيانة ════ */}
-      <div className="mi-card">
-        <h2 className="mi-section-title">سيارات قيد الصيانة</h2>
+      <CollapsibleCard title="سيارات قيد الصيانة">
         {renderFilters(ipSearch, setIpSearch, ipPhone, setIpPhone, ipPlate, setIpPlate, ipFrom, setIpFrom, ipTo, setIpTo, ipAmtMin, setIpAmtMin, ipAmtMax, setIpAmtMax, hasIpFilters, clearIpFilters)}
         <div className="mi-table-wrap">
           <table className="mi-table">
@@ -480,13 +480,12 @@ export default function MaintenanceInvoices() {
           </table>
         </div>
         {!showForm && <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>}
-      </div>
+      </CollapsibleCard>
 
       <hr className="mi-section-divider" />
 
       {/* ════ Section 2: تم التسليم ════ */}
-      <div className="mi-card">
-        <h2 className="mi-section-title">تم التسليم</h2>
+      <CollapsibleCard title="تم التسليم">
         {renderFilters(dlSearch, setDlSearch, dlPhone, setDlPhone, dlPlate, setDlPlate, dlFrom, setDlFrom, dlTo, setDlTo, dlAmtMin, setDlAmtMin, dlAmtMax, setDlAmtMax, hasDlFilters, clearDlFilters)}
         <div className="mi-table-wrap">
           <table className="mi-table">
@@ -522,7 +521,7 @@ export default function MaintenanceInvoices() {
             </tbody>
           </table>
         </div>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ Details Modal ════ */}
       {detailsCar && (

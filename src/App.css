@@ -663,6 +663,66 @@
 }
 .mi-search-input:focus { border-color: #3498DB; background: #fff; }
 
+/* ── NameAutocomplete (قائمة أسماء الموردين/الموظفين المنسدلة) ── */
+.name-ac-wrap { position: relative; width: 100%; }
+.name-ac-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  margin: 3px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #d5dde5;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  max-height: 220px;
+  overflow-y: auto;
+}
+.name-ac-item {
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  direction: rtl;
+}
+.name-ac-item:hover { background: #eef6f0; color: #1a7a45; }
+
+/* ── CollapsibleCard (أقسام قابلة للطي) ── */
+.mi-collapse-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.mi-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: right;
+  color: inherit;
+  flex: 1;
+  min-width: 0;
+}
+.mi-collapse-arrow {
+  font-size: 0.9rem;
+  color: #2ECC71;
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+.mi-collapse-body {
+  margin-top: 1rem;
+}
+
 .mi-date-range {
   display: flex;
   align-items: flex-end;

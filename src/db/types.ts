@@ -361,6 +361,20 @@ export interface MonthlyReport {
   total_out: number
   net: number
   days: MonthlyReportDay[]
+  // ── تفصيل مالي كامل للفترة (مجمّع من نفس cash_ledger + الجداول المصدر) ──
+  maintenance_income: number       // دخل الصيانة
+  direct_sale_income: number       // دخل البيع المباشر
+  daily_expenses: number           // إجمالي المصاريف اليومية
+  salaries: number                 // إجمالي الرواتب المدفوعة (الصافي)
+  supplier_payments: number        // إجمالي المدفوع للموردين (شراء + سداد ديون)
+  debt_collected: number           // إجمالي الديون المُحصَّلة من الزبائن
+  new_debts: number                // ديون جديدة من فواتير أُنشئت في الفترة (المتبقّي الحالي)
+  maintenance_count: number        // عدد فواتير الصيانة
+  direct_sale_count: number        // عدد فواتير البيع المباشر
+  purchase_count: number           // عدد فواتير المشتريات (موردين)
+  invoice_discounts: number        // خصومات الفواتير (صيانة + بيع مباشر)
+  settlement_discounts: number     // خصومات التسوية عند الدفع
+  warranties_count: number         // عدد الكفالات الجديدة المُصدَرة
 }
 
 export interface DebtReport {
@@ -555,6 +569,15 @@ export interface UpcomingChequeRow {
 
 export interface ChequeRow extends UpcomingChequeRow {
   issue_date: string
+  // تفاصيل العملية المصدر (للمودال والطباعة) — تُسحب عبر JOIN من جدول الفاتورة المصدر
+  invoice_number: string | null
+  party_phone: string | null
+  invoice_date: string | null          // date_received / sale_date / purchase_date حسب المصدر
+  invoice_total: number | null
+  car_plate: string | null             // صيانة فقط
+  car_type: string | null              // صيانة فقط
+  car_color: string | null             // صيانة فقط
+  date_released: string | null         // صيانة فقط (تاريخ التسليم)
 }
 
 export interface ChequeFilters {

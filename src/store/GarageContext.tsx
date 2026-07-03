@@ -140,8 +140,18 @@ export type UpcomingCheque = {
 }
 
 /* ── Cheques (كل الشيكات — صفحة الشيكات) — قراءة فقط ── */
-// نفس UpcomingCheque + تاريخ الإصدار (issueDate)
-export type ChequeRecord = UpcomingCheque & { issueDate: string }
+// نفس UpcomingCheque + تاريخ الإصدار (issueDate) + تفاصيل العملية المصدر (للمودال/الطباعة)
+export type ChequeRecord = UpcomingCheque & {
+  issueDate: string
+  invoiceNumber: string | null
+  partyPhone: string | null
+  invoiceDate: string | null
+  invoiceTotal: number | null
+  carPlate: string | null
+  carType: string | null
+  carColor: string | null
+  dateReleased: string | null
+}
 
 /* ── Cross-screen linked operation ── */
 export type LinkedOp = {

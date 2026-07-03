@@ -88,6 +88,79 @@ export function getMonthlyReport(month: number, year: number): MonthlyReport {
   const total_in  = rows.reduce((s, r) => s + r.total_in,  0)
   const total_out = rows.reduce((s, r) => s + r.total_out, 0)
 
+  const like = `${prefix}%`
+
+  // ── تفصيل حسب reference_type من نفس cash_ledger المجمّع للشهر ──
+  const byType = db.prepare(`
+    SELECT reference_type,
+           COALESCE(SUM(amount_in),  0) AS sin,
+           COALESCE(SUM(amount_out), 0) AS sout
+    FROM cash_ledger
+    WHERE transaction_date LIKE ?
+    GROUP BY reference_type
+  `).all(like) as { reference_type: string; sin: number; sout: number }[]
+
+  const sin  = (t: string) => byType.find(r => r.reference_type === t)?.sin  ?? 0
+  const sout = (t: string) => byType.find(r => r.reference_type === t)?.sout ?? 0
+
+  const maintenance_income = sin(REF.MAINTENANCE_PAYMENT) + sin(REF.MAINTENANCE_RELEASE)
+  const direct_sale_income = sin(REF.DIRECT_SALE_PAYMENT)
+  const debt_collected     = sin(REF.DEBT_CUSTOMER)
+  const supplier_payments  = sout(REF.SUPPLIER_PAYMENT) + sout(REF.SUPPLIER_DEBT)
+  const daily_expenses     = sout(REF.DAILY_EXPENSE)
+  const salaries           = sout(REF.SALARY)
+
+  // ── عدد الفواتير المُنشأة في الفترة (حسب تاريخ الفاتورة) ──
+  const countIn = (table: string, dateCol: string) =>
+    (db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE ${dateCol} LIKE ?`).get(like) as { c: number }).c
+
+  const maintenance_count = countIn('maintenance_invoices', 'date_received')
+  const direct_sale_count = countIn('direct_sale_invoices', 'sale_date')
+  const purchase_count    = countIn('supplier_invoices',    'purchase_date')
+
+  // ── ديون جديدة من فواتير أُنشئت في الفترة (المتبقّي الحالي لتلك الفواتير) ──
+  const new_debts = (db.prepare(`
+    SELECT COALESCE(SUM(amount_remaining), 0) AS s FROM (
+      SELECT amount_remaining FROM maintenance_invoices WHERE date_received LIKE ? AND amount_remaining > 0
+      UNION ALL
+      SELECT amount_remaining FROM direct_sale_invoices WHERE sale_date LIKE ? AND amount_remaining > 0
+      UNION ALL
+      SELECT amount_remaining FROM supplier_invoices WHERE purchase_date LIKE ? AND amount_remaining > 0
+    )
+  `).get(like, like, like) as { s: number }).s
+
+  // ── خصومات الفواتير الممنوحة (صيانة + بيع مباشر): مجموع البنود قبل الخصم − الإجمالي بعد الخصم ──
+  const invoice_discounts = (db.prepare(`
+    SELECT COALESCE(SUM(sub - total_amount), 0) AS s FROM (
+      SELECT mi.total_amount AS total_amount,
+             (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_items
+                WHERE invoice_id = mi.id AND invoice_type = 'maintenance') AS sub
+        FROM maintenance_invoices mi
+       WHERE mi.date_received LIKE ? AND mi.discount_type IS NOT NULL
+      UNION ALL
+      SELECT ds.total_amount AS total_amount,
+             (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_items
+                WHERE invoice_id = ds.id AND invoice_type = 'direct_sale') AS sub
+        FROM direct_sale_invoices ds
+       WHERE ds.sale_date LIKE ? AND ds.discount_type IS NOT NULL
+    )
+  `).get(like, like) as { s: number }).s
+
+  // ── خصومات التسوية عند الدفع (كل جداول الدفعات الأربعة، حسب تاريخ الدفعة) ──
+  const settlement_discounts = (db.prepare(`
+    SELECT COALESCE(SUM(sd), 0) AS s FROM (
+      SELECT settlement_discount AS sd FROM payments             WHERE payment_date LIKE ?
+      UNION ALL SELECT settlement_discount FROM debt_payments          WHERE payment_date LIKE ?
+      UNION ALL SELECT settlement_discount FROM supplier_payments      WHERE payment_date LIKE ?
+      UNION ALL SELECT settlement_discount FROM supplier_debt_payments WHERE payment_date LIKE ?
+    )
+  `).get(like, like, like, like) as { s: number }).s
+
+  // ── عدد الكفالات الجديدة المُصدَرة في الفترة (حسب تاريخ بداية الكفالة) ──
+  const warranties_count = (db.prepare(
+    `SELECT COUNT(*) AS c FROM warranties WHERE start_date LIKE ?`
+  ).get(like) as { c: number }).c
+
   return {
     month,
     year,
@@ -95,6 +168,19 @@ export function getMonthlyReport(month: number, year: number): MonthlyReport {
     total_out,
     net: total_in - total_out,
     days: rows,
+    maintenance_income,
+    direct_sale_income,
+    daily_expenses,
+    salaries,
+    supplier_payments,
+    debt_collected,
+    new_debts,
+    maintenance_count,
+    direct_sale_count,
+    purchase_count,
+    invoice_discounts,
+    settlement_discounts,
+    warranties_count,
   }
 }
 

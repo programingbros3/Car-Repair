@@ -3,6 +3,7 @@ import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { WarrantyRecord, WarrantyPeriodUnit } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
+import CollapsibleCard from '../components/CollapsibleCard'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
@@ -308,8 +309,7 @@ export default function Warranties() {
 
       {/* ════ Section: Active warranties ════ */}
       {tab !== 'expired' && (
-        <div className="mi-card">
-          <h2 className="mi-section-title">الكفالات السارية ({fmt(activeWarranties.length)})</h2>
+        <CollapsibleCard title={`الكفالات السارية (${fmt(activeWarranties.length)})`}>
           <div className="mi-table-wrap">
             <table className="mi-table">
               <thead>
@@ -344,13 +344,12 @@ export default function Warranties() {
               </tbody>
             </table>
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* ════ Section: Expired warranties ════ */}
       {tab !== 'active' && (
-        <div className="mi-card">
-          <h2 className="mi-section-title">الكفالات المنتهية ({fmt(expiredWarranties.length)})</h2>
+        <CollapsibleCard title={`الكفالات المنتهية (${fmt(expiredWarranties.length)})`}>
           <div className="mi-table-wrap">
             <table className="mi-table">
               <thead>
@@ -385,7 +384,7 @@ export default function Warranties() {
               </tbody>
             </table>
           </div>
-        </div>
+        </CollapsibleCard>
       )}
 
       {/* ════ Details Modal ════ */}

@@ -4,6 +4,7 @@ import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { LedgerRow, CashAuditRow, CashSystemBreakdown } from '../db/types'
 import ConfirmDialog from '../components/ConfirmDialog'
+import CollapsibleCard from '../components/CollapsibleCard'
 
 /* ════════════════════════════════════════
    Types
@@ -55,6 +56,8 @@ const METHOD_COLORS: Record<string, string> = {
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const fmt      = (n: number) => Math.abs(n).toLocaleString('en-US')
+// للمجاميع/الفروق/الصافي القابلة للسالب فعلياً: يُظهر علامة السالب صراحةً (يبقى اللون أحمر)
+const fmtSigned = (n: number) => (n < 0 ? '−' : '') + fmt(n)
 
 // يستخرج طريقة الدفع من الملاحظة (صيغة: "وصف #N — cash")
 const extractMethod = (notes: string | null): string => {
@@ -317,7 +320,7 @@ export default function CashLedger() {
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>التاريخ</label><span>${rec.audit_date}</span></div>
-        <div class="detail-item"><label>إجمالي النظام</label><span class="mi-amount">${fmt(rec.system_total)} ₪</span></div>
+        <div class="detail-item"><label>إجمالي النظام</label><span class="mi-amount">${fmtSigned(rec.system_total)} ₪</span></div>
         <div class="detail-item"><label>المبلغ الفعلي</label><span class="mi-amount">${fmt(rec.actual_amount)} ₪</span></div>
         <div class="detail-item"><label>الفرق</label><span class="${diffCls}">${diffSign}${fmt(rec.difference)} ₪</span></div>
         <div class="detail-item"><label>الحالة</label><span>${statusTxt}</span></div>
@@ -422,7 +425,7 @@ export default function CashLedger() {
               <span key={it.label} style={{ fontSize: '0.75rem', color: it.value !== null ? it.color : '#aaa', fontWeight: 500 }}>
                 {it.label}:&nbsp;
                 <span style={{ fontWeight: 700 }}>
-                  {it.value === null ? '—' : `${it.signed && it.value > 0 ? '+' : it.signed && it.value < 0 ? '−' : ''}${fmt(it.value)} ₪`}
+                  {it.value === null ? '—' : `${it.value < 0 ? '−' : it.signed && it.value > 0 ? '+' : ''}${fmt(it.value)} ₪`}
                 </span>
               </span>
             ))}
@@ -435,7 +438,7 @@ export default function CashLedger() {
             <div className="stat-card">
               <span className="stat-label">إجمالي النظام ₪</span>
               <span className="stat-value" style={{ color: sysTotal >= 0 ? '#2ECC71' : '#E74C3C' }}>
-                {fmt(sysTotal)} ₪
+                {fmtSigned(sysTotal)} ₪
               </span>
               {breakdown([
                 { label: 'كاش',  color: '#2ECC71', value: sysCash  },
@@ -509,7 +512,7 @@ export default function CashLedger() {
             <tbody>
               <tr>
                 <td style={tdStyle}><span style={{ color: '#2ECC71', fontWeight: 600 }}>● كاش</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.cash)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.cash)} ₪</td>
                 <td style={tdStyle}>
                   <input type="number" min="0" step="0.01" className="mi-td-input"
                     style={{ width: '130px' }} placeholder="0.00"
@@ -521,7 +524,7 @@ export default function CashLedger() {
               </tr>
               <tr style={{ background: '#f8fafc' }}>
                 <td style={tdStyle}><span style={{ color: '#3498DB', fontWeight: 600 }}>● فيزا</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.visa)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.visa)} ₪</td>
                 <td style={tdStyle}>
                   <input type="number" min="0" step="0.01" className="mi-td-input"
                     style={{ width: '130px' }} placeholder="0.00"
@@ -533,7 +536,7 @@ export default function CashLedger() {
               </tr>
               <tr>
                 <td style={tdStyle}><span style={{ color: '#9B59B6', fontWeight: 600 }}>● شيك</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(sysBreakdown.cheque)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.cheque)} ₪</td>
                 <td style={tdStyle}>
                   <input type="number" min="0" step="0.01" className="mi-td-input"
                     style={{ width: '130px' }} placeholder="0.00"
@@ -546,7 +549,7 @@ export default function CashLedger() {
               <tr style={{ background: '#f1f5f9', fontWeight: 700 }}>
                 <td style={tdStyle}>الإجمالي</td>
                 <td style={{ ...tdStyle, color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
-                  {fmt(sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque)} ₪
+                  {fmtSigned(sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque)} ₪
                 </td>
                 <td style={{ ...tdStyle, color: '#555' }}>
                   {fmt((parseFloat(actualCash)||0) + (parseFloat(actualVisa)||0) + (parseFloat(actualCheck)||0))} ₪
@@ -580,14 +583,14 @@ export default function CashLedger() {
       </div>
 
       {/* ════ سجل العمليات ════ */}
-      <div className="mi-card">
-        <h2 className="mi-section-title">
+      <CollapsibleCard title={
+        <>
           سجل العمليات
           <span style={{ fontSize: '0.85rem', fontWeight: 400, color: '#888', marginRight: '0.5rem' }}>
             {selectedDate}
           </span>
-        </h2>
-
+        </>
+      }>
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
@@ -645,12 +648,10 @@ export default function CashLedger() {
           </table>
         </div>
         <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>
-      </div>
+      </CollapsibleCard>
 
       {/* ════ سجل الإحصاءات اليومية ════ */}
-      <div className="mi-card">
-        <h2 className="mi-section-title">سجل الإحصاءات اليومية</h2>
-
+      <CollapsibleCard title="سجل الإحصاءات اليومية">
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
@@ -672,9 +673,11 @@ export default function CashLedger() {
               ) : auditRecords.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد إحصاءات مسجّلة بعد</td></tr>
               ) : auditRecords.map((rec, i) => (
-                <tr key={rec.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
+                <tr key={rec.id}
+                  className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                  onClick={() => setSelectedDate(rec.audit_date)}>
                   <td>{rec.audit_date}</td>
-                  <td className="mi-amount">{fmt(rec.system_total)} ₪</td>
+                  <td className="mi-amount">{fmtSigned(rec.system_total)} ₪</td>
                   <td className="mi-amount">{fmt(rec.actual_cash  || 0)} ₪</td>
                   <td className="mi-amount">{fmt(rec.actual_visa  || 0)} ₪</td>
                   <td className="mi-amount">{fmt(rec.actual_check || 0)} ₪</td>
@@ -684,7 +687,7 @@ export default function CashLedger() {
                   </td>
                   <td>{auditBadge(rec.difference)}</td>
                   <td>
-                    <div className="mi-actions">
+                    <div className="mi-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn btn-secondary btn-sm-outline" onClick={() => handlePrintAudit(rec)}>طباعة</button>
                       <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEditAudit(rec)}>تعديل</button>
                       <button className="btn btn-danger-sm" onClick={() => setDeleteAudit(rec)}>حذف</button>
@@ -695,7 +698,8 @@ export default function CashLedger() {
             </tbody>
           </table>
         </div>
-      </div>
+        <p className="mi-row-hint">اضغط على أي صف لعرض إحصاء ذلك اليوم في البطاقات أعلاه</p>
+      </CollapsibleCard>
 
       {/* ════ Details Modal ════ */}
       {detailsTx && (
@@ -779,7 +783,7 @@ export default function CashLedger() {
                 <div className="mi-field mi-field-full">
                   <span>إجمالي النظام ₪</span>
                   <div style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontWeight: 600 }}>
-                    {fmt(editAudit.system_total)} ₪
+                    {fmtSigned(editAudit.system_total)} ₪
                   </div>
                 </div>
                 <label className="mi-field">
@@ -867,7 +871,7 @@ export default function CashLedger() {
                   ] as const).map(row => (
                     <tr key={row.label}>
                       <td style={tdStyle}><span style={{ color: row.color, fontWeight: 600 }}>● {row.label}</span></td>
-                      <td style={{ ...tdStyle, fontWeight: 600 }}>{fmt(row.sys)} ₪</td>
+                      <td style={{ ...tdStyle, fontWeight: 600 }}>{fmtSigned(row.sys)} ₪</td>
                       <td style={{ ...tdStyle, fontWeight: 600 }}>{fmt(row.act)} ₪</td>
                       <td style={{ ...tdStyle, fontWeight: 700, color: diffColor(row.diff) }}>
                         {row.diff > 0 ? '+' : row.diff < 0 ? '−' : ''}{fmt(row.diff)} ₪
@@ -876,7 +880,7 @@ export default function CashLedger() {
                   ))}
                   <tr style={{ background: '#f1f5f9', fontWeight: 700 }}>
                     <td style={tdStyle}>الإجمالي</td>
-                    <td style={tdStyle}>{fmt(diffModal.sysCash + diffModal.sysVisa + diffModal.sysCheck)} ₪</td>
+                    <td style={tdStyle}>{fmtSigned(diffModal.sysCash + diffModal.sysVisa + diffModal.sysCheck)} ₪</td>
                     <td style={tdStyle}>{fmt(diffModal.actCash + diffModal.actVisa + diffModal.actCheck)} ₪</td>
                     <td style={{ ...tdStyle, color: diffColor(diffModal.diffCash + diffModal.diffVisa + diffModal.diffCheck) }}>
                       {(() => { const d = diffModal.diffCash + diffModal.diffVisa + diffModal.diffCheck; return `${d > 0 ? '+' : d < 0 ? '−' : ''}${fmt(d)} ₪` })()}
