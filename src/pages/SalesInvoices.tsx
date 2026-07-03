@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow, CarRecord, SaleRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -164,6 +165,19 @@ export default function SalesInvoices() {
 
   const hasFilters = !!search.trim() || !!phoneSearch || !!plateSearch || typeFilter !== 'all' || statusFilter !== 'all'
     || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
+
+  /* ── Pagination ── */
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, phoneSearch, plateSearch, typeFilter, statusFilter, filterFrom, filterTo, amtMin, amtMax])
+
+  const paginatedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, currentPage, pageSize])
 
   const clearFilters = () => {
     setSearch(''); setPhoneSearch(''); setPlateSearch(''); setTypeFilter('all'); setStatusFilter('all')
@@ -345,9 +359,9 @@ export default function SalesInvoices() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {paginatedInvoices.length === 0 ? (
                 <tr><td colSpan={10} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
-              ) : filtered.map((inv, i) => (
+              ) : paginatedInvoices.map((inv, i) => (
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsInv(inv)}>
                   <td>{inv.invoiceNumber}</td>
@@ -378,6 +392,16 @@ export default function SalesInvoices() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filtered.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setCurrentPage(1)
+          }}
+        />
       </div>
 
       {/* ════ Details Modal ════ */}

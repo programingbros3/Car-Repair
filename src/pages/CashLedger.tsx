@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { LedgerRow, CashAuditRow, CashSystemBreakdown } from '../db/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
+import Pagination from '../components/Pagination'
 
 /* ════════════════════════════════════════
    Types
@@ -161,6 +162,27 @@ export default function CashLedger() {
   const [editCheck, setEditCheck]       = useState('')
   const [editSaving, setEditSaving]     = useState(false)
   const [deleteAudit, setDeleteAudit]   = useState<CashAuditRow | null>(null)
+
+  /* ── Pagination: Operations ── */
+  const [opsPage, setOpsPage] = useState(1)
+  const [opsPageSize, setOpsPageSize] = useState(10)
+
+  const paginatedRows = useMemo(() => {
+    const start = (opsPage - 1) * opsPageSize
+    return rows.slice(start, start + opsPageSize)
+  }, [rows, opsPage, opsPageSize])
+
+  // Reset ops page when date changes
+  useEffect(() => { setOpsPage(1) }, [selectedDate])
+
+  /* ── Pagination: Audit Records ── */
+  const [auditPage, setAuditPage] = useState(1)
+  const [auditPageSize, setAuditPageSize] = useState(10)
+
+  const paginatedAudits = useMemo(() => {
+    const start = (auditPage - 1) * auditPageSize
+    return auditRecords.slice(start, start + auditPageSize)
+  }, [auditRecords, auditPage, auditPageSize])
 
   /* ─── Load audit records ─── */
   const loadAudits = useCallback(() => {
@@ -606,9 +628,9 @@ export default function CashLedger() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={6} className="mi-empty-row">جارٍ تحميل الحركات...</td></tr>
-              ) : rows.length === 0 ? (
+              ) : paginatedRows.length === 0 ? (
                 <tr><td colSpan={6} className="mi-empty-row">لا توجد عمليات في هذا اليوم</td></tr>
-              ) : rows.map((tx, i) => (
+              ) : paginatedRows.map((tx, i) => (
                 <tr
                   key={tx.id}
                   className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
@@ -647,6 +669,13 @@ export default function CashLedger() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={opsPage}
+          totalItems={rows.length}
+          pageSize={opsPageSize}
+          onPageChange={setOpsPage}
+          onPageSizeChange={(size) => { setOpsPageSize(size); setOpsPage(1) }}
+        />
         <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>
       </CollapsibleCard>
 
@@ -670,9 +699,9 @@ export default function CashLedger() {
             <tbody>
               {auditsLoading ? (
                 <tr><td colSpan={9} className="mi-empty-row">جارٍ التحميل...</td></tr>
-              ) : auditRecords.length === 0 ? (
+              ) : paginatedAudits.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد إحصاءات مسجّلة بعد</td></tr>
-              ) : auditRecords.map((rec, i) => (
+              ) : paginatedAudits.map((rec, i) => (
                 <tr key={rec.id}
                   className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setSelectedDate(rec.audit_date)}>
@@ -698,6 +727,13 @@ export default function CashLedger() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={auditPage}
+          totalItems={auditRecords.length}
+          pageSize={auditPageSize}
+          onPageChange={setAuditPage}
+          onPageSizeChange={(size) => { setAuditPageSize(size); setAuditPage(1) }}
+        />
         <p className="mi-row-hint">اضغط على أي صف لعرض إحصاء ذلك اليوم في البطاقات أعلاه</p>
       </CollapsibleCard>
 

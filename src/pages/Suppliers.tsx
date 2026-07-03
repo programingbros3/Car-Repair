@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { Supplier, SupplierRecord, SupplierItem } from '../store/GarageContext'
@@ -6,6 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import NameAutocomplete from '../components/NameAutocomplete'
 import SupplierInvoiceForm, { hasSupplierDraft, clearSupplierDraft, type SupplierInvoiceFormHandle } from '../components/forms/SupplierInvoiceForm'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { applyDiscount } from '../db/discount'
 import { dbService } from '../services/db'
@@ -210,6 +211,28 @@ export default function Suppliers() {
   const hasFilters   = !!search.trim() || !!phoneSearch || !!filterFrom || !!filterTo || !!amtMin || !!amtMax || debtFilter !== 'all'
   const clearFilters = () => { setSearch(''); setPhoneSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax(''); setDebtFilter('all') }
 
+  /* ── Pagination: Supplier Directory ── */
+  const [supDirPage, setSupDirPage] = useState(1)
+  const [supDirPageSize, setSupDirPageSize] = useState(10)
+
+  const paginatedSupplierDir = useMemo(() => {
+    const start = (supDirPage - 1) * supDirPageSize
+    return suppliers.slice(start, start + supDirPageSize)
+  }, [suppliers, supDirPage, supDirPageSize])
+
+  /* ── Pagination: Supplier Invoices ── */
+  const [invPage, setInvPage] = useState(1)
+  const [invPageSize, setInvPageSize] = useState(10)
+
+  useEffect(() => {
+    setInvPage(1)
+  }, [search, phoneSearch, filterFrom, filterTo, amtMin, amtMax, debtFilter])
+
+  const paginatedInvoices = useMemo(() => {
+    const start = (invPage - 1) * invPageSize
+    return filteredSuppliers.slice(start, start + invPageSize)
+  }, [filteredSuppliers, invPage, invPageSize])
+
   /* أسماء دليل الموردين للـ autocomplete (كل الموردين المسجّلين، لا من ظهر بفاتورة فقط) */
   const supplierNames = useMemo(() => suppliers.map(s => s.name), [suppliers])
 
@@ -402,9 +425,9 @@ export default function Suppliers() {
               <tr><th>الاسم</th><th>رقم الهاتف</th><th>ملاحظات</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
-              {suppliers.length === 0 ? (
+              {paginatedSupplierDir.length === 0 ? (
                 <tr><td colSpan={4} className="mi-empty-row">لا يوجد موردون</td></tr>
-              ) : suppliers.map((sup, i) => (
+              ) : paginatedSupplierDir.map((sup, i) => (
                 <tr key={sup.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                   <td>{sup.name}</td>
                   <td>
@@ -425,6 +448,13 @@ export default function Suppliers() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={supDirPage}
+          totalItems={suppliers.length}
+          pageSize={supDirPageSize}
+          onPageChange={setSupDirPage}
+          onPageSizeChange={(size) => { setSupDirPageSize(size); setSupDirPage(1) }}
+        />
       </CollapsibleCard>
 
       {/* ════ Add Invoice Form (inline — نموذج الإضافة المشترك) ════ */}
@@ -530,9 +560,9 @@ export default function Suppliers() {
               </tr>
             </thead>
             <tbody>
-              {filteredSuppliers.length === 0 ? (
+              {paginatedInvoices.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
-              ) : filteredSuppliers.map((sup, i) => (
+              ) : paginatedInvoices.map((sup, i) => (
                 <tr key={sup.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsSup(sup)}>
                   <td>{sup.invoiceNumber || '—'}</td>
@@ -564,6 +594,13 @@ export default function Suppliers() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={invPage}
+          totalItems={filteredSuppliers.length}
+          pageSize={invPageSize}
+          onPageChange={setInvPage}
+          onPageSizeChange={(size) => { setInvPageSize(size); setInvPage(1) }}
+        />
       </CollapsibleCard>
 
       {/* ════ Invoice Details Modal ════ */}

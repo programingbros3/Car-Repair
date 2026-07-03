@@ -4,6 +4,7 @@ import { useGarage, CarRecord, PayMethod, PaymentRow, WarrantyPeriodUnit, Discou
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import MaintenanceForm, { hasMaintenanceDraft, clearMaintenanceDraft, type MaintenanceFormHandle } from '../components/forms/MaintenanceForm'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -214,6 +215,32 @@ export default function MaintenanceInvoices() {
   const hasDlFilters = !!(dlSearch || dlPhone || dlPlate || dlFrom || dlTo || dlAmtMin || dlAmtMax)
   const clearIpFilters = () => { setIpSearch(''); setIpPhone(''); setIpPlate(''); setIpFrom(''); setIpTo(''); setIpAmtMin(''); setIpAmtMax('') }
   const clearDlFilters = () => { setDlSearch(''); setDlPhone(''); setDlPlate(''); setDlFrom(''); setDlTo(''); setDlAmtMin(''); setDlAmtMax('') }
+
+  /* ── Pagination: In Progress ── */
+  const [ipPage, setIpPage] = useState(1)
+  const [ipPageSize, setIpPageSize] = useState(10)
+
+  useEffect(() => {
+    setIpPage(1)
+  }, [ipSearch, ipPhone, ipPlate, ipFrom, ipTo, ipAmtMin, ipAmtMax])
+
+  const paginatedInProgress = useMemo(() => {
+    const start = (ipPage - 1) * ipPageSize
+    return filteredInProgress.slice(start, start + ipPageSize)
+  }, [filteredInProgress, ipPage, ipPageSize])
+
+  /* ── Pagination: Delivered ── */
+  const [dlPage, setDlPage] = useState(1)
+  const [dlPageSize, setDlPageSize] = useState(10)
+
+  useEffect(() => {
+    setDlPage(1)
+  }, [dlSearch, dlPhone, dlPlate, dlFrom, dlTo, dlAmtMin, dlAmtMax])
+
+  const paginatedDelivered = useMemo(() => {
+    const start = (dlPage - 1) * dlPageSize
+    return filteredDelivered.slice(start, start + dlPageSize)
+  }, [filteredDelivered, dlPage, dlPageSize])
 
   /* إعدادات الضريبة (VAT) — تُحمَّل مرة واحدة؛ null افتراضياً فلا يظهر أي شيء متعلق بها */
   const [vat, setVat] = useState<VatSettings | null>(null)
@@ -453,9 +480,9 @@ export default function MaintenanceInvoices() {
               </tr>
             </thead>
             <tbody>
-              {filteredInProgress.length === 0 ? (
+              {paginatedInProgress.length === 0 ? (
                 <tr><td colSpan={10} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
-              ) : filteredInProgress.map((car, i) => (
+              ) : paginatedInProgress.map((car, i) => (
                 <tr key={car.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsCar(car) }}>
                   <td>{car.invoiceNumber || '—'}</td>
@@ -479,6 +506,16 @@ export default function MaintenanceInvoices() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={ipPage}
+          totalItems={filteredInProgress.length}
+          pageSize={ipPageSize}
+          onPageChange={setIpPage}
+          onPageSizeChange={(size) => {
+            setIpPageSize(size)
+            setIpPage(1)
+          }}
+        />
         {!showForm && <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>}
       </CollapsibleCard>
 
@@ -496,9 +533,9 @@ export default function MaintenanceInvoices() {
               </tr>
             </thead>
             <tbody>
-              {filteredDelivered.length === 0 ? (
+              {paginatedDelivered.length === 0 ? (
                 <tr><td colSpan={10} className="mi-empty-row">لا توجد سيارات تطابق البحث</td></tr>
-              ) : filteredDelivered.map((car, i) => (
+              ) : paginatedDelivered.map((car, i) => (
                 <tr key={car.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsCar(car) }}>
                   <td>{car.invoiceNumber || '—'}</td>
@@ -521,6 +558,16 @@ export default function MaintenanceInvoices() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={dlPage}
+          totalItems={filteredDelivered.length}
+          pageSize={dlPageSize}
+          onPageChange={setDlPage}
+          onPageSizeChange={(size) => {
+            setDlPageSize(size)
+            setDlPage(1)
+          }}
+        />
       </CollapsibleCard>
 
       {/* ════ Details Modal ════ */}

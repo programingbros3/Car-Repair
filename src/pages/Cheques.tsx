@@ -4,6 +4,7 @@ import type { ChequeFilters } from '../db/types'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { printPdf } from '../utils/printPdf'
+import Pagination from '../components/Pagination'
 
 /* ════════════════════════════════════════
    صفحة الشيكات — عرض كل الشيكات التي دخلت البرنامج على الإطلاق
@@ -110,6 +111,19 @@ export default function Cheques() {
 
   const total = useMemo(() => rows.reduce((s, r) => s + r.amount, 0), [rows])
 
+  /* ── Pagination ── */
+  const [chequePage, setChequePage] = useState(1)
+  const [chequePageSize, setChequePageSize] = useState(10)
+
+  useEffect(() => {
+    setChequePage(1)
+  }, [chequeNumber, bankName, filterFrom, filterTo, amtMin, amtMax])
+
+  const paginatedRows = useMemo(() => {
+    const start = (chequePage - 1) * chequePageSize
+    return rows.slice(start, start + chequePageSize)
+  }, [rows, chequePage, chequePageSize])
+
   /* ════════════════════════════════════════
      JSX
   ════════════════════════════════════════ */
@@ -181,9 +195,9 @@ export default function Cheques() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
+              {paginatedRows.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد شيكات تطابق البحث</td></tr>
-              ) : rows.map((c, i) => {
+              ) : paginatedRows.map((c, i) => {
                 const due = dueStatus(c.daysRemaining)
                 return (
                   <tr key={`${c.source}-${c.chequeNumber}-${c.cashDate}-${i}`}
@@ -209,6 +223,13 @@ export default function Cheques() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={chequePage}
+          totalItems={rows.length}
+          pageSize={chequePageSize}
+          onPageChange={setChequePage}
+          onPageSizeChange={(size) => { setChequePageSize(size); setChequePage(1) }}
+        />
         <p className="mi-row-hint">اضغط على أي صف لعرض تفاصيل الشيك والعملية المصدر</p>
       </div>
 

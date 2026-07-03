@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { DebtRecord, DebtType, CarRecord, SaleRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -192,6 +193,19 @@ export default function PendingDebts() {
   const totalRemaining = debts.reduce((s, d) => s + d.amountRemaining, 0)
   const debtCount      = debts.length
 
+  /* ── Pagination ── */
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, phoneSearch, plateSearch, typeFilter, amtMin, amtMax])
+
+  const paginatedDebts = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredDebts.slice(start, start + pageSize)
+  }, [filteredDebts, currentPage, pageSize])
+
   /* ── Payment modal ── */
   const openPay = (debt: DebtRecord) => {
     setPayDebt(debt); setPayDate(today()); setPayNotes('')
@@ -338,9 +352,9 @@ export default function PendingDebts() {
               </tr>
             </thead>
             <tbody>
-              {filteredDebts.length === 0 ? (
+              {paginatedDebts.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد ديون تطابق البحث</td></tr>
-              ) : filteredDebts.map((debt, i) => (
+              ) : paginatedDebts.map((debt, i) => (
                 <tr key={debt.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsDebt(debt)}>
                   <td>{debt.customerName}</td>
@@ -372,6 +386,16 @@ export default function PendingDebts() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredDebts.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setCurrentPage(1)
+          }}
+        />
       </div>
 
       {/* ════ Details Modal ════ */}

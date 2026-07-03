@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { WarrantyRecord, WarrantyPeriodUnit } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -76,6 +77,7 @@ export default function Warranties() {
   const [tab,         setTab]         = useState<'all' | 'active' | 'expired'>('all')
   const [filterFrom,  setFilterFrom]  = useState('')
   const [filterTo,    setFilterTo]    = useState('')
+  const [plateSearch, setPlateSearch] = useState('')
 
   /* ── Derived (end date + remaining) ── */
   type WithCalc = WarrantyRecord & { endDate: string; remaining: number }
@@ -102,16 +104,40 @@ export default function Warranties() {
     const q = search.trim()
     let result = q ? fuse.search(normalizeAr(q)).map(r => withCalc[r.item._idx]) : [...withCalc]
     if (phoneSearch) result = result.filter(w => w.phone.includes(phoneSearch))
+    if (plateSearch) result = result.filter(w => w.carPlate && w.carPlate.includes(plateSearch))
     if (filterFrom)  result = result.filter(w => w.startDate >= filterFrom)
     if (filterTo)    result = result.filter(w => w.startDate <= filterTo)
     return result
-  }, [withCalc, search, phoneSearch, filterFrom, filterTo, fuse])
+  }, [withCalc, search, phoneSearch, plateSearch, filterFrom, filterTo, fuse])
 
   const activeWarranties  = useMemo(() => filtered.filter(w => w.remaining > 0),  [filtered])
   const expiredWarranties = useMemo(() => filtered.filter(w => w.remaining <= 0), [filtered])
 
-  const hasFilters   = !!search.trim() || !!phoneSearch || tab !== 'all' || !!filterFrom || !!filterTo
-  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setTab('all'); setFilterFrom(''); setFilterTo('') }
+  const hasFilters   = !!search.trim() || !!phoneSearch || !!plateSearch || tab !== 'all' || !!filterFrom || !!filterTo
+  const clearFilters = () => { setSearch(''); setPhoneSearch(''); setPlateSearch(''); setTab('all'); setFilterFrom(''); setFilterTo('') }
+
+  /* ── Pagination: Active ── */
+  const [activePage, setActivePage] = useState(1)
+  const [activePageSize, setActivePageSize] = useState(10)
+
+  /* ── Pagination: Expired ── */
+  const [expiredPage, setExpiredPage] = useState(1)
+  const [expiredPageSize, setExpiredPageSize] = useState(10)
+
+  useEffect(() => {
+    setActivePage(1)
+    setExpiredPage(1)
+  }, [search, phoneSearch, plateSearch, tab, filterFrom, filterTo])
+
+  const paginatedActive = useMemo(() => {
+    const start = (activePage - 1) * activePageSize
+    return activeWarranties.slice(start, start + activePageSize)
+  }, [activeWarranties, activePage, activePageSize])
+
+  const paginatedExpired = useMemo(() => {
+    const start = (expiredPage - 1) * expiredPageSize
+    return expiredWarranties.slice(start, start + expiredPageSize)
+  }, [expiredWarranties, expiredPage, expiredPageSize])
 
   /* ── Form helpers ── */
   const setField = (f: keyof FormState, v: string) => setForm(prev => ({ ...prev, [f]: v }))
@@ -283,6 +309,10 @@ export default function Warranties() {
             <input type="text" className="mi-search-input" placeholder="📞  بحث برقم الهاتف..."
               value={phoneSearch} onChange={e => setPhoneSearch(e.target.value)} />
           </div>
+          <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
+            <input type="text" className="mi-search-input" placeholder="🚗  بحث بنمرة السيارة..."
+              value={plateSearch} onChange={e => setPlateSearch(e.target.value)} />
+          </div>
           <div className="pd-type-tabs">
             {([['all', 'الكل'], ['active', 'سارية'], ['expired', 'منتهية']] as const).map(([val, label]) => (
               <button key={val} className={`pd-tab${tab === val ? ' pd-tab-active' : ''}`}
@@ -319,9 +349,9 @@ export default function Warranties() {
                 </tr>
               </thead>
               <tbody>
-                {activeWarranties.length === 0 ? (
+                {paginatedActive.length === 0 ? (
                   <tr><td colSpan={10} className="mi-empty-row">لا توجد كفالات سارية</td></tr>
-                ) : activeWarranties.map((w, i) => (
+                ) : paginatedActive.map((w, i) => (
                   <tr key={w.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                     onClick={() => setDetailsWarranty(w)}>
                     <td>{w.customerName}</td>
@@ -344,6 +374,16 @@ export default function Warranties() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={activePage}
+            totalItems={activeWarranties.length}
+            pageSize={activePageSize}
+            onPageChange={setActivePage}
+            onPageSizeChange={(size) => {
+              setActivePageSize(size)
+              setActivePage(1)
+            }}
+          />
         </CollapsibleCard>
       )}
 
@@ -359,9 +399,9 @@ export default function Warranties() {
                 </tr>
               </thead>
               <tbody>
-                {expiredWarranties.length === 0 ? (
+                {paginatedExpired.length === 0 ? (
                   <tr><td colSpan={10} className="mi-empty-row">لا توجد كفالات منتهية</td></tr>
-                ) : expiredWarranties.map((w, i) => (
+                ) : paginatedExpired.map((w, i) => (
                   <tr key={w.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                     onClick={() => setDetailsWarranty(w)}>
                     <td>{w.customerName}</td>
@@ -384,6 +424,16 @@ export default function Warranties() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            currentPage={expiredPage}
+            totalItems={expiredWarranties.length}
+            pageSize={expiredPageSize}
+            onPageChange={setExpiredPage}
+            onPageSizeChange={(size) => {
+              setExpiredPageSize(size)
+              setExpiredPage(1)
+            }}
+          />
         </CollapsibleCard>
       )}
 

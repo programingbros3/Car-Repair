@@ -1,9 +1,10 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { Expense } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ExpenseForm, { hasExpenseDraft, clearExpenseDraft, type ExpenseFormHandle } from '../components/forms/ExpenseForm'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -73,6 +74,19 @@ export default function DailyExpenses() {
   }, [expenses, search, filterFrom, filterTo, amtMin, amtMax, fuse])
 
   const hasFilters   = !!search.trim() || !!filterFrom || !!filterTo || !!amtMin || !!amtMax
+
+  /* ── Pagination ── */
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, filterFrom, filterTo, amtMin, amtMax])
+
+  const paginatedExpenses = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredExpenses.slice(start, start + pageSize)
+  }, [filteredExpenses, currentPage, pageSize])
   const clearFilters = () => { setSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('') }
 
   const totalExpenses = useMemo(
@@ -196,9 +210,9 @@ export default function DailyExpenses() {
               </tr>
             </thead>
             <tbody>
-              {filteredExpenses.length === 0 ? (
+              {paginatedExpenses.length === 0 ? (
                 <tr><td colSpan={5} className="mi-empty-row">لا توجد مصاريف تطابق البحث</td></tr>
-              ) : filteredExpenses.map((exp, i) => (
+              ) : paginatedExpenses.map((exp, i) => (
                 <tr key={exp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsExp(exp)}>
                   <td>{exp.description}</td>
@@ -216,6 +230,16 @@ export default function DailyExpenses() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredExpenses.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setCurrentPage(1)
+          }}
+        />
       </div>
 
       {/* ════ Details Modal ════ */}

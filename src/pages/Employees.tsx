@@ -1,9 +1,10 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useGarage } from '../store/GarageContext'
 import type { Employee, SalaryRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import SalaryForm, { type SalaryFormHandle } from '../components/forms/SalaryForm'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -56,6 +57,23 @@ export default function Employees() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo,   setFilterTo]   = useState('')
 
+  /* ── Pagination: Employees ── */
+  const [empPage, setEmpPage] = useState(1)
+  const [empPageSize, setEmpPageSize] = useState(10)
+
+  const paginatedEmployees = useMemo(() => {
+    const start = (empPage - 1) * empPageSize
+    return employees.slice(start, start + empPageSize)
+  }, [employees, empPage, empPageSize])
+
+  /* ── Pagination: Salaries ── */
+  const [salaryPage, setSalaryPage] = useState(1)
+  const [salaryPageSize, setSalaryPageSize] = useState(10)
+
+  useEffect(() => {
+    setSalaryPage(1)
+  }, [filterEmp, filterFrom, filterTo])
+
   const empName  = (id: number) => employees.find(e => e.id === id)?.name ?? '—'
   const empPhone = (id: number) => employees.find(e => e.id === id)?.phone ?? ''
 
@@ -96,6 +114,11 @@ export default function Employees() {
     () => filteredSalaries.reduce((s, r) => s + r.amount, 0),
     [filteredSalaries],
   )
+
+  const paginatedSalaries = useMemo(() => {
+    const start = (salaryPage - 1) * salaryPageSize
+    return filteredSalaries.slice(start, start + salaryPageSize)
+  }, [filteredSalaries, salaryPage, salaryPageSize])
 
   /* ── Employee form ── */
   const setEmpField = (field: string, value: string) => setEmpForm(prev => ({ ...prev, [field]: value }))
@@ -241,9 +264,9 @@ export default function Employees() {
               <tr><th>اسم الموظف</th><th>رقم الهاتف</th><th>اليومية (₪/يوم)</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
-              {employees.length === 0 ? (
+              {paginatedEmployees.length === 0 ? (
                 <tr><td colSpan={4} className="mi-empty-row">لا يوجد موظفون</td></tr>
-              ) : employees.map((emp, i) => (
+              ) : paginatedEmployees.map((emp, i) => (
                 <tr key={emp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsEmp(emp)}>
                   <td>{emp.name}</td>
@@ -265,6 +288,13 @@ export default function Employees() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={empPage}
+          totalItems={employees.length}
+          pageSize={empPageSize}
+          onPageChange={setEmpPage}
+          onPageSizeChange={(size) => { setEmpPageSize(size); setEmpPage(1) }}
+        />
       </CollapsibleCard>
 
       {/* ════ Salary Add Form (inline) ════ */}
@@ -354,9 +384,9 @@ export default function Employees() {
               </tr>
             </thead>
             <tbody>
-              {filteredSalaries.length === 0 ? (
+              {paginatedSalaries.length === 0 ? (
                 <tr><td colSpan={8} className="mi-empty-row">لا توجد رواتب تطابق البحث</td></tr>
-              ) : filteredSalaries.map((rec, i) => (
+              ) : paginatedSalaries.map((rec, i) => (
                 <tr key={rec.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsSalary(rec)}>
                   <td>{empName(rec.employeeId)}</td>
@@ -378,6 +408,13 @@ export default function Employees() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={salaryPage}
+          totalItems={filteredSalaries.length}
+          pageSize={salaryPageSize}
+          onPageChange={setSalaryPage}
+          onPageSizeChange={(size) => { setSalaryPageSize(size); setSalaryPage(1) }}
+        />
       </CollapsibleCard>
 
       {/* ════ Employee Details Modal ════ */}

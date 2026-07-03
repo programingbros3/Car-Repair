@@ -3,6 +3,7 @@ import Fuse from 'fuse.js'
 import { useGarage, SaleRecord, SaleStatus, PayMethod, PaymentRow, WarrantyPeriodUnit, DiscountType } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DirectSaleForm, { hasDirectSaleDraft, clearDirectSaleDraft, type DirectSaleFormHandle } from '../components/forms/DirectSaleForm'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -156,6 +157,19 @@ export default function DirectSales() {
 
   const hasFilters   = !!(search.trim() || phoneSearch || amtMin || amtMax)
   const clearFilters = () => { setSearch(''); setPhoneSearch(''); setAmtMin(''); setAmtMax('') }
+
+  /* ── Pagination ── */
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, phoneSearch, amtMin, amtMax])
+
+  const paginatedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredInvoices.slice(start, start + pageSize)
+  }, [filteredInvoices, currentPage, pageSize])
 
   /* Edit flow — يجلب البنود الكاملة ثم يفتح نموذج التعديل المشترك */
   const openEdit = (inv: SaleRecord) => setWarnInv(inv)
@@ -354,9 +368,9 @@ export default function DirectSales() {
               <tr><th>رقم الفاتورة</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
-              {filteredInvoices.length === 0 ? (
+              {paginatedInvoices.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
-              ) : filteredInvoices.map((inv, i) => (
+              ) : paginatedInvoices.map((inv, i) => (
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-row-clickable`}
                   onClick={e => { if ((e.target as HTMLElement).closest('.mi-actions')) return; setDetailsInvoice(inv) }}>
                   <td>{inv.invoiceNumber || '—'}</td>
@@ -381,6 +395,16 @@ export default function DirectSales() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredInvoices.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setCurrentPage(1)
+          }}
+        />
         {!showForm && <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>}
       </div>
 

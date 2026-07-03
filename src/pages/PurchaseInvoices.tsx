@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense, SupplierRecord } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddPurchaseInvoiceButton from '../components/AddPurchaseInvoiceButton'
+import Pagination from '../components/Pagination'
 import { printPdf } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -160,6 +161,19 @@ export default function PurchaseInvoices() {
     setSearch(''); setPhoneSearch(''); setTypeFilter('all'); setStatusFilter('all')
     setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax('')
   }
+
+  /* ── Pagination ── */
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, phoneSearch, typeFilter, statusFilter, filterFrom, filterTo, amtMin, amtMax])
+
+  const paginatedInvoices = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, currentPage, pageSize])
 
   /* ── Edit flow ── */
   const confirmEdit = () => {
@@ -319,9 +333,9 @@ export default function PurchaseInvoices() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {paginatedInvoices.length === 0 ? (
                 <tr><td colSpan={9} className="mi-empty-row">لا توجد فواتير تطابق البحث</td></tr>
-              ) : filtered.map((inv, i) => (
+              ) : paginatedInvoices.map((inv, i) => (
                 <tr key={inv.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setDetailsInv(inv)}>
                   <td>{inv.date}</td>
@@ -353,6 +367,16 @@ export default function PurchaseInvoices() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filtered.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setCurrentPage(1)
+          }}
+        />
       </div>
 
       {/* ════ Details Modal ════ */}
