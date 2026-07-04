@@ -1,10 +1,11 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { initDB, getDB } from '../src/database'
 import { registerIpcHandlers } from './ipc-handlers'
 import { maybeRunAutoBackupOnStartup, runAutoBackupOnQuit } from './auto-backup'
 import { ensurePasswordSeeded } from './auth'
+import { verifyOrBindDevice } from './license'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -64,6 +65,18 @@ app.on('activate', () => {
 
 app.whenReady().then(() => {
   initDB()
+
+  // القفل الأمني: يتجاوز تلقائياً في وضع التطوير (npm run dev)
+  // ويشتغل فعلياً فقط في النسخة النهائية (exe) المسلَّمة للعميل
+  if (!VITE_DEV_SERVER_URL && !verifyOrBindDevice(getDB())) {
+    dialog.showErrorBox(
+      'غير مصرح',
+      'هذا البرنامج غير مصرح له بالعمل على هذا الجهاز. تواصل مع المطوّر.'
+    )
+    app.quit()
+    return
+  }
+
   ensurePasswordSeeded(getDB())
   registerIpcHandlers(getDB())
   maybeRunAutoBackupOnStartup(getDB())
