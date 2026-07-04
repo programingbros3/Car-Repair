@@ -137,7 +137,6 @@ export default function CashLedger() {
   })
 
   /* ── End-of-day audit ── */
-  const [dailyNet, setDailyNet]             = useState(0)
   const [sysBreakdown, setSysBreakdown]     = useState<CashSystemBreakdown>({ cash: 0, visa: 0, cheque: 0 })
   const [actualCash, setActualCash]         = useState('')
   const [actualVisa, setActualVisa]         = useState('')
@@ -157,13 +156,12 @@ export default function CashLedger() {
   /* ── Details modal ── */
   const [detailsTx, setDetailsTx] = useState<DisplayRow | null>(null)
 
-  /* ── Audit edit / delete ── */
-  const [editAudit, setEditAudit]       = useState<CashAuditRow | null>(null)
-  const [editCash, setEditCash]         = useState('')
-  const [editVisa, setEditVisa]         = useState('')
-  const [editCheck, setEditCheck]       = useState('')
-  const [editSaving, setEditSaving]     = useState(false)
-  const [deleteAudit, setDeleteAudit]   = useState<CashAuditRow | null>(null)
+  /* ── Locking / per-field edit of a committed audit ── */
+  const [lockConfirm, setLockConfirm]       = useState(false)                                  // تأكيد قبل التثبيت
+  const [pwdField, setPwdField]             = useState<'cash' | 'visa' | 'check' | null>(null)  // الحقل بانتظار كلمة السر
+  const [editingField, setEditingField]     = useState<'cash' | 'visa' | 'check' | null>(null)  // الحقل المفتوح للتعديل
+  const [editFieldPassword, setEditFieldPassword] = useState('')                                // كلمة السر المُلتقَطة لجلسة التعديل
+  const [deleteAudit, setDeleteAudit]       = useState<CashAuditRow | null>(null)
 
   /* ── Pagination: Operations ── */
   const [opsPage, setOpsPage] = useState(1)
@@ -207,7 +205,6 @@ export default function CashLedger() {
     ])
       .then(([entries, report, breakdown]) => {
         setRows(groupEntries([...entries].reverse()))
-        setDailyNet(report.net)
         setDayTotals({
           salesIncome:      report.today_sales_income,
           expenses:         report.today_expenses,
@@ -227,6 +224,10 @@ export default function CashLedger() {
     setActualCheck('')
     setMatchOk(false)
     setDiffModal(null)
+    setLockConfirm(false)
+    setPwdField(null)
+    setEditingField(null)
+    setEditFieldPassword('')
   }, [selectedDate, loadDayData])
 
   /* ─── احسب الفرق ─── */
@@ -252,76 +253,91 @@ export default function CashLedger() {
     }
   }
 
-  /* ─── تثبيت الرقم (من modal أو حالة مطابق) ─── */
-  const handleSaveAudit = async (
-    actCash: number, actVisa: number, actCheck: number,
-  ) => {
-    const actual = actCash + actVisa + actCheck
+  /* ─── تثبيت وقفل الإحصاء (أول عملية تثبيت — is_locked: 0 → 1) ───
+     يحفظ القيم الثلاث الفعلية + لقطة النظام لكل طريقة + الفروق، ويقفل السجل.
+     بعدها لا يمكن الكتابة فوقه إلا عبر مسار «تعديل» المحمي بكلمة السر. */
+  const handleLock = async () => {
+    const actCash  = parseFloat(actualCash)  || 0
+    const actVisa  = parseFloat(actualVisa)  || 0
+    const actCheck = parseFloat(actualCheck) || 0
+    const actual   = actCash + actVisa + actCheck
     const sysTotal = sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque
-    const diff = actual - sysTotal
+    const diff     = actual - sysTotal
     setSaving(true)
     try {
       await dbService.cashAudit.save({
-        audit_date:   selectedDate,
-        system_total: sysTotal,
+        audit_date:    selectedDate,
+        system_total:  sysTotal,
         actual_amount: actual,
-        actual_cash:  actCash,
-        actual_visa:  actVisa,
-        actual_check: actCheck,
-        difference:   diff,
+        actual_cash:   actCash,
+        actual_visa:   actVisa,
+        actual_check:  actCheck,
+        system_cash:   sysBreakdown.cash,
+        system_visa:   sysBreakdown.visa,
+        system_check:  sysBreakdown.cheque,
+        difference:    diff,
+        is_locking:    true,
       })
-      const records = await dbService.cashAudit.getAll()
-      setAuditRecords(records)
+      await loadAudits()
+      setLockConfirm(false)
+      setMatchOk(false)
       setDiffModal(null)
     } catch (err) {
-      showError('تعذّر حفظ السجل', err)
+      showError('تعذّر تثبيت الإحصاء', err)
     } finally {
       setSaving(false)
     }
   }
 
-  /* ─── تثبيت في السجل (حالة مطابق) ─── */
-  const handleSaveMatch = async () => {
-    await handleSaveAudit(
-      parseFloat(actualCash)  || 0,
-      parseFloat(actualVisa)  || 0,
-      parseFloat(actualCheck) || 0,
-    )
-    setMatchOk(false)
+  /* ─── فتح تعديل حقل واحد بعد تأكيد كلمة السر ───
+     يُعيد فتح صندوق إدخال ذلك الحقل وحده مع بذر قيمته من السجل المحفوظ. */
+  const beginFieldEdit = (field: 'cash' | 'visa' | 'check', password: string, saved: CashAuditRow) => {
+    if (field === 'cash')  setActualCash(String(saved.actual_cash))
+    if (field === 'visa')  setActualVisa(String(saved.actual_visa))
+    if (field === 'check') setActualCheck(String(saved.actual_check))
+    setEditFieldPassword(password)
+    setEditingField(field)
+    setPwdField(null)
   }
 
-  /* ─── Edit audit record ─── */
-  const openEditAudit = (rec: CashAuditRow) => {
-    setEditAudit(rec)
-    setEditCash(String(rec.actual_cash  || 0))
-    setEditVisa(String(rec.actual_visa  || 0))
-    setEditCheck(String(rec.actual_check || 0))
+  const cancelFieldEdit = () => {
+    setEditingField(null)
+    setEditFieldPassword('')
   }
 
-  const handleEditAuditSave = async () => {
-    if (!editAudit) return
-    const cash   = parseFloat(editCash)  || 0
-    const visa   = parseFloat(editVisa)  || 0
-    const check  = parseFloat(editCheck) || 0
-    const actual = cash + visa + check
-    const diff   = actual - editAudit.system_total
-    setEditSaving(true)
+  /* ─── حفظ تعديل حقل واحد على سجل مقفل ───
+     النظام يبقى مجمَّداً كما ثُبِّت وقت القفل؛ يُعاد حساب الفرق فقط من الفعلي الجديد.
+     يمرّ عبر cashAudit:updateLocked (كلمة السر تُعاد تحقّقها في الـ backend) ويُسجَّل بالنشاط. */
+  const saveFieldEdit = async (field: 'cash' | 'visa' | 'check', saved: CashAuditRow) => {
+    const actCash  = field === 'cash'  ? (parseFloat(actualCash)  || 0) : saved.actual_cash
+    const actVisa  = field === 'visa'  ? (parseFloat(actualVisa)  || 0) : saved.actual_visa
+    const actCheck = field === 'check' ? (parseFloat(actualCheck) || 0) : saved.actual_check
+    const actual   = actCash + actVisa + actCheck
+    const sysTotal = saved.system_cash + saved.system_visa + saved.system_check
+    const diff     = actual - sysTotal
+    const fieldLabel = field === 'cash' ? 'الكاش' : field === 'visa' ? 'الفيزا' : 'الشيك'
+    setSaving(true)
     try {
-      await dbService.cashAudit.save({
-        audit_date:    editAudit.audit_date,
-        system_total:  editAudit.system_total,
+      await dbService.cashAudit.updateLocked({
+        audit_date:    saved.audit_date,
+        system_total:  sysTotal,
         actual_amount: actual,
-        actual_cash:   cash,
-        actual_visa:   visa,
-        actual_check:  check,
+        actual_cash:   actCash,
+        actual_visa:   actVisa,
+        actual_check:  actCheck,
+        system_cash:   saved.system_cash,
+        system_visa:   saved.system_visa,
+        system_check:  saved.system_check,
         difference:    diff,
+        password:      editFieldPassword,
+        field:         fieldLabel,
       })
       await loadAudits()
-      setEditAudit(null)
+      cancelFieldEdit()
     } catch (err) {
-      showError('تعذّر تحديث السجل', err)
+      showError('تعذّر حفظ التعديل', err)
     } finally {
-      setEditSaving(false)
+      setSaving(false)
     }
   }
 
@@ -379,6 +395,57 @@ export default function CashLedger() {
   const diffColor = (diff: number) =>
     Math.abs(diff) < 0.001 ? '#2ECC71' : diff > 0 ? '#2ECC71' : '#E74C3C'
 
+  /* ─── سجل اليوم المحدد + حالة القفل ─── */
+  const savedAudit = auditRecords.find(a => a.audit_date === selectedDate) ?? null
+  const isLocked   = savedAudit?.is_locked === 1
+  // النظام المعروض: عند القفل نُظهر اللقطة المجمَّدة وقت التثبيت؛ قبل القفل نُظهر الحساب الحيّ.
+  const sysShown = isLocked && savedAudit
+    ? { cash: savedAudit.system_cash, visa: savedAudit.system_visa, cheque: savedAudit.system_check }
+    : sysBreakdown
+  const hasActualInput = actualCash.trim() !== '' || actualVisa.trim() !== '' || actualCheck.trim() !== ''
+
+  /* ─── خلية «الفعلي» في جدول المقارنة — تتبدّل حسب حالة القفل/التعديل ───
+     • غير مقفل: صندوق إدخال عادي.
+     • مقفل + هذا الحقل قيد التعديل: صندوق إدخال + «حفظ التعديل» + «إلغاء».
+     • مقفل + غير قيد التعديل: نص عادي يتمدّد بحرية + زر «تعديل» مستقل لهذا الرقم وحده. */
+  const renderActualCell = (
+    field: 'cash' | 'visa' | 'check',
+    value: string, setValue: (v: string) => void, savedVal: number,
+  ) => {
+    if (!isLocked) {
+      return (
+        <input type="number" min="0" step="0.01" className="mi-td-input"
+          style={{ width: '130px' }} placeholder="0.00"
+          value={value}
+          onChange={e => { setValue(e.target.value); setMatchOk(false) }}
+          onFocus={e => { if (e.target.value === '0') setValue('') }}
+          onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+      )
+    }
+    if (editingField === field) {
+      return (
+        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="number" min="0" step="0.01" className="mi-td-input"
+            style={{ width: '120px' }} value={value} autoFocus
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && savedAudit) saveFieldEdit(field, savedAudit) }} />
+          <button className="btn btn-sm-green" disabled={saving}
+            onClick={() => savedAudit && saveFieldEdit(field, savedAudit)}>
+            {saving ? '...' : 'حفظ التعديل'}
+          </button>
+          <button className="btn btn-sm-outline" onClick={cancelFieldEdit}>إلغاء</button>
+        </div>
+      )
+    }
+    return (
+      <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontWeight: 700 }}>{fmt(savedVal)} ₪</span>
+        <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }}
+          disabled={editingField !== null} onClick={() => setPwdField(field)}>تعديل</button>
+      </div>
+    )
+  }
+
   /* ════════════════════════════════════════
      JSX
   ════════════════════════════════════════ */
@@ -426,11 +493,13 @@ export default function CashLedger() {
 
       {/* ── Daily Stats ── */}
       {(() => {
-        const saved = auditRecords.find(a => a.audit_date === selectedDate) ?? null
+        const saved = savedAudit
 
-        const sysCash  = sysBreakdown.cash
-        const sysVisa  = sysBreakdown.visa
-        const sysCheck = sysBreakdown.cheque
+        // سجل مقفل: نعرض لقطة النظام المجمَّدة وقت التثبيت (لتطابق الفرق المُسجَّل)؛
+        // خلاف ذلك نعرض الحساب الحيّ من الصندوق.
+        const sysCash  = saved?.is_locked === 1 ? saved.system_cash  : sysBreakdown.cash
+        const sysVisa  = saved?.is_locked === 1 ? saved.system_visa  : sysBreakdown.visa
+        const sysCheck = saved?.is_locked === 1 ? saved.system_check : sysBreakdown.cheque
         const sysTotal = sysCash + sysVisa + sysCheck
 
         const actCash  = saved?.actual_cash   ?? null
@@ -523,6 +592,17 @@ export default function CashLedger() {
           )}
         </div>
 
+        {/* Locked banner */}
+        {isLocked && (
+          <div style={{
+            marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem',
+            padding: '0.7rem 1rem', background: '#eef2f7', borderRadius: '8px',
+            border: '1px solid #d8e0ea', color: '#334155', fontWeight: 600, fontSize: '0.9rem',
+          }}>
+            🔒 هذا الإحصاء مُثبَّت ومقفل. لتعديل أي رقم اضغط «تعديل» بجانبه وأدخل كلمة السر.
+          </div>
+        )}
+
         {/* Comparison table: system vs actual per method */}
         <div style={{ overflowX: 'auto', marginBottom: '1.25rem' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.93rem' }}>
@@ -530,77 +610,76 @@ export default function CashLedger() {
               <tr style={{ background: '#f1f5f9' }}>
                 <th style={thStyle}>وسيلة الدفع</th>
                 <th style={thStyle}>النظام ₪</th>
-                <th style={thStyle}>الفعلي (أدخل)</th>
+                <th style={thStyle}>{isLocked ? 'الفعلي' : 'الفعلي (أدخل)'}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td style={tdStyle}><span style={{ color: '#2ECC71', fontWeight: 600 }}>● كاش</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.cash)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysShown.cash)} ₪</td>
                 <td style={tdStyle}>
-                  <input type="number" min="0" step="0.01" className="mi-td-input"
-                    style={{ width: '130px' }} placeholder="0.00"
-                    value={actualCash}
-                    onChange={e => { setActualCash(e.target.value); setMatchOk(false) }}
-                    onFocus={e => { if (e.target.value === '0') setActualCash('') }}
-                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                  {renderActualCell('cash', actualCash, setActualCash, savedAudit?.actual_cash ?? 0)}
                 </td>
               </tr>
               <tr style={{ background: '#f8fafc' }}>
                 <td style={tdStyle}><span style={{ color: '#3498DB', fontWeight: 600 }}>● فيزا</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.visa)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysShown.visa)} ₪</td>
                 <td style={tdStyle}>
-                  <input type="number" min="0" step="0.01" className="mi-td-input"
-                    style={{ width: '130px' }} placeholder="0.00"
-                    value={actualVisa}
-                    onChange={e => { setActualVisa(e.target.value); setMatchOk(false) }}
-                    onFocus={e => { if (e.target.value === '0') setActualVisa('') }}
-                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                  {renderActualCell('visa', actualVisa, setActualVisa, savedAudit?.actual_visa ?? 0)}
                 </td>
               </tr>
               <tr>
                 <td style={tdStyle}><span style={{ color: '#9B59B6', fontWeight: 600 }}>● شيك</span></td>
-                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysBreakdown.cheque)} ₪</td>
+                <td style={{ ...tdStyle, fontWeight: 700 }}>{fmtSigned(sysShown.cheque)} ₪</td>
                 <td style={tdStyle}>
-                  <input type="number" min="0" step="0.01" className="mi-td-input"
-                    style={{ width: '130px' }} placeholder="0.00"
-                    value={actualCheck}
-                    onChange={e => { setActualCheck(e.target.value); setMatchOk(false) }}
-                    onFocus={e => { if (e.target.value === '0') setActualCheck('') }}
-                    onKeyDown={e => e.key === 'Enter' && handleCalcDiff()} />
+                  {renderActualCell('check', actualCheck, setActualCheck, savedAudit?.actual_check ?? 0)}
                 </td>
               </tr>
               <tr style={{ background: '#f1f5f9', fontWeight: 700 }}>
                 <td style={tdStyle}>الإجمالي</td>
-                <td style={{ ...tdStyle, color: dailyNet >= 0 ? '#2ECC71' : '#E74C3C' }}>
-                  {fmtSigned(sysBreakdown.cash + sysBreakdown.visa + sysBreakdown.cheque)} ₪
+                <td style={{ ...tdStyle, color: (sysShown.cash + sysShown.visa + sysShown.cheque) >= 0 ? '#2ECC71' : '#E74C3C' }}>
+                  {fmtSigned(sysShown.cash + sysShown.visa + sysShown.cheque)} ₪
                 </td>
                 <td style={{ ...tdStyle, color: '#555' }}>
-                  {fmt((parseFloat(actualCash)||0) + (parseFloat(actualVisa)||0) + (parseFloat(actualCheck)||0))} ₪
+                  {isLocked && savedAudit
+                    ? `${fmt(savedAudit.actual_amount)} ₪`
+                    : `${fmt((parseFloat(actualCash)||0) + (parseFloat(actualVisa)||0) + (parseFloat(actualCheck)||0))} ₪`}
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <button
-          className="btn btn-primary"
-          disabled={actualCash.trim() === '' && actualVisa.trim() === '' && actualCheck.trim() === ''}
-          onClick={handleCalcDiff}
-        >
-          احسب الفرق
-        </button>
+        {/* Actions (only before locking) */}
+        {!isLocked && (
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-primary"
+              disabled={!hasActualInput}
+              onClick={handleCalcDiff}
+            >
+              احسب الفرق
+            </button>
+            <button
+              className="btn btn-sm-green"
+              disabled={!hasActualInput || saving}
+              onClick={() => setLockConfirm(true)}
+            >
+              🔒 تثبيت وقفل الإحصاء
+            </button>
+          </div>
+        )}
 
         {/* Match result */}
-        {matchOk && (
+        {!isLocked && matchOk && (
           <div style={{
             marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '1rem',
             padding: '0.75rem 1rem', background: '#d4f5e3', borderRadius: '8px',
             border: '1px solid #a8e6c0',
           }}>
-            <span style={{ color: '#1a7a45', fontWeight: 700, flex: 1 }}>✓ كل شيء مطابق</span>
-            <button className="btn btn-sm-green" onClick={handleSaveMatch} disabled={saving}>
-              {saving ? '...' : 'تثبيت في السجل'}
+            <span style={{ color: '#1a7a45', fontWeight: 700, flex: 1 }}>✓ الصندوق مطابق تماماً</span>
+            <button className="btn btn-sm-green" onClick={() => setLockConfirm(true)} disabled={saving}>
+              🔒 تثبيت وقفل الإحصاء
             </button>
           </div>
         )}
@@ -720,7 +799,10 @@ export default function CashLedger() {
                   <td>
                     <div className="mi-actions" onClick={e => e.stopPropagation()}>
                       <button className="btn btn-secondary btn-sm-outline" onClick={() => handlePrintAudit(rec)}>طباعة</button>
-                      <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }} onClick={() => openEditAudit(rec)}>تعديل</button>
+                      {/* التعديل يتم من بطاقة «إحصاء نهاية اليوم» أعلاه (تعديل مستقل لكل رقم عبر كلمة السر)
+                          بعد فتح يوم السجل — اضغط على الصف. */}
+                      <button className="btn btn-sm-outline" style={{ color: '#E67E22', borderColor: '#E67E22' }}
+                        onClick={() => setSelectedDate(rec.audit_date)}>تعديل</button>
                       <button className="btn btn-danger-sm" onClick={() => setDeleteAudit(rec)}>حذف</button>
                     </div>
                   </td>
@@ -808,69 +890,25 @@ export default function CashLedger() {
         </div>
       )}
 
-      {/* ════ Edit Audit Modal ════ */}
-      {editAudit && (
-        <div className="mi-modal-overlay" onClick={() => setEditAudit(null)}>
-          <div className="mi-modal mi-modal-sm" onClick={e => e.stopPropagation()}>
-            <div className="mi-modal-header">
-              <h3>تعديل إحصاء {editAudit.audit_date}</h3>
-              <button className="mi-modal-close" onClick={() => setEditAudit(null)}>✕</button>
-            </div>
-            <div className="mi-modal-body">
-              <div className="mi-form-grid">
-                <div className="mi-field mi-field-full">
-                  <span>إجمالي النظام ₪</span>
-                  <div style={{ padding: '8px 12px', background: '#f8fafc', borderRadius: '6px', fontWeight: 600 }}>
-                    {fmtSigned(editAudit.system_total)} ₪
-                  </div>
-                </div>
-                <label className="mi-field">
-                  <span>كاش ₪</span>
-                  <input type="number" min={0} step="0.01"
-                    value={editCash}
-                    onChange={e => setEditCash(e.target.value)}
-                    className="mi-td-input"
-                    autoFocus />
-                </label>
-                <label className="mi-field">
-                  <span>فيزا ₪</span>
-                  <input type="number" min={0} step="0.01"
-                    value={editVisa}
-                    onChange={e => setEditVisa(e.target.value)}
-                    className="mi-td-input" />
-                </label>
-                <label className="mi-field">
-                  <span>شيك ₪</span>
-                  <input type="number" min={0} step="0.01"
-                    value={editCheck}
-                    onChange={e => setEditCheck(e.target.value)}
-                    className="mi-td-input" />
-                </label>
-                {(() => {
-                  const total = (parseFloat(editCash) || 0) + (parseFloat(editVisa) || 0) + (parseFloat(editCheck) || 0)
-                  const d = total - editAudit.system_total
-                  return (
-                    <div className="mi-field mi-field-full">
-                      <span>الإجمالي الفعلي / الفرق</span>
-                      <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 600 }}>{fmt(total)} ₪</span>
-                        <span style={{ fontWeight: 700, color: diffColor(d) }}>
-                          {d > 0 ? '+' : d < 0 ? '−' : ''}{fmt(d)} ₪
-                        </span>
-                      </div>
-                    </div>
-                  )
-                })()}
-              </div>
-            </div>
-            <div className="mi-modal-footer">
-              <button className="btn btn-primary" disabled={editSaving} onClick={handleEditAuditSave}>
-                {editSaving ? 'جارٍ الحفظ...' : 'حفظ التعديل'}
-              </button>
-              <button className="btn btn-ghost" onClick={() => setEditAudit(null)}>إلغاء</button>
-            </div>
-          </div>
-        </div>
+      {/* ════ تأكيد التثبيت والقفل ════ */}
+      {lockConfirm && (
+        <ConfirmDialog
+          title="تثبيت وقفل الإحصاء"
+          message={`سيُثبَّت إحصاء يوم ${selectedDate} ويُقفَل.\nبعد القفل لا يمكن تعديل أي رقم إلا بإدخال كلمة السر. هل تريد المتابعة؟`}
+          requirePassword={false}
+          onConfirm={handleLock}
+          onCancel={() => setLockConfirm(false)}
+        />
+      )}
+
+      {/* ════ كلمة السر لفتح تعديل حقل مقفل ════ */}
+      {pwdField && savedAudit && (
+        <ConfirmDialog
+          title="تعديل رقم مُثبَّت"
+          message={`أنت على وشك تعديل «${pwdField === 'cash' ? 'الكاش' : pwdField === 'visa' ? 'الفيزا' : 'الشيك'}» في إحصاء مُدقَّق ومقفل ليوم ${selectedDate}.\nأدخل كلمة السر للمتابعة.`}
+          onConfirm={(password) => beginFieldEdit(pwdField, password ?? '', savedAudit)}
+          onCancel={() => setPwdField(null)}
+        />
       )}
 
       {/* ════ Delete Audit Confirm ════ */}
@@ -928,18 +966,28 @@ export default function CashLedger() {
               </table>
               <div style={{
                 padding: '0.75rem 1rem', background: '#FEF3C7', borderRadius: '8px',
-                color: '#B45309', fontSize: '0.92rem', fontWeight: 600, textAlign: 'center',
+                color: '#B45309', fontSize: '0.92rem', fontWeight: 600,
               }}>
-                ⚠ يوجد فرق في المبلغ، يرجى مراجعة عمليات اليوم
+                {(() => {
+                  // رسالة تُحدِّد أي طريقة دفع فيها الفرق تحديداً (وليس رقماً إجمالياً مبهماً)
+                  const parts = ([
+                    { label: 'الكاش', diff: diffModal.diffCash  },
+                    { label: 'الفيزا', diff: diffModal.diffVisa },
+                    { label: 'الشيك', diff: diffModal.diffCheck },
+                  ] as const)
+                    .filter(p => Math.abs(p.diff) >= 0.001)
+                    .map(p => `${p.label} بمقدار ${fmt(p.diff)} ₪ (${p.diff > 0 ? 'زيادة' : 'نقص'})`)
+                  return `⚠ يوجد فرق في ${parts.join('، و')} — يرجى مراجعة عمليات اليوم قبل التثبيت`
+                })()}
               </div>
             </div>
             <div className="mi-modal-footer">
               <button
-                className="btn btn-primary"
+                className="btn btn-sm-green"
                 disabled={saving}
-                onClick={() => handleSaveAudit(diffModal.actCash, diffModal.actVisa, diffModal.actCheck)}
+                onClick={() => { setDiffModal(null); setLockConfirm(true) }}
               >
-                {saving ? 'جارٍ الحفظ...' : 'تثبيت الرقم'}
+                🔒 تثبيت وقفل الإحصاء
               </button>
               <button className="btn btn-ghost" onClick={() => setDiffModal(null)}>
                 مراجعة العمليات

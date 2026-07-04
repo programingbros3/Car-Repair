@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, screen } from 'electron'
+import { app, BrowserWindow, Menu, dialog, screen } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { initDB, getDB } from '../src/database'
@@ -40,8 +40,15 @@ function createWindow() {
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      // P0.3: في النسخة النهائية (exe) نعطّل أدوات المطوّر تماماً حتى لا تُفتح
+      // بأي اختصار (Ctrl+Shift+I) وتكشف الكود. تبقى مفعّلة في التطوير فقط.
+      devTools: !!VITE_DEV_SERVER_URL,
     },
   })
+
+  // P0.3: في الإنتاج نزيل قائمة التطبيق الافتراضية (تتضمّن إعادة التحميل وفتح
+  // أدوات المطوّر) — تصعيب تجاوز الحماية وتبسيط الواجهة للعميل.
+  if (!VITE_DEV_SERVER_URL) Menu.setApplicationMenu(null)
 
   // إظهار النافذة بعد جهوزيتها (يتجنّب وميض الشاشة البيضاء)، مكبّرة إن كانت
   // الشاشة أصغر من الأبعاد الافتراضية

@@ -497,7 +497,11 @@ export interface CashAuditRow {
   actual_cash: number
   actual_visa: number
   actual_check: number
+  system_cash: number
+  system_visa: number
+  system_check: number
   difference: number
+  is_locked: number   // 0 = مسودة، 1 = مُثبَّت ومقفل
   created_at: string
 }
 
@@ -508,7 +512,27 @@ export interface CashAuditInput {
   actual_cash: number
   actual_visa: number
   actual_check: number
+  system_cash: number
+  system_visa: number
+  system_check: number
   difference: number
+  is_locking?: boolean   // true = هذه أول عملية تثبيت (0 → 1)
+}
+
+// تعديل سجل مقفل (يمرّ عبر كلمة السر المُتحقَّقة في الـ backend)
+export interface CashAuditLockedEditInput {
+  audit_date: string
+  system_total: number
+  actual_amount: number
+  actual_cash: number
+  actual_visa: number
+  actual_check: number
+  system_cash: number
+  system_visa: number
+  system_check: number
+  difference: number
+  password: string
+  field: string   // وصف الحقل المُعدَّل — لسجل النشاط
 }
 
 export interface CashSystemBreakdown {

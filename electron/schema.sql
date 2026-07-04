@@ -324,12 +324,22 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_date ON activity_log(created_at);
 CREATE TABLE IF NOT EXISTS daily_cash_audits (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     audit_date     TEXT    NOT NULL,
+    -- الأعمدة الإجمالية القديمة تبقى للتوافق (تقارير/طباعة قديمة). تُحسَب دائماً
+    -- كمجموع الأعمدة المفصّلة المقابلة: system_total = system_cash+visa+check،
+    -- actual_amount = actual_cash+visa+check، difference = actual_amount - system_total.
     system_total   REAL    NOT NULL,
     actual_amount  REAL    NOT NULL,
+    -- الفعلي المُدخل يدوياً مقسّماً حسب طريقة الدفع
     actual_cash    REAL    NOT NULL DEFAULT 0,
     actual_visa    REAL    NOT NULL DEFAULT 0,
     actual_check   REAL    NOT NULL DEFAULT 0,
+    -- النظام المحسوب لكل طريقة (لقطة مجمَّدة وقت التثبيت/القفل)
+    system_cash    REAL    NOT NULL DEFAULT 0,
+    system_visa    REAL    NOT NULL DEFAULT 0,
+    system_check   REAL    NOT NULL DEFAULT 0,
     difference     REAL    NOT NULL,
+    -- 0 = مسودة غير مؤكَّدة بعد، 1 = مُثبَّت ومقفل (لا يُعدَّل إلا عبر مسار كلمة السر)
+    is_locked      INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_audit_date ON daily_cash_audits(audit_date);
@@ -341,7 +351,3 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_ds_invno    ON direct_sale_invoices(i
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_sup_invno   ON supplier_invoices(invoice_number)   WHERE invoice_number IS NOT NULL;
 
 -- M3: فهارس على حالة الشيك لتسريع صفحة الشيكات والاستحقاق القريب
-CREATE INDEX IF NOT EXISTS idx_payment_cheque_status        ON payment_cheque(status);
-CREATE INDEX IF NOT EXISTS idx_debt_cheque_status           ON debt_payment_cheque(status);
-CREATE INDEX IF NOT EXISTS idx_supplier_cheque_status       ON supplier_payment_cheque(status);
-CREATE INDEX IF NOT EXISTS idx_supplier_debt_cheque_status  ON supplier_debt_cheque(status);

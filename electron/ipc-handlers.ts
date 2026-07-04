@@ -515,20 +515,88 @@ export function registerIpcHandlers(db: DB): void {
   on('cashAudit:getAll', () =>
     db.prepare(`SELECT * FROM daily_cash_audits ORDER BY audit_date DESC`).all()
   )
-  on('cashAudit:save', (input: { audit_date: string; system_total: number; actual_amount: number; actual_cash: number; actual_visa: number; actual_check: number; difference: number }) => {
+  on('cashAudit:save', (input: {
+    audit_date: string; system_total: number; actual_amount: number
+    actual_cash: number; actual_visa: number; actual_check: number
+    system_cash: number; system_visa: number; system_check: number
+    difference: number; is_locking?: boolean
+  }) => {
+    // حماية على مستوى الـ backend: سجل مقفل (is_locked=1) لا يمكن الكتابة فوقه عبر
+    // هذا المسار إطلاقاً — أي تعديل لاحق يجب أن يمرّ حصراً عبر cashAudit:updateLocked
+    // (المحمي بكلمة السر). يمنع هذا الكتابة العرضية أو استدعاء القناة مباشرةً.
+    const existing = db.prepare(
+      `SELECT is_locked FROM daily_cash_audits WHERE audit_date = ?`,
+    ).get(input.audit_date) as { is_locked: number } | undefined
+    if (existing && existing.is_locked === 1) {
+      throw new Error('هذا الإحصاء مُثبَّت ومقفل — لا يمكن تعديله إلا عبر زر «تعديل» بعد إدخال كلمة السر')
+    }
+
+    const locked = input.is_locking ? 1 : 0
     const info = db.prepare(`
-      INSERT INTO daily_cash_audits (audit_date, system_total, actual_amount, actual_cash, actual_visa, actual_check, difference)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO daily_cash_audits
+        (audit_date, system_total, actual_amount, actual_cash, actual_visa, actual_check,
+         system_cash, system_visa, system_check, difference, is_locked)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(audit_date) DO UPDATE SET
         system_total  = excluded.system_total,
         actual_amount = excluded.actual_amount,
         actual_cash   = excluded.actual_cash,
         actual_visa   = excluded.actual_visa,
         actual_check  = excluded.actual_check,
+        system_cash   = excluded.system_cash,
+        system_visa   = excluded.system_visa,
+        system_check  = excluded.system_check,
         difference    = excluded.difference,
+        is_locked     = excluded.is_locked,
         created_at    = datetime('now','localtime')
-    `).run(input.audit_date, input.system_total, input.actual_amount, input.actual_cash, input.actual_visa, input.actual_check, input.difference)
+    `).run(
+      input.audit_date, input.system_total, input.actual_amount,
+      input.actual_cash, input.actual_visa, input.actual_check,
+      input.system_cash, input.system_visa, input.system_check,
+      input.difference, locked,
+    )
+    if (input.is_locking) {
+      logActivity(db, 'lock', 'cash_audit', null, `تثبيت وقفل إحصاء يوم ${input.audit_date}`)
+    }
     return Number(info.lastInsertRowid)
+  })
+
+  // تعديل سجل مقفل: المسار الوحيد المسموح للكتابة فوق إحصاء is_locked=1.
+  // كلمة السر تُتحقَّق في الـ backend نفسه (verifyPassword) — لا يكفي التحقق في
+  // الواجهة، بحيث لا يمكن تعديل سجل مُدقَّق بأي مسار آخر حتى لو استُدعيت القناة مباشرةً.
+  on('cashAudit:updateLocked', (input: {
+    audit_date: string; system_total: number; actual_amount: number
+    actual_cash: number; actual_visa: number; actual_check: number
+    system_cash: number; system_visa: number; system_check: number
+    difference: number; password: string; field: string
+  }) => {
+    const result = verifyPassword(db, input.password)
+    if (!result.valid) {
+      throw new Error(result.lockedUntil
+        ? 'محاولات كثيرة خاطئة — حاول مرة أخرى لاحقاً'
+        : 'كلمة السر غير صحيحة')
+    }
+    const existing = db.prepare(
+      `SELECT is_locked FROM daily_cash_audits WHERE audit_date = ?`,
+    ).get(input.audit_date) as { is_locked: number } | undefined
+    if (!existing) throw new Error('لا يوجد إحصاء مُثبَّت لهذا اليوم')
+
+    db.prepare(`
+      UPDATE daily_cash_audits SET
+        system_total = ?, actual_amount = ?,
+        actual_cash = ?, actual_visa = ?, actual_check = ?,
+        system_cash = ?, system_visa = ?, system_check = ?,
+        difference = ?, is_locked = 1, created_at = datetime('now','localtime')
+      WHERE audit_date = ?
+    `).run(
+      input.system_total, input.actual_amount,
+      input.actual_cash, input.actual_visa, input.actual_check,
+      input.system_cash, input.system_visa, input.system_check,
+      input.difference, input.audit_date,
+    )
+    logActivity(db, 'update', 'cash_audit', null,
+      `تعديل إحصاء مقفل ليوم ${input.audit_date} — ${input.field}`)
+    return true
   })
 
   on('cashAudit:delete', (id: number) =>

@@ -135,12 +135,30 @@ checkInvoiceBalance('موردين', 'supplier_invoices', ['supplier_payments', '
     const rawOut = one<{ v: number }>(`SELECT COALESCE(SUM(amount_out),0) v FROM cash_ledger WHERE transaction_date=?`, date).v
     if (!approx(rep.total_in, rawIn) || !approx(rep.total_out, rawOut)) { dailyBad++; if (!firstD) firstD = `${date}: تقرير in=${rep.total_in}/out=${rep.total_out} خام in=${rawIn}/out=${rawOut}` }
     const bd = await invoke('cashAudit:getSystemBreakdown', date)
-    if (!approx(bd.cash + bd.visa + bd.cheque, rep.net)) { bdBad++ }
+    /* الـ breakdown يَنسِب الشيك ليوم *استلامه* (منطق إحصاء نهاية اليوم: الشيك
+       المستلَم اليوم موجود فعلياً بالدرج)، بينما الصندوق (ledger) يَنسِبه ليوم
+       *صرفه*. الفرق بين المجموعين يجب أن يساوي بالضبط فرق التوقيت هذا:
+         (شيكات واردة استُلمت اليوم − شيكات واردة صُرفت اليوم)
+       − (شيكات صادرة سُلِّمت اليوم − شيكات صادرة صُرفت اليوم)                */
+    const inPaidToday =
+      one<{ v: number }>(`SELECT COALESCE(SUM(amount),0) v FROM payments WHERE payment_date=? AND method='cheque'`, date).v +
+      one<{ v: number }>(`SELECT COALESCE(SUM(amount),0) v FROM debt_payments WHERE payment_date=? AND method='cheque'`, date).v
+    const inCashedToday =
+      one<{ v: number }>(`SELECT COALESCE(SUM(p.amount),0) v FROM payments p JOIN payment_cheque c ON c.payment_id=p.id WHERE c.cashed_date=? AND c.status='cashed'`, date).v +
+      one<{ v: number }>(`SELECT COALESCE(SUM(p.amount),0) v FROM debt_payments p JOIN debt_payment_cheque c ON c.payment_id=p.id WHERE c.cashed_date=? AND c.status='cashed'`, date).v
+    const outPaidToday =
+      one<{ v: number }>(`SELECT COALESCE(SUM(amount),0) v FROM supplier_payments WHERE payment_date=? AND method='cheque'`, date).v +
+      one<{ v: number }>(`SELECT COALESCE(SUM(amount),0) v FROM supplier_debt_payments WHERE payment_date=? AND method='cheque'`, date).v
+    const outCashedToday =
+      one<{ v: number }>(`SELECT COALESCE(SUM(p.amount),0) v FROM supplier_payments p JOIN supplier_payment_cheque c ON c.payment_id=p.id WHERE c.cashed_date=? AND c.status='cashed'`, date).v +
+      one<{ v: number }>(`SELECT COALESCE(SUM(p.amount),0) v FROM supplier_debt_payments p JOIN supplier_debt_cheque c ON c.payment_id=p.id WHERE c.cashed_date=? AND c.status='cashed'`, date).v
+    const chequeTimingAdj = (inPaidToday - inCashedToday) - (outPaidToday - outCashedToday)
+    if (!approx(bd.cash + bd.visa + bd.cheque, rep.net + chequeTimingAdj)) { bdBad++ }
   }
   if (dailyBad === 0) ok(`report:daily متسق مع الصندوق الخام في ${sample.length} تاريخ عيّنة`)
   else fail('report:daily', `${dailyBad}/${sample.length} تاريخ غير متسق. أول: ${firstD}`)
-  if (bdBad === 0) ok(`cashAudit:getSystemBreakdown (مجموع الطرق) = صافي اليوم في ${sample.length} تاريخ`)
-  else fail('cashAudit breakdown', `${bdBad}/${sample.length} تاريخ: مجموع الطرق ≠ صافي اليوم`)
+  if (bdBad === 0) ok(`cashAudit:getSystemBreakdown = صافي اليوم بعد تسوية توقيت الشيكات في ${sample.length} تاريخ`)
+  else fail('cashAudit breakdown', `${bdBad}/${sample.length} تاريخ: مجموع الطرق ≠ صافي اليوم (بعد تسوية توقيت الشيكات)`)
 
   // 7-ب) report:monthly لعيّنة أشهر
   const months = all<{ m: string }>(`SELECT DISTINCT substr(transaction_date,1,7) m FROM cash_ledger ORDER BY m`).map(r => r.m)

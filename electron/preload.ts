@@ -40,7 +40,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   // دليل الموردين
   'suppliers:getAll', 'suppliers:add', 'suppliers:update', 'suppliers:delete',
   // إحصاء الصندوق
-  'cashAudit:getAll', 'cashAudit:save', 'cashAudit:delete', 'cashAudit:getSystemBreakdown',
+  'cashAudit:getAll', 'cashAudit:save', 'cashAudit:updateLocked', 'cashAudit:delete', 'cashAudit:getSystemBreakdown',
   // الكفالات
   'warranty:getAll', 'warranty:update', 'warranty:delete',
   // دفعات الفواتير

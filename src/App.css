@@ -563,6 +563,20 @@
   flex-shrink: 0;
 }
 
+/* زر اختيار نوع (عنوان + وصف) داخل مودالات "اختر نوعاً" */
+.mi-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 0.85rem;
+  white-space: normal;
+  text-align: center;
+}
+.mi-option-btn-title { font-size: 0.95rem; font-weight: 700; line-height: 1.3; }
+.mi-option-btn-desc  { font-size: 0.75rem; font-weight: 400; opacity: 0.72; line-height: 1.35; }
+
 /* Details grid */
 .mi-detail-grid {
   display: grid;

@@ -77,6 +77,7 @@ export function initDB(): void {
 
   migrateChequeStatus(db)
   migrateLedgerMethod(db)
+  migrateCashAuditLock(db)
   migrateUniqueInvoiceNumbers(db)
   backfillInvoiceNumbers(db)
 
@@ -113,6 +114,8 @@ function migrateChequeStatus(db: BetterSqlite3): void {
     } catch (err) {
       if (!isDuplicate(err)) throw err
     }
+
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_status ON ${t}(status)`)
   }
 }
 
@@ -134,6 +137,46 @@ function migrateLedgerMethod(db: BetterSqlite3): void {
     }
   })
   run()
+}
+
+/**
+ * إحصاء نهاية اليوم — تفصيل النظام حسب طريقة الدفع + قفل السجل المُدقَّق.
+ * يضيف الأعمدة الجديدة (system_cash/visa/check + is_locked) للقواعد القديمة.
+ *
+ * عند أول إضافة لعمود is_locked فقط (justAdded): كل السجلات الموجودة حينها كانت
+ * "مُثبَّتة" حسب المنطق القديم (لم يكن هناك مفهوم مسودة)، فنقفلها جميعاً (is_locked=1).
+ * السجلات القديمة التي لا تملك تفصيلاً حسب طريقة الدفع (الأعمدة المفصّلة كلها أصفار):
+ *   - actual_cash = actual_amount  (أفضل افتراض: التفصيل لم يكن موجوداً وقت تسجيلها).
+ *   - system_cash = system_total   (نفس المنطق للنظام).
+ * قرار موثّق: نفترض أن كامل المبلغ القديم غير المفصّل كان نقداً (كاش) لغياب أي
+ * معلومة أدقّ، تماشياً مع فلسفة "لا نحذف بيانات قديمة" في بقية عمليات الترحيل.
+ */
+function migrateCashAuditLock(db: BetterSqlite3): void {
+  const isDuplicate = (err: unknown) =>
+    err instanceof Error && err.message.includes('duplicate column name')
+  const addCol = (sql: string): boolean => {
+    try { db.exec(sql); return true }
+    catch (err) { if (isDuplicate(err)) return false; throw err }
+  }
+
+  addCol(`ALTER TABLE daily_cash_audits ADD COLUMN system_cash  REAL NOT NULL DEFAULT 0`)
+  addCol(`ALTER TABLE daily_cash_audits ADD COLUMN system_visa  REAL NOT NULL DEFAULT 0`)
+  addCol(`ALTER TABLE daily_cash_audits ADD COLUMN system_check REAL NOT NULL DEFAULT 0`)
+  const lockJustAdded = addCol(`ALTER TABLE daily_cash_audits ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 0`)
+
+  if (lockJustAdded) {
+    db.exec(`UPDATE daily_cash_audits SET is_locked = 1`)
+    db.exec(`
+      UPDATE daily_cash_audits
+         SET actual_cash = actual_amount
+       WHERE actual_cash = 0 AND actual_visa = 0 AND actual_check = 0 AND actual_amount <> 0
+    `)
+    db.exec(`
+      UPDATE daily_cash_audits
+         SET system_cash = system_total
+       WHERE system_cash = 0 AND system_visa = 0 AND system_check = 0 AND system_total <> 0
+    `)
+  }
 }
 
 /**

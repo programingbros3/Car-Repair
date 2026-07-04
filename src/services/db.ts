@@ -40,7 +40,7 @@ import type {
   DailyReport, MonthlyReport, DebtReport, TopCustomer,
   SupplierDirectoryRow, WarrantyRow,
   SaleInvoiceRow, PurchaseInvoiceRow,
-  CashAuditRow, CashAuditInput, CashSystemBreakdown,
+  CashAuditRow, CashAuditInput, CashAuditLockedEditInput, CashSystemBreakdown,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
   UpcomingChequeRow, ChequeRow, ChequeFilters, ChequeStatus, ChequeTableKind,
@@ -298,6 +298,7 @@ export const dbService = {
   cashAudit: {
     getAll: () => invoke<CashAuditRow[]>('cashAudit:getAll'),
     save: (input: CashAuditInput) => invoke<number>('cashAudit:save', input),
+    updateLocked: (input: CashAuditLockedEditInput) => invoke<boolean>('cashAudit:updateLocked', input),
     delete: (id: number) => invoke<void>('cashAudit:delete', id),
     getSystemBreakdown: (date: string) => invoke<CashSystemBreakdown>('cashAudit:getSystemBreakdown', date),
   },

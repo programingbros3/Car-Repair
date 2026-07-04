@@ -12,7 +12,9 @@ import PasswordInput from './PasswordInput'
 type ConfirmDialogProps = {
   title: string
   message: string
-  onConfirm: () => void
+  // كلمة السر المُتحقَّق منها تُمرَّر عند requirePassword (فارغة عند إيقافه) — يستخدمها
+  // من يحتاج إعادة التحقق في الـ backend (مثل تعديل إحصاء مقفل). المستدعون القدامى يتجاهلونها.
+  onConfirm: (password?: string) => void
   onCancel: () => void
   requirePassword?: boolean
 }
@@ -48,7 +50,7 @@ export default function ConfirmDialog({
       const result = await dbService.auth.verifyPassword(password)
       if (result.valid) {
         setError('')
-        onConfirm()
+        onConfirm(password)
         return
       }
       if (result.lockedUntil) {

@@ -23,11 +23,10 @@ export default function SourcePickerModal<K extends string>({ title, options, on
         <div className="mi-modal-body">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             {options.map(opt => (
-              <button key={opt.key} className="btn btn-primary"
-                style={{ width: '100%', justifyContent: 'center', padding: '0.85rem', flexDirection: 'column', gap: '0.15rem' }}
+              <button key={opt.key} className="btn btn-primary mi-option-btn"
                 onClick={() => onPick(opt.key)}>
-                <span>{opt.label}</span>
-                {opt.desc && <span style={{ fontSize: '0.75rem', fontWeight: 400, opacity: 0.85 }}>{opt.desc}</span>}
+                <span className="mi-option-btn-title">{opt.label}</span>
+                {opt.desc && <span className="mi-option-btn-desc">{opt.desc}</span>}
               </button>
             ))}
           </div>
