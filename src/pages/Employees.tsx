@@ -5,7 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import SalaryForm, { type SalaryFormHandle } from '../components/forms/SalaryForm'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 
@@ -82,8 +82,8 @@ export default function Employees() {
     const base = rec.dailyWageSnapshot * rec.daysWorked
     const body = `
       <div class="detail-grid">
-        <div class="detail-item"><label>اسم الموظف</label><span>${empName(rec.employeeId)}</span></div>
-        <div class="detail-item"><label>تاريخ الدفعة</label><span>${rec.date}</span></div>
+        <div class="detail-item"><label>اسم الموظف</label><span>${esc(empName(rec.employeeId))}</span></div>
+        <div class="detail-item"><label>تاريخ الدفعة</label><span>${esc(rec.date)}</span></div>
         <div class="detail-item"><label>اليومية (وقت الدفعة)</label><span>${rec.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم</span></div>
         <div class="detail-item"><label>عدد أيام الدوام</label><span>${rec.daysWorked} يوم</span></div>
         <div class="detail-item" style="grid-column:span 2"><label>اليومية × الأيام (${rec.dailyWageSnapshot.toLocaleString('en-US')} × ${rec.daysWorked})</label><span>${base.toLocaleString('en-US')} ₪</span></div>
@@ -94,7 +94,7 @@ export default function Employees() {
         <div style="font-size:12px;color:#888;margin-bottom:4px;">الصافي النهائي</div>
         <div style="font-size:24px;font-weight:700;color:#27ae60;">${rec.amount.toLocaleString('en-US')} ₪</div>
       </div>
-      ${rec.notes ? `<div style="margin-top:12px;padding:12px;background:#fafafa;border-radius:6px;"><span style="font-size:11px;color:#888;">ملاحظات:</span> ${rec.notes}</div>` : ''}
+      ${rec.notes ? `<div style="margin-top:12px;padding:12px;background:#fafafa;border-radius:6px;"><span style="font-size:11px;color:#888;">ملاحظات:</span> ${esc(rec.notes)}</div>` : ''}
     `
     printPdf('إيصال راتب', body)
   }
@@ -155,7 +155,7 @@ export default function Employees() {
     try {
       if (editingEmp) await dbService.employee.update(empData)
       else            await dbService.employee.add(empData)
-      await reload()
+      await reload(['employees', 'salaries'])   // M10: الاسم يظهر في سجل الرواتب أيضاً
       clearEmpForm()
     } catch (err) {
       showError('تعذّر حفظ الموظف', err)
@@ -527,7 +527,7 @@ export default function Employees() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف الموظف "${deleteEmp.name}"؟`}
           onConfirm={async () => {
-            try { await dbService.employee.delete(deleteEmp.id); await reload(); setDeleteEmp(null) }
+            try { await dbService.employee.delete(deleteEmp.id); await reload(['employees', 'salaries', 'purchaseInvoices']); setDeleteEmp(null) }
             catch (err) { showError('تعذّر حذف الموظف', err) }
           }}
           onCancel={() => setDeleteEmp(null)}
@@ -540,7 +540,7 @@ export default function Employees() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف دفعة راتب الموظف "${empName(deleteSalary.employeeId)}"؟`}
           onConfirm={async () => {
-            try { await dbService.salary.delete(deleteSalary.id); await reload(); setDeleteSalary(null) }
+            try { await dbService.salary.delete(deleteSalary.id); await reload(['salaries', 'purchaseInvoices']); setDeleteSalary(null) }
             catch (err) { showError('تعذّر حذف دفعة الراتب', err) }
           }}
           onCancel={() => setDeleteSalary(null)}

@@ -67,7 +67,7 @@ const ExpenseForm = forwardRef<ExpenseFormHandle, Props>(function ExpenseForm(
     try {
       if (editingExpense) await dbService.expense.update(expData)
       else                await dbService.expense.add(expData)
-      await reload()
+      await reload(['expenses', 'purchaseInvoices'])   // M10
       if (useDraft && !editingExpense) localStorage.removeItem(EXPENSE_DRAFT_KEY)
       onSaved()
     } catch (err) {

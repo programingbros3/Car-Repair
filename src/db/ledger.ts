@@ -17,18 +17,23 @@ export const REF = {
 export function recordLedgerEntry(entry: LedgerEntryInput): void {
   const db = getDB()
 
-  const last = db.prepare(
-    'SELECT balance_after FROM cash_ledger ORDER BY id DESC LIMIT 1'
-  ).get() as { balance_after: number } | undefined
+  // M4: الرصيد التراكمي يتبع الترتيب الزمني (transaction_date) لا ترتيب الإدخال.
+  // للقيد الأحدث (التاريخ ≥ كل التواريخ الموجودة) نكتفي بإضافته على آخر رصيد
+  // زمني. للقيد بتاريخ سابق (backdated) نعيد حساب كل الأرصدة كي يبقى العمود
+  // متسلسلاً مع التواريخ المعروضة.
+  const maxRow = db.prepare(
+    `SELECT balance_after, transaction_date FROM cash_ledger
+     ORDER BY transaction_date DESC, id DESC LIMIT 1`
+  ).get() as { balance_after: number; transaction_date: string } | undefined
 
-  const prevBalance = last?.balance_after ?? 0
+  const prevBalance = maxRow?.balance_after ?? 0
   const balance_after = prevBalance + entry.amount_in - entry.amount_out
 
   db.prepare(`
     INSERT INTO cash_ledger
-      (transaction_date, reference_type, reference_id, amount_in, amount_out, balance_after, notes)
+      (transaction_date, reference_type, reference_id, amount_in, amount_out, balance_after, method, notes)
     VALUES
-      (@transaction_date, @reference_type, @reference_id, @amount_in, @amount_out, @balance_after, @notes)
+      (@transaction_date, @reference_type, @reference_id, @amount_in, @amount_out, @balance_after, @method, @notes)
   `).run({
     transaction_date: entry.transaction_date,
     reference_type: entry.reference_type,
@@ -36,18 +41,25 @@ export function recordLedgerEntry(entry: LedgerEntryInput): void {
     amount_in: entry.amount_in,
     amount_out: entry.amount_out,
     balance_after,
+    method: entry.method ?? 'cash',   // M9: المصاريف/الرواتب نقدية افتراضاً
     notes: entry.notes ?? null,
   })
+
+  // قيد بتاريخ سابق للأحدث ⇒ اختلّ الترتيب الزمني → إعادة حساب شاملة
+  if (maxRow && entry.transaction_date < maxRow.transaction_date) {
+    recomputeLedgerBalances()
+  }
 }
 
-// ─── إعادة حساب الرصيد التراكمي (balance_after) لكل الصفوف بترتيب id ──────────────
-// تُستدعى بعد أي حذف/تعديل يزيل أو يغيّر قيود cash_ledger، كي يبقى عمود "الرصيد بعد
-// العملية" المعروض صحيحاً (وإلا بقيت أرصدة الصفوف اللاحقة للصف المحذوف قديمة). يجب
-// استدعاؤها داخل نفس الـ transaction. آمنة على قاعدة فارغة (لا صفوف = no-op).
+// ─── إعادة حساب الرصيد التراكمي (balance_after) لكل الصفوف بالترتيب الزمني ─────────
+// M4: الترتيب حسب (transaction_date, id) وليس id فقط — كي يعكس عمود "الرصيد بعد
+// العملية" التسلسل الزمني الفعلي حتى مع القيود المُدخَلة بتاريخ سابق. تُستدعى بعد
+// أي حذف/تعديل/قيد بتاريخ سابق. يجب استدعاؤها داخل نفس الـ transaction. آمنة على
+// قاعدة فارغة (لا صفوف = no-op).
 export function recomputeLedgerBalances(): void {
   const db = getDB()
   const rows = db.prepare(
-    'SELECT id, amount_in, amount_out FROM cash_ledger ORDER BY id ASC'
+    'SELECT id, amount_in, amount_out FROM cash_ledger ORDER BY transaction_date ASC, id ASC'
   ).all() as { id: number; amount_in: number; amount_out: number }[]
 
   const upd = db.prepare('UPDATE cash_ledger SET balance_after = ? WHERE id = ?')
@@ -80,9 +92,10 @@ export function getLedgerSummary(): LedgerSummary {
 export function getLedgerByDateRange(from: string, to: string): LedgerRow[] {
   const db = getDB()
 
+  // M4: العرض بالترتيب الزمني (ثم id للتثبيت) ليطابق تسلسل عمود الرصيد
   return db.prepare(`
     SELECT * FROM cash_ledger
     WHERE transaction_date BETWEEN ? AND ?
-    ORDER BY id ASC
+    ORDER BY transaction_date ASC, id ASC
   `).all(from, to) as LedgerRow[]
 }

@@ -1,19 +1,20 @@
 import { NavLink } from 'react-router-dom'
+import NavIcon, { type IconName } from './NavIcon'
 
-const navItems = [
-  { to: '/cash-ledger',        icon: '🏦', label: 'الصندوق الرئيسي'   },
-  { to: '/sales-invoices',     icon: '🧾', label: 'فواتير البيع'       },
-  { to: '/direct-sales',       icon: '🛒', label: 'البيع المباشر'     },
-  { to: '/maintenance',        icon: '🔧', label: 'سيارات الصيانة'    },
-  { to: '/purchase-invoices',  icon: '📥', label: 'فواتير الشراء'      },
-  { to: '/suppliers',          icon: '🏪', label: 'الموردون'          },
-  { to: '/expenses',           icon: '💸', label: 'المصاريف اليومية'  },
-  { to: '/employees',          icon: '👷', label: 'الموظفون والرواتب' },
-  { to: '/pending-debts',      icon: '💰', label: 'الديون المعلقة'    },
-  { to: '/cheques',            icon: '🧾', label: 'الشيكات'           },
-  { to: '/warranties',         icon: '🛡️', label: 'الكفالات'           },
-  { to: '/reports',            icon: '📊', label: 'التقارير'           },
-  { to: '/settings',           icon: '⚙', label: 'الإعدادات'          },
+const navItems: { to: string; icon: IconName; label: string }[] = [
+  { to: '/cash-ledger',        icon: 'ledger',      label: 'الصندوق الرئيسي'   },
+  { to: '/sales-invoices',     icon: 'sales',       label: 'فواتير البيع'       },
+  { to: '/direct-sales',       icon: 'directSale',  label: 'البيع المباشر'     },
+  { to: '/maintenance',        icon: 'maintenance', label: 'سيارات الصيانة'    },
+  { to: '/purchase-invoices',  icon: 'purchase',    label: 'فواتير الشراء'      },
+  { to: '/suppliers',          icon: 'suppliers',   label: 'الموردون'          },
+  { to: '/expenses',           icon: 'expenses',    label: 'المصاريف اليومية'  },
+  { to: '/employees',          icon: 'employees',   label: 'الموظفون والرواتب' },
+  { to: '/pending-debts',      icon: 'debts',       label: 'الديون المعلقة'    },
+  { to: '/cheques',            icon: 'cheques',     label: 'الشيكات'           },
+  { to: '/warranties',         icon: 'warranties',  label: 'الكفالات'           },
+  { to: '/reports',            icon: 'reports',     label: 'التقارير'           },
+  { to: '/settings',           icon: 'settings',    label: 'الإعدادات'          },
 ]
 
 function getArabicDate(): string {
@@ -35,7 +36,7 @@ export default function Sidebar() {
               end={to === '/'}
               className={({ isActive }) => (isActive ? 'active' : '')}
             >
-              <span className="nav-icon">{icon}</span>
+              <NavIcon name={icon} />
               {label}
             </NavLink>
           </li>

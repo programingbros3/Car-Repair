@@ -1,19 +1,26 @@
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
+-- ملاحظة M8: هذا الملف هو المصدر الكامل لبنية قاعدة بيانات جديدة. حلقة الـ
+-- migrations في src/database.ts تبقى لترقية القواعد القديمة الموجودة عند العملاء
+-- (أوامر ALTER فيها آمنة/idempotent — تتخطّى العمود الموجود). أي عمود يُضاف
+-- مستقبلاً يجب أن يُكتب هنا وفي migrations معاً.
 CREATE TABLE IF NOT EXISTS maintenance_invoices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_number   TEXT,
     customer_name    TEXT    NOT NULL,
     customer_phone   TEXT,
     car_plate        TEXT    NOT NULL,
     car_type         TEXT,
     car_color        TEXT,
-    date_received    TEXT    NOT NULL,  
-    date_released    TEXT,              
+    date_received    TEXT    NOT NULL,
+    date_released    TEXT,
     status           TEXT    NOT NULL DEFAULT 'in_progress',
-                                      
-    warranty         TEXT,             
+
+    warranty         TEXT,
     notes            TEXT,
+    discount_type    TEXT,
+    discount_value   REAL    DEFAULT 0,
     total_amount     REAL    NOT NULL DEFAULT 0,
     amount_paid      REAL    NOT NULL DEFAULT 0,
     amount_remaining REAL    NOT NULL DEFAULT 0,
@@ -22,11 +29,14 @@ CREATE TABLE IF NOT EXISTS maintenance_invoices (
 
 CREATE TABLE IF NOT EXISTS direct_sale_invoices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_number   TEXT,
     customer_name    TEXT    NOT NULL,
     customer_phone   TEXT,
-    sale_date        TEXT    NOT NULL,  
-    warranty         TEXT,             
+    sale_date        TEXT    NOT NULL,
+    warranty         TEXT,
     notes            TEXT,
+    discount_type    TEXT,
+    discount_value   REAL    DEFAULT 0,
     total_amount     REAL    NOT NULL DEFAULT 0,
     amount_paid      REAL    NOT NULL DEFAULT 0,
     amount_remaining REAL    NOT NULL DEFAULT 0,
@@ -63,9 +73,11 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE TABLE IF NOT EXISTS payment_cheque (
     payment_id     INTEGER PRIMARY KEY,
     cheque_number  TEXT    NOT NULL,
-    issue_date     TEXT    NOT NULL, 
-    cash_date      TEXT    NOT NULL, 
+    issue_date     TEXT    NOT NULL,
+    cash_date      TEXT    NOT NULL,
     bank_name      TEXT    NOT NULL,
+    status         TEXT    NOT NULL DEFAULT 'pending',  -- M3: pending | cashed | bounced
+    cashed_date    TEXT,                                -- تاريخ الصرف الفعلي
     FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE
 );
 
@@ -97,6 +109,8 @@ CREATE TABLE IF NOT EXISTS debt_payment_cheque (
     issue_date     TEXT NOT NULL,
     cash_date      TEXT NOT NULL,
     bank_name      TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',  -- M3
+    cashed_date    TEXT,
     FOREIGN KEY (payment_id) REFERENCES debt_payments(id) ON DELETE CASCADE
 );
 
@@ -120,6 +134,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
 
 CREATE TABLE IF NOT EXISTS supplier_invoices (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_number   TEXT,
     supplier_name    TEXT    NOT NULL,
     supplier_phone   TEXT,
     purchase_date    TEXT    NOT NULL,  -- YYYY-MM-DD
@@ -132,13 +147,15 @@ CREATE TABLE IF NOT EXISTS supplier_invoices (
 
 
 CREATE TABLE IF NOT EXISTS supplier_items (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_id INTEGER NOT NULL,
-    item_name  TEXT    NOT NULL,
-    quantity   INTEGER NOT NULL DEFAULT 1,
-    unit_price REAL    NOT NULL DEFAULT 0,
-    notes      TEXT,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id     INTEGER NOT NULL,
+    item_name      TEXT    NOT NULL,
+    quantity       INTEGER NOT NULL DEFAULT 1,
+    unit_price     REAL    NOT NULL DEFAULT 0,
+    discount_type  TEXT,                       -- خصم على مستوى البند
+    discount_value REAL    DEFAULT 0,
+    notes          TEXT,
+    created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
     FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE CASCADE
 );
 
@@ -162,6 +179,8 @@ CREATE TABLE IF NOT EXISTS supplier_payment_cheque (
     issue_date     TEXT NOT NULL,
     cash_date      TEXT NOT NULL,
     bank_name      TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',  -- M3
+    cashed_date    TEXT,
     FOREIGN KEY (payment_id) REFERENCES supplier_payments(id) ON DELETE CASCADE
 );
 
@@ -192,6 +211,8 @@ CREATE TABLE IF NOT EXISTS supplier_debt_cheque (
     issue_date     TEXT NOT NULL,
     cash_date      TEXT NOT NULL,
     bank_name      TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',  -- M3
+    cashed_date    TEXT,
     FOREIGN KEY (payment_id) REFERENCES supplier_debt_payments(id) ON DELETE CASCADE
 );
 
@@ -238,12 +259,13 @@ CREATE TABLE IF NOT EXISTS salary_payments (
 
 CREATE TABLE IF NOT EXISTS cash_ledger (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    transaction_date TEXT  NOT NULL, 
+    transaction_date TEXT  NOT NULL,
     reference_type TEXT    NOT NULL,
     reference_id   INTEGER NOT NULL,
     amount_in      REAL    NOT NULL DEFAULT 0,
     amount_out     REAL    NOT NULL DEFAULT 0,
     balance_after  REAL    NOT NULL DEFAULT 0,
+    method         TEXT,                        -- M9: cash | visa | cheque
     notes          TEXT,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -256,6 +278,8 @@ CREATE TABLE IF NOT EXISTS warranties (
     customer_name  TEXT    NOT NULL,
     customer_phone TEXT,
     car_plate      TEXT,               -- فارغ لـ direct_sale
+    car_type       TEXT,               -- صيانة فقط
+    car_color      TEXT,               -- صيانة فقط
     item_name      TEXT    NOT NULL,
     start_date     TEXT    NOT NULL,   -- YYYY-MM-DD
     period_value   INTEGER NOT NULL DEFAULT 1,
@@ -302,7 +326,22 @@ CREATE TABLE IF NOT EXISTS daily_cash_audits (
     audit_date     TEXT    NOT NULL,
     system_total   REAL    NOT NULL,
     actual_amount  REAL    NOT NULL,
+    actual_cash    REAL    NOT NULL DEFAULT 0,
+    actual_visa    REAL    NOT NULL DEFAULT 0,
+    actual_check   REAL    NOT NULL DEFAULT 0,
     difference     REAL    NOT NULL,
     created_at     TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_audit_date ON daily_cash_audits(audit_date);
+
+-- M7: تفرّد رقم الفاتورة داخل كل جدول (شرطي على غير NULL — لا يمنع صفوفاً قديمة
+-- غير مرقّمة قبل الـ backfill). التفرّد عبر جدولي البيع مضمون بالتسلسل المشترك.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_maint_invno ON maintenance_invoices(invoice_number) WHERE invoice_number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_ds_invno    ON direct_sale_invoices(invoice_number) WHERE invoice_number IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_sup_invno   ON supplier_invoices(invoice_number)   WHERE invoice_number IS NOT NULL;
+
+-- M3: فهارس على حالة الشيك لتسريع صفحة الشيكات والاستحقاق القريب
+CREATE INDEX IF NOT EXISTS idx_payment_cheque_status        ON payment_cheque(status);
+CREATE INDEX IF NOT EXISTS idx_debt_cheque_status           ON debt_payment_cheque(status);
+CREATE INDEX IF NOT EXISTS idx_supplier_cheque_status       ON supplier_payment_cheque(status);
+CREATE INDEX IF NOT EXISTS idx_supplier_debt_cheque_status  ON supplier_debt_cheque(status);

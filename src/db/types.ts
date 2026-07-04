@@ -239,12 +239,16 @@ export interface SupplierPendingDebt {
 
 // ── Cash Ledger ───────────────────────────────────────────────────────────────
 
+// M9: طريقة الدفع مخزَّنة كعمود فعلي (بدل استخراجها بـ regex من notes)
+export type LedgerMethod = 'cash' | 'visa' | 'cheque'
+
 export interface LedgerEntryInput {
   transaction_date: string
   reference_type: string
   reference_id: number
   amount_in: number
   amount_out: number
+  method?: LedgerMethod   // M9: 'cash' افتراضاً (المصاريف/الرواتب دائماً نقدية)
   notes?: string
 }
 
@@ -256,6 +260,7 @@ export interface LedgerRow {
   amount_in: number
   amount_out: number
   balance_after: number
+  method: LedgerMethod | null   // M9: قد تكون null للصفوف القديمة قبل الترحيل
   notes: string | null
   created_at: string
 }
@@ -554,6 +559,12 @@ export interface AutoBackupRunResult {
 
 export type UpcomingChequeKind = 'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'
 
+// M3: حالة الشيك في دورته — معلّق (بانتظار الصرف)، مصروف، مرتدّ
+export type ChequeStatus = 'pending' | 'cashed' | 'bounced'
+
+// M3: نوع جدول الشيك (لتحديد الجدول والاتجاه عند تغيير الحالة عبر cheque:updateStatus)
+export type ChequeTableKind = 'payment' | 'debt' | 'supplier_payment' | 'supplier_debt'
+
 export interface UpcomingChequeRow {
   source: UpcomingChequeKind
   party_name: string
@@ -562,6 +573,9 @@ export interface UpcomingChequeRow {
   amount: number
   cash_date: string
   days_remaining: number
+  status: ChequeStatus
+  cheque_kind: ChequeTableKind
+  payment_id: number
 }
 
 // ── كل الشيكات (cheques:getAll) — نفس الجداول الأربعة، بلا قيد "قادم"، قراءة فقط ──

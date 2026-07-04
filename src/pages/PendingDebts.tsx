@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { DebtRecord, DebtType, CarRecord, SaleRecord } from '../store/GarageContext'
+import type { DebtRecord, DebtType } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { useSettlementTotal } from '../utils/useSettlementTotal'
@@ -54,7 +54,7 @@ async function printDebt(debt: DebtRecord): Promise<void> {
   const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
   const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
     <tr>
-      <td>${PAY_AR[p.method] || p.method}</td>
+      <td>${PAY_AR[p.method] || esc(p.method)}</td>
       <td class="amount-in">${fmt(p.amount)} ₪</td>
     </tr>`).join('')
     + (settlementTotal > 0 ? `
@@ -64,19 +64,19 @@ async function printDebt(debt: DebtRecord): Promise<void> {
     </tr>` : '')
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>اسم الزبون</label><span>${debt.customerName}</span></div>
-      <div class="detail-item"><label>رقم الهاتف</label><span>${debt.phone && debt.phone !== '0000' ? debt.phone : 'غير معروف'}</span></div>
-      <div class="detail-item"><label>النوع</label><span>${debt.typeLabel}</span></div>
-      <div class="detail-item"><label>التاريخ</label><span>${debt.date}</span></div>
-      ${debt.type === 'maintenance' && debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${debt.carPlate}</span></div>` : ''}
-      ${debt.type === 'maintenance' && debt.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${debt.carType}</span></div>` : ''}
-      ${debt.type === 'maintenance' && debt.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${debt.carColor}</span></div>` : ''}
+      <div class="detail-item"><label>اسم الزبون</label><span>${esc(debt.customerName)}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${debt.phone && debt.phone !== '0000' ? esc(debt.phone) : 'غير معروف'}</span></div>
+      <div class="detail-item"><label>النوع</label><span>${esc(debt.typeLabel)}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${esc(debt.date)}</span></div>
+      ${debt.type === 'maintenance' && debt.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${esc(debt.carPlate)}</span></div>` : ''}
+      ${debt.type === 'maintenance' && debt.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${esc(debt.carType)}</span></div>` : ''}
+      ${debt.type === 'maintenance' && debt.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${esc(debt.carColor)}</span></div>` : ''}
     </div>
     <div class="detail-grid">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(debt.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(debt.amountPaid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
-      ${debt.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${debt.notes}</span></div>` : ''}
+      ${debt.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(debt.notes)}</span></div>` : ''}
     </div>
     ${payRows ? `
     <table style="margin-top:12px;">
@@ -241,27 +241,22 @@ export default function PendingDebts() {
     if (editNameErr || editPhoneErr) return
     const phone = editForm.phone.trim()
     /* الدين هو فاتورة مصدر (صيانة/بيع مباشر)؛ نعدّل الفاتورة الأصلية حسب نوعها.
-       (الإجمالي/المدفوع مشتقّان في DB من البنود والدفعات ولا يُعدَّلان مباشرةً.) */
+       C2/H1: هذه الشاشة لا تعرض البنود ولا الملاحظات ولا الكفالة، فتُرسَل الحقول
+       المعروضة هنا فقط (partial update) — الإرسال الكامل سابقاً كان يمسح بنود
+       فاتورة الصيانة، وكفالة وملاحظات فاتورة البيع المباشر. */
     try {
       if (editDebt.type === 'maintenance') {
-        const car: CarRecord = {
-          id: editDebt.id, customerName: editForm.customerName, phone,
-          carPlate: editForm.carPlate, carType: '', carColor: '',
-          dateReceived: editForm.date, status: 'delivered',
-          notes: '', total: editDebt.total, items: [],
-        }
-        await dbService.maintenance.update(car)
+        await dbService.maintenance.updateHeader(editDebt.id, {
+          customerName: editForm.customerName, phone,
+          carPlate: editForm.carPlate, dateReceived: editForm.date,
+        })
       } else {
-        const sale: SaleRecord = {
-          id: editDebt.id, customerName: editForm.customerName, phone,
-          saleDate: editForm.date, warranty: '', notes: '',
-          total: editDebt.total, amountPaid: editDebt.amountPaid,
-          amountRemaining: editDebt.amountRemaining, status: 'partial_debt',
-          items: [], payments: [],
-        }
-        await dbService.directSale.update(sale)
+        await dbService.directSale.updateHeader(editDebt.id, {
+          customerName: editForm.customerName, phone,
+          saleDate: editForm.date,
+        })
       }
-      await reload()
+      await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setEditDebt(null); setEditForm(null); setEditSubmitted(false)
     } catch (err) {
       showError('تعذّر تعديل الدين', err)
@@ -274,7 +269,7 @@ export default function PendingDebts() {
     const rows = paymentRows.filter(r => r.amount > 0)
     try {
       await dbService.debt.addPayment(payDebt.id, payDebt.type, rows, payDate, settleNum)
-      await reload()
+      await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setPayDebt(null)
     } catch (err) {
       showError('تعذّر تسجيل دفعة الدين', err)
@@ -646,19 +641,17 @@ export default function PendingDebts() {
                   <input type="text" value={editForm.carPlate}
                     onChange={e => setEditForm(f => f && { ...f, carPlate: e.target.value })} />
                 </label>
+                {/* H2: الإجمالي/المدفوع مشتقّان في قاعدة البيانات من البنود والدفعات —
+                    كانا حقلين قابلين للتحرير لكن قيمهما تُتجاهَل بصمت عند الحفظ */}
                 <label className="mi-field">
                   <span>الإجمالي ₪</span>
-                  <input type="number" min={0} value={editForm.total}
-                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
-                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
-                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
+                  <input type="number" value={editForm.total} disabled readOnly />
+                  <span className="mi-field-hint">يُحسب تلقائياً من بنود الفاتورة</span>
                 </label>
                 <label className="mi-field">
                   <span>المدفوع ₪</span>
-                  <input type="number" min={0} value={editForm.amountPaid}
-                    onChange={e => setEditForm(f => f && { ...f, amountPaid: e.target.value })}
-                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, amountPaid: '' }) }}
-                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, amountPaid: '0' }) }} />
+                  <input type="number" value={editForm.amountPaid} disabled readOnly />
+                  <span className="mi-field-hint">يُحسب تلقائياً من الدفعات المسجَّلة</span>
                 </label>
               </div>
             </div>
@@ -679,7 +672,7 @@ export default function PendingDebts() {
             try {
               if (deleteDebt.type === 'maintenance') await dbService.maintenance.delete(deleteDebt.id)
               else                                   await dbService.directSale.delete(deleteDebt.id)
-              await reload()
+              await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])   // M10
               setDeleteDebt(null)
             } catch (err) { showError('تعذّر حذف الدين', err) }
           }}

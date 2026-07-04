@@ -68,7 +68,7 @@ const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
     try {
       if (editingSalary) await dbService.salary.update(editingSalary.id, salData)
       else               await dbService.salary.add(salData)
-      await reload()
+      await reload(['salaries', 'purchaseInvoices'])   // M10
       onSaved()
     } catch (err) {
       showError('تعذّر حفظ دفعة الراتب', err)

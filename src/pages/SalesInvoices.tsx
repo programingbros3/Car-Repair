@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow, CarRecord, SaleRecord } from '../store/GarageContext'
+import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 
@@ -36,18 +36,18 @@ const blankRow = (): PaymentRow => ({
 function printInvoice(inv: SaleInvoice): void {
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber}</span></div>
-      <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${esc(inv.invoiceNumber)}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${esc(inv.date)}</span></div>
       <div class="detail-item"><label>نوع الفاتورة</label><span>${TYPE_LABELS[inv.type]}</span></div>
       <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
-      <div class="detail-item"><label>اسم الزبون</label><span>${inv.customerName}</span></div>
-      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
-      ${inv.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${inv.carPlate}</span></div>` : ''}
-      ${inv.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${inv.carType}</span></div>` : ''}
-      ${inv.type === 'maintenance' && inv.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${inv.carColor}</span></div>` : ''}
+      <div class="detail-item"><label>اسم الزبون</label><span>${esc(inv.customerName)}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? esc(inv.phone) : 'غير معروف'}</span></div>
+      ${inv.carPlate ? `<div class="detail-item"><label>نمرة السيارة</label><span>${esc(inv.carPlate)}</span></div>` : ''}
+      ${inv.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${esc(inv.carType)}</span></div>` : ''}
+      ${inv.type === 'maintenance' && inv.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${esc(inv.carColor)}</span></div>` : ''}
       ${inv.type === 'maintenance' && inv.carStatus ? `<div class="detail-item"><label>حالة الصيانة</label><span>${inv.carStatus === 'delivered' ? 'تم التسليم' : 'قيد الصيانة'}</span></div>` : ''}
-      ${inv.type === 'maintenance' && inv.dateReleased ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${inv.dateReleased}</span></div>` : ''}
-      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${inv.details}</span></div>` : ''}
+      ${inv.type === 'maintenance' && inv.dateReleased ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${esc(inv.dateReleased)}</span></div>` : ''}
+      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${esc(inv.details)}</span></div>` : ''}
     </div>
     <div class="detail-grid">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
@@ -196,38 +196,33 @@ export default function SalesInvoices() {
   const editNameErr  = editForm && !editForm.customerName.trim() ? 'اسم الزبون مطلوب' : ''
   const editPhoneErr = editForm && !editForm.phone.trim() ? 'رقم الهاتف مطلوب' : ''
   const editPlateErr = editForm && editForm.type === 'maintenance' && !editForm.carPlate.trim() ? 'نمرة السيارة مطلوبة' : ''
-  const editPaidErr  = editForm && Number(editForm.paid) > Number(editForm.total) + 0.001 ? 'المدفوع لا يمكن أن يتجاوز الإجمالي' : ''
 
   const closeEdit = () => { setEditInv(null); setEditForm(null); setEditSubmitted(false) }
 
   const saveEdit = async () => {
     if (!editInv || !editForm) return
     setEditSubmitted(true)
-    if (editNameErr || editPhoneErr || editPlateErr || editPaidErr) return
-    const total = Number(editForm.total) || 0
-    const paid  = Math.min(Number(editForm.paid) || 0, total)
+    if (editNameErr || editPhoneErr || editPlateErr) return
     const phone = editForm.phone.trim()
     /* فاتورة البيع عرض مجمّع؛ التعديل يوجَّه للفاتورة الأصلية حسب نوعها.
-       (الإجمالي/المدفوع مشتقّان في DB من البنود والدفعات.) */
+       C2/H1: هذه الشاشة لا تعرض البنود ولا الكفالة، فتُرسَل حقول الترويسة
+       المعروضة هنا فقط (partial update) — الإرسال الكامل سابقاً كان يمسح
+       بنود فاتورة الصيانة وكفالة فاتورة البيع المباشر. */
     try {
       if (editInv.type === 'maintenance') {
-        const car: CarRecord = {
-          id: editInv.id, customerName: editForm.customerName, phone,
-          carPlate: editForm.carPlate, carType: editForm.carType, carColor: '',
-          dateReceived: editForm.date, status: 'delivered',
-          notes: editForm.details, total, items: [],
-        }
-        await dbService.maintenance.update(car)
+        await dbService.maintenance.updateHeader(editInv.id, {
+          customerName: editForm.customerName, phone,
+          carPlate: editForm.carPlate, carType: editForm.carType,
+          dateReceived: editForm.date, notes: editForm.details,
+        })
       } else {
-        const sale: SaleRecord = {
-          id: editInv.id, customerName: editForm.customerName, phone,
-          saleDate: editForm.date, warranty: '', notes: editForm.details,
-          total, amountPaid: paid, amountRemaining: total - paid,
-          status: 'partial_debt', items: [], payments: [],
-        }
-        await dbService.directSale.update(sale)
+        await dbService.directSale.updateHeader(editInv.id, {
+          customerName: editForm.customerName, phone,
+          saleDate: editForm.date, notes: editForm.details,
+        })
       }
-      await reload()
+      // M10: عمليات جانب الزبون تنعكس على هذه المجالات فقط
+      await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])
       closeEdit()
     } catch (err) {
       showError('تعذّر حفظ تعديلات الفاتورة', err)
@@ -261,7 +256,7 @@ export default function SalesInvoices() {
     try {
       // دفعة على دين فاتورة بيع (صيانة/بيع مباشر) عبر قناة الديون الموحّدة
       await dbService.debt.addPayment(payInvoice.id, payInvoice.type, rows, payDate)
-      await reload()
+      await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setPayInvoice(null)
     } catch (err) {
       showError('تعذّر تسجيل الدفعة', err)
@@ -551,20 +546,17 @@ export default function SalesInvoices() {
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
                   {editSubmitted && editPhoneErr && <span className="mi-err">{editPhoneErr}</span>}
                 </label>
+                {/* H2: الإجمالي/المدفوع مشتقّان في قاعدة البيانات من البنود والدفعات —
+                    كانا حقلين قابلين للتحرير لكن قيمهما تُتجاهَل بصمت عند الحفظ */}
                 <label className="mi-field">
                   <span>الإجمالي ₪</span>
-                  <input type="number" min={0} value={editForm.total}
-                    onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
-                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
-                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
+                  <input type="number" value={editForm.total} disabled readOnly />
+                  <span className="mi-field-hint">يُحسب تلقائياً من بنود الفاتورة</span>
                 </label>
                 <label className="mi-field">
                   <span>المدفوع ₪</span>
-                  <input type="number" min={0} className={editSubmitted && editPaidErr ? 'mi-input-err' : ''} value={editForm.paid}
-                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
-                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
-                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
-                  {editSubmitted && editPaidErr && <span className="mi-err">{editPaidErr}</span>}
+                  <input type="number" value={editForm.paid} disabled readOnly />
+                  <span className="mi-field-hint">يُحسب تلقائياً من الدفعات المسجَّلة</span>
                 </label>
                 <label className="mi-field">
                   <span>نمرة السيارة {editForm.type === 'maintenance' && <span className="mi-required">*</span>}</span>
@@ -707,7 +699,7 @@ export default function SalesInvoices() {
             try {
               if (deleteInv.type === 'maintenance') await dbService.maintenance.delete(deleteInv.id)
               else                                  await dbService.directSale.delete(deleteInv.id)
-              await reload()
+              await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])   // M10
               setDeleteInv(null)
             } catch (err) { showError('تعذّر حذف الفاتورة', err) }
           }}

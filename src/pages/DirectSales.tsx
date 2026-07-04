@@ -4,7 +4,7 @@ import { useGarage, SaleRecord, SaleStatus, PayMethod, PaymentRow, WarrantyPerio
 import ConfirmDialog from '../components/ConfirmDialog'
 import DirectSaleForm, { hasDirectSaleDraft, clearDirectSaleDraft, type DirectSaleFormHandle } from '../components/forms/DirectSaleForm'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { useSettlementTotal } from '../utils/useSettlementTotal'
@@ -213,7 +213,7 @@ export default function DirectSales() {
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       await dbService.directSale.addPayment(payInvoice.id, rows, payDate, settleNum)
-      await reload()
+      await reload(['directSale', 'salesInvoices', 'debts'])   // M10
       setPayInvoice(null)
     } catch (err) {
       showError('تعذّر تسجيل الدفعة', err)
@@ -233,16 +233,16 @@ export default function DirectSales() {
       const full = detail || inv
       const rows = full.items.map(item => `
         <tr>
-          <td>${item.name}</td>
+          <td>${esc(item.name)}</td>
           <td>${item.quantity}</td>
           <td>${fmt(item.unitPrice)} ₪</td>
           <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
-          <td>${item.notes || '—'}</td>
+          <td>${item.notes ? esc(item.notes) : '—'}</td>
         </tr>`).join('')
       const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
       const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
         <tr>
-          <td>${PAY_AR[p.method] || p.method}</td>
+          <td>${PAY_AR[p.method] || esc(p.method)}</td>
           <td class="amount-in">${fmt(p.amount)} ₪</td>
         </tr>`).join('')
         + (settlementTotal > 0 ? `
@@ -252,12 +252,12 @@ export default function DirectSales() {
         </tr>` : '')
       const body = `
         <div class="detail-grid">
-          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
-          <div class="detail-item"><label>اسم الزبون</label><span>${full.customerName}</span></div>
-          <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? full.phone : 'غير معروف'}</span></div>
-          <div class="detail-item"><label>التاريخ</label><span>${full.saleDate}</span></div>
-          <div class="detail-item"><label>الكفالة</label><span>${warrantyLabelDS(full.warranty)}</span></div>
-          ${full.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${full.notes}</span></div>` : ''}
+          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber ? esc(full.invoiceNumber) : '—'}</span></div>
+          <div class="detail-item"><label>اسم الزبون</label><span>${esc(full.customerName)}</span></div>
+          <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? esc(full.phone) : 'غير معروف'}</span></div>
+          <div class="detail-item"><label>التاريخ</label><span>${esc(full.saleDate)}</span></div>
+          <div class="detail-item"><label>الكفالة</label><span>${esc(warrantyLabelDS(full.warranty))}</span></div>
+          ${full.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(full.notes)}</span></div>` : ''}
         </div>
         ${full.items.length > 0 ? `
         <table>
@@ -591,7 +591,7 @@ export default function DirectSales() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف فاتورة الزبون "${deleteInvoice.customerName}"؟`}
           onConfirm={async () => {
-            try { await dbService.directSale.delete(deleteInvoice.id); await reload(); setDeleteInvoice(null) }
+            try { await dbService.directSale.delete(deleteInvoice.id); await reload(['directSale', 'salesInvoices', 'debts', 'warranties']); setDeleteInvoice(null) }
             catch (err) { showError('تعذّر حذف الفاتورة', err) }
           }}
           onCancel={() => setDeleteInvoice(null)}

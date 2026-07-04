@@ -25,3 +25,12 @@ release
 *.sw?
 dist-electron/
 .claude/
+
+# H4: سر الترخيص (يُحقَن وقت البناء، لا يدخل المستودع)
+electron/.license-secret
+.env*.local
+
+# L2: ملفات قواعد البيانات الثنائية لا تدخل المستودع
+*.db
+*.db-shm
+*.db-wal

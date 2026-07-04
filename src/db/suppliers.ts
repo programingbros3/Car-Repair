@@ -2,6 +2,7 @@ import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, PURCHASE_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import { applyDiscount } from './discount'
+import { insertChequeOrVisaDetails } from './validate'
 import type {
   SupplierInvoiceInput,
   SupplierInvoiceRow,
@@ -67,17 +68,7 @@ function insertSupplierPayments(
 
     const payId = Number(lastInsertRowid)
 
-    if (p.method === 'cheque') {
-      db.prepare(`
-        INSERT INTO ${chequeTable} (payment_id, cheque_number, issue_date, cash_date, bank_name)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(payId, p.chequeNumber!, p.issueDate!, p.cashDate!, p.bankName!)
-    } else if (p.method === 'visa') {
-      db.prepare(`
-        INSERT INTO ${visaTable} (payment_id, bank_name, transaction_number)
-        VALUES (?, ?, ?)
-      `).run(payId, p.bankName!, p.transactionNumber!)
-    }
+    insertChequeOrVisaDetails(db, payId, p, { cheque: chequeTable, visa: visaTable })
 
     db.prepare(`
       UPDATE supplier_invoices
@@ -85,15 +76,19 @@ function insertSupplierPayments(
       WHERE id = ?
     `).run(p.amount, p.amount, invoiceId)
 
-    // Supplier payments are money going OUT of the ledger
-    recordLedgerEntry({
-      transaction_date: paymentDate,
-      reference_type: refType,
-      reference_id: payId,
-      amount_in: 0,
-      amount_out: p.amount,
-      notes: `${label} #${invoiceId} — ${p.method}`,
-    })
+    // M3: الشيك الصادر لا يُسجَّل نقداً في الصندوق إلا عند صرفه فعلياً (cheque:updateStatus)
+    if (p.method !== 'cheque') {
+      // Supplier payments are money going OUT of the ledger
+      recordLedgerEntry({
+        transaction_date: paymentDate,
+        reference_type: refType,
+        reference_id: payId,
+        amount_in: 0,
+        amount_out: p.amount,
+        method: p.method as 'cash' | 'visa',
+        notes: `${label} #${invoiceId} — ${p.method}`,
+      })
+    }
   }
 
   // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية (لا صادر ولا وارد) في cash_ledger
@@ -223,6 +218,31 @@ export function updateSupplierInvoice(id: number, input: SupplierInvoiceInput): 
   })
 
   run()
+}
+
+/* ── C2: تحديث ترويسة فاتورة المورد فقط (بلا بنود ولا إعادة حساب إجمالي) ──
+   للشاشات المجمّعة (فواتير الشراء) التي تعرض بيانات الترويسة فقط — استدعاء
+   updateSupplierInvoice من هناك كان يستبدل البنود بقائمة فارغة فيصفّر الفاتورة. */
+export type SupplierInvoiceHeaderInput = {
+  supplier_name?: string
+  supplier_phone?: string
+  purchase_date?: string
+  notes?: string
+}
+
+export function updateSupplierInvoiceHeader(id: number, input: SupplierInvoiceHeaderInput): void {
+  const db = getDB()
+
+  const fields: string[] = []
+  const values: unknown[] = []
+  if (input.supplier_name  !== undefined) { fields.push('supplier_name = ?');  values.push(input.supplier_name) }
+  if (input.supplier_phone !== undefined) { fields.push('supplier_phone = ?'); values.push(input.supplier_phone ?? null) }
+  if (input.purchase_date  !== undefined) { fields.push('purchase_date = ?');  values.push(input.purchase_date) }
+  if (input.notes          !== undefined) { fields.push('notes = ?');          values.push(input.notes ?? null) }
+  if (fields.length === 0) return
+
+  values.push(id)
+  db.prepare(`UPDATE supplier_invoices SET ${fields.join(', ')} WHERE id = ?`).run(...values)
 }
 
 // ─── Day 3: Add payment to existing supplier invoice ─────────────────────────

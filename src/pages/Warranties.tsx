@@ -6,7 +6,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { calcEndDate, daysRemaining } from '../utils/warranty'
@@ -180,7 +180,7 @@ export default function Warranties() {
     }
     try {
       await dbService.warranty.update(warrantyData)
-      await reload()
+      await reload(['warranties'])   // M10
       clearForm()
     } catch (err) {
       showError('تعذّر حفظ الكفالة', err)
@@ -202,17 +202,17 @@ export default function Warranties() {
       : `<div class="detail-item"><label>الأيام المتبقية</label><span style="color:${remainingColor(w.remaining)};font-weight:700">${fmt(w.remaining)} يوم</span></div>`
     const body = `
       <div class="detail-grid">
-        <div class="detail-item"><label>اسم الزبون</label><span>${w.customerName}</span></div>
-        <div class="detail-item"><label>رقم الهاتف</label><span>${w.phone || '—'}</span></div>
-        <div class="detail-item"><label>نمرة السيارة</label><span>${w.carPlate || '—'}</span></div>
-        ${w.source === 'maintenance' && w.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${w.carType}</span></div>` : ''}
-        ${w.source === 'maintenance' && w.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${w.carColor}</span></div>` : ''}
-        <div class="detail-item"><label>القطعة / الخدمة</label><span>${w.itemName}</span></div>
-        <div class="detail-item"><label>تاريخ البداية</label><span>${w.startDate}</span></div>
-        <div class="detail-item"><label>المدة</label><span>${periodLabel(w.periodValue, w.periodUnit)}</span></div>
-        <div class="detail-item"><label>تاريخ الانتهاء</label><span>${w.endDate}</span></div>
+        <div class="detail-item"><label>اسم الزبون</label><span>${esc(w.customerName)}</span></div>
+        <div class="detail-item"><label>رقم الهاتف</label><span>${w.phone ? esc(w.phone) : '—'}</span></div>
+        <div class="detail-item"><label>نمرة السيارة</label><span>${w.carPlate ? esc(w.carPlate) : '—'}</span></div>
+        ${w.source === 'maintenance' && w.carType ? `<div class="detail-item"><label>نوع السيارة</label><span>${esc(w.carType)}</span></div>` : ''}
+        ${w.source === 'maintenance' && w.carColor ? `<div class="detail-item"><label>لون السيارة</label><span>${esc(w.carColor)}</span></div>` : ''}
+        <div class="detail-item"><label>القطعة / الخدمة</label><span>${esc(w.itemName)}</span></div>
+        <div class="detail-item"><label>تاريخ البداية</label><span>${esc(w.startDate)}</span></div>
+        <div class="detail-item"><label>المدة</label><span>${esc(periodLabel(w.periodValue, w.periodUnit))}</span></div>
+        <div class="detail-item"><label>تاريخ الانتهاء</label><span>${esc(w.endDate)}</span></div>
         ${remainingHtml}
-        ${w.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${w.notes}</span></div>` : ''}
+        ${w.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(w.notes)}</span></div>` : ''}
       </div>`
     printPdf('بطاقة كفالة', body)
   }
@@ -497,7 +497,7 @@ export default function Warranties() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف كفالة "${deleteWarranty.itemName}" للزبون "${deleteWarranty.customerName}"؟`}
           onConfirm={async () => {
-            try { await dbService.warranty.delete(deleteWarranty.id); await reload(); setDeleteWarranty(null) }
+            try { await dbService.warranty.delete(deleteWarranty.id); await reload(['warranties']); setDeleteWarranty(null) }
             catch (err) { showError('تعذّر حذف الكفالة', err) }
           }}
           onCancel={() => setDeleteWarranty(null)}

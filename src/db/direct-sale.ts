@@ -2,6 +2,7 @@ import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import { applyDiscount } from './discount'
+import { insertChequeOrVisaDetails } from './validate'
 import type {
   DiscountType,
   DirectSaleInput,
@@ -35,17 +36,7 @@ function insertPayments(
 
     const payId = Number(lastInsertRowid)
 
-    if (p.method === 'cheque') {
-      db.prepare(`
-        INSERT INTO payment_cheque (payment_id, cheque_number, issue_date, cash_date, bank_name)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(payId, p.chequeNumber!, p.issueDate!, p.cashDate!, p.bankName!)
-    } else if (p.method === 'visa') {
-      db.prepare(`
-        INSERT INTO payment_visa (payment_id, bank_name, transaction_number)
-        VALUES (?, ?, ?)
-      `).run(payId, p.bankName!, p.transactionNumber!)
-    }
+    insertChequeOrVisaDetails(db, payId, p, { cheque: 'payment_cheque', visa: 'payment_visa' })
 
     db.prepare(`
       UPDATE direct_sale_invoices
@@ -53,14 +44,18 @@ function insertPayments(
       WHERE id = ?
     `).run(p.amount, p.amount, invoiceId)
 
-    recordLedgerEntry({
-      transaction_date: paymentDate,
-      reference_type: REF.DIRECT_SALE_PAYMENT,
-      reference_id: payId,
-      amount_in: p.amount,
-      amount_out: 0,
-      notes: `بيع مباشر #${invoiceId} — ${p.method}`,
-    })
+    // M3: الشيك لا يُسجَّل نقداً في الصندوق إلا عند صرفه فعلياً (cheque:updateStatus)
+    if (p.method !== 'cheque') {
+      recordLedgerEntry({
+        transaction_date: paymentDate,
+        reference_type: REF.DIRECT_SALE_PAYMENT,
+        reference_id: payId,
+        amount_in: p.amount,
+        amount_out: 0,
+        method: p.method as 'cash' | 'visa',
+        notes: `بيع مباشر #${invoiceId} — ${p.method}`,
+      })
+    }
   }
 }
 

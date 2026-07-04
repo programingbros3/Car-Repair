@@ -167,7 +167,8 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
       } else {
         await dbService.directSale.add(saleData, actualPayRows)
       }
-      await reload()
+      // M10: البيع المباشر يؤثّر على قائمته + فواتير البيع المجمّعة + الديون + الكفالات
+      await reload(['directSale', 'salesInvoices', 'debts', 'warranties'])
       if (useDraft && !editingInvoice) localStorage.removeItem(DIRECT_SALE_DRAFT_KEY)
       onSaved()
     } catch (err) {

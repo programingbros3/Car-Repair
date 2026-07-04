@@ -250,7 +250,7 @@ export default function Settings() {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
   })
 
-  const actionLabel = (t: string) => (t === 'update' ? 'تعديل' : t === 'delete' ? 'حذف' : t)
+  const actionLabel = (t: string) => (t === 'update' ? 'تعديل' : t === 'delete' ? 'حذف' : t === 'deliver' ? 'تسليم' : t)
 
   const ENTITY_LABELS: Record<string, string> = {
     maintenance_invoice: 'فاتورة صيانة',

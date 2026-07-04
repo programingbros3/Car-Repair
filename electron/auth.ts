@@ -13,7 +13,6 @@
 import bcrypt from 'bcryptjs'
 import type Database from 'better-sqlite3'
 import type { ActivityLogRow, AutoLockSettings, PasswordVerifyResult } from '../src/db/types'
-import { DEFAULT_PASSWORD } from '../src/utils/auth'
 
 type DB = Database.Database
 
@@ -50,10 +49,24 @@ function setSetting(db: DB, key: string, value: string | null): void {
   `).run(key, value)
 }
 
-/** يُستدعى مرة عند كل إطلاق (بعد initDB مباشرة) — no-op بعد أول مرة */
-export function ensurePasswordSeeded(db: DB): void {
-  if (getSetting(db, KEYS.passwordHash)) return
-  setSetting(db, KEYS.passwordHash, bcrypt.hashSync(DEFAULT_PASSWORD, SALT_ROUNDS))
+/* M2: لا كلمة سر افتراضية بعد الآن. أول تشغيل بلا hash مخزَّن ⇒ تُعرَض شاشة
+   "تعيين كلمة السر" وتُجبَر على تحديد كلمة سرّها الخاصة قبل الدخول.
+   القواعد الموجودة مسبقاً (التي فيها hash من إصدار سابق) لا تتأثر. */
+
+/** true إذا لم تُعيَّن كلمة سر بعد (أول تشغيل) — تعرض الواجهة عندها شاشة التعيين */
+export function needsPasswordSetup(db: DB): boolean {
+  return !getSetting(db, KEYS.passwordHash)
+}
+
+/** يعيّن كلمة السر الأولى (أول تشغيل فقط). يرفض إن وُجدت كلمة سر مسبقاً. */
+export function setInitialPassword(db: DB, password: string): void {
+  if (getSetting(db, KEYS.passwordHash)) {
+    throw new Error('كلمة السر معيَّنة مسبقاً')
+  }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`كلمة السر يجب أن تكون ${MIN_PASSWORD_LENGTH} أحرف على الأقل`)
+  }
+  setSetting(db, KEYS.passwordHash, bcrypt.hashSync(password, SALT_ROUNDS))
 }
 
 /* ── القفل عند تجاوز المحاولات ── */

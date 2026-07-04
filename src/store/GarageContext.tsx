@@ -129,6 +129,9 @@ export type WarrantyRecord = {
 
 /* ── Upcoming Cheques (الشيكات المستحقة قريباً) — قراءة فقط ── */
 export type UpcomingChequeSource = 'maintenance' | 'direct_sale' | 'supplier' | 'supplier_debt'
+// M3: حالة الشيك ونوع جدوله (لتغيير الحالة عبر cheque:updateStatus)
+export type ChequeStatusUi = 'pending' | 'cashed' | 'bounced'
+export type ChequeKindUi = 'payment' | 'debt' | 'supplier_payment' | 'supplier_debt'
 export type UpcomingCheque = {
   source: UpcomingChequeSource
   partyName: string
@@ -137,6 +140,9 @@ export type UpcomingCheque = {
   amount: number
   cashDate: string
   daysRemaining: number
+  status: ChequeStatusUi
+  chequeKind: ChequeKindUi
+  paymentId: number
 }
 
 /* ── Cheques (كل الشيكات — صفحة الشيكات) — قراءة فقط ── */
@@ -163,11 +169,20 @@ export type LinkedOp = {
 /* ════════════════════════════════════════
    Context Type
 ════════════════════════════════════════ */
+/* M10: نطاقات إعادة الجلب — كل عملية كتابة تعيد جلب المجالات المتأثرة فقط بدل
+   الجداول الأحد عشر كلها. استدعاء reload() بلا وسيط = إعادة جلب شاملة (للحالات
+   التي تمسّ المال وتنعكس على عدة شاشات). */
+export type ReloadDomain =
+  | 'maintenance' | 'directSale' | 'salesInvoices' | 'purchaseInvoices'
+  | 'supplierInvoices' | 'suppliers' | 'expenses' | 'employees'
+  | 'salaries' | 'debts' | 'warranties'
+
 type GarageContextType = {
   /* status */
   loading:          boolean
-  /* يعيد جلب كل البيانات من قاعدة البيانات (يُستدعى بعد كل عملية كتابة ناجحة) */
-  reload:           () => Promise<void>
+  /* يعيد جلب البيانات من قاعدة البيانات. بلا وسيط = كل الجداول؛ مع نطاقات =
+     المجالات المتأثرة فقط. يُستدعى بعد كل عملية كتابة ناجحة. */
+  reload:           (domains?: ReloadDomain[]) => Promise<void>
   /* data */
   maintenanceCars:  CarRecord[];       setMaintenanceCars:  React.Dispatch<React.SetStateAction<CarRecord[]>>
   directSales:      SaleRecord[];      setDirectSales:      React.Dispatch<React.SetStateAction<SaleRecord[]>>
@@ -206,33 +221,23 @@ export function GarageProvider({ children }: { children: ReactNode }) {
   const [warranties,       setWarranties]       = useState<WarrantyRecord[]>([])
   const [loading,          setLoading]          = useState(true)
 
-  /* ── جلب كل البيانات من قاعدة البيانات (تحميل أولي + إعادة مزامنة) ── */
-  const reload = useCallback(async (): Promise<void> => {
-    const [cars, sales, salesInv, purchaseInv, supplierInv, suppliersList, exp, emp, sal, debt, warr] =
-      await Promise.all([
-        dbService.maintenance.getAll(),
-        dbService.directSale.getAll(),
-        dbService.salesInvoice.getAll(),
-        dbService.purchaseInvoice.getAll(),
-        dbService.supplierInvoice.getAll(),
-        dbService.suppliers.getAll(),
-        dbService.expense.getAll(),
-        dbService.employee.getAll(),
-        dbService.salary.getAll(),
-        dbService.debt.getAll(),
-        dbService.warranty.getAll(),
-      ])
-    setMaintenanceCars(cars)
-    setDirectSales(sales)
-    setSalesInvoices(salesInv)
-    setPurchaseInvoices(purchaseInv)
-    setSupplierInvoices(supplierInv)
-    setSuppliers(suppliersList)
-    setExpenses(exp)
-    setEmployees(emp)
-    setSalaries(sal)
-    setDebts(debt)
-    setWarranties(warr)
+  /* ── جلب البيانات من قاعدة البيانات (تحميل أولي + إعادة مزامنة انتقائية) ──
+     M10: عند تمرير نطاقات، تُجلَب وتُحدَّث المجالات المطلوبة فقط بالتوازي. */
+  const reload = useCallback(async (domains?: ReloadDomain[]): Promise<void> => {
+    const want = (d: ReloadDomain) => !domains || domains.includes(d)
+    await Promise.all([
+      want('maintenance')      && dbService.maintenance.getAll().then(setMaintenanceCars),
+      want('directSale')       && dbService.directSale.getAll().then(setDirectSales),
+      want('salesInvoices')    && dbService.salesInvoice.getAll().then(setSalesInvoices),
+      want('purchaseInvoices') && dbService.purchaseInvoice.getAll().then(setPurchaseInvoices),
+      want('supplierInvoices') && dbService.supplierInvoice.getAll().then(setSupplierInvoices),
+      want('suppliers')        && dbService.suppliers.getAll().then(setSuppliers),
+      want('expenses')         && dbService.expense.getAll().then(setExpenses),
+      want('employees')        && dbService.employee.getAll().then(setEmployees),
+      want('salaries')         && dbService.salary.getAll().then(setSalaries),
+      want('debts')            && dbService.debt.getAll().then(setDebts),
+      want('warranties')       && dbService.warranty.getAll().then(setWarranties),
+    ].filter(Boolean) as Promise<void>[])
   }, [])
 
   /* ── Initial load ── */

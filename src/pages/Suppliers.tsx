@@ -7,7 +7,7 @@ import CollapsibleCard from '../components/CollapsibleCard'
 import NameAutocomplete from '../components/NameAutocomplete'
 import SupplierInvoiceForm, { hasSupplierDraft, clearSupplierDraft, type SupplierInvoiceFormHandle } from '../components/forms/SupplierInvoiceForm'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { applyDiscount } from '../db/discount'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
@@ -64,17 +64,17 @@ function printSupplierInvoice(
   const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
   const rows = sup.items.map(item => `
     <tr>
-      <td>${item.name}</td>
+      <td>${esc(item.name)}</td>
       <td>${item.quantity}</td>
       <td>${fmt(item.unitPrice)} ₪</td>
       <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
-      <td>${itemDiscountLabel(item)}</td>
+      <td>${esc(itemDiscountLabel(item))}</td>
       <td>${fmt(itemNetTotal(item))} ₪</td>
-      <td>${item.notes || '—'}</td>
+      <td>${item.notes ? esc(item.notes) : '—'}</td>
     </tr>`).join('')
   const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
     <tr>
-      <td>${PAY_AR[p.method] || p.method}</td>
+      <td>${PAY_AR[p.method] || esc(p.method)}</td>
       <td class="amount-in">${fmt(p.amount)} ₪</td>
     </tr>`).join('')
     + (settlementTotal > 0 ? `
@@ -84,11 +84,11 @@ function printSupplierInvoice(
     </tr>` : '')
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>رقم الفاتورة</label><span>${sup.invoiceNumber || '—'}</span></div>
-      <div class="detail-item"><label>اسم المورد</label><span>${sup.supplierName}</span></div>
-      <div class="detail-item"><label>رقم الهاتف</label><span>${sup.phone && sup.phone !== '0000' ? sup.phone : 'غير معروف'}</span></div>
-      <div class="detail-item"><label>تاريخ الشراء</label><span>${sup.purchaseDate}</span></div>
-      ${sup.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${sup.notes}</span></div>` : ''}
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${sup.invoiceNumber ? esc(sup.invoiceNumber) : '—'}</span></div>
+      <div class="detail-item"><label>اسم المورد</label><span>${esc(sup.supplierName)}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${sup.phone && sup.phone !== '0000' ? esc(sup.phone) : 'غير معروف'}</span></div>
+      <div class="detail-item"><label>تاريخ الشراء</label><span>${esc(sup.purchaseDate)}</span></div>
+      ${sup.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(sup.notes)}</span></div>` : ''}
     </div>
     <table>
       <thead><tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الخصم</th><th>بعد الخصم</th><th>ملاحظات</th></tr></thead>
@@ -269,7 +269,7 @@ export default function Suppliers() {
     try {
       if (editingSup) await dbService.suppliers.update(supData)
       else            await dbService.suppliers.add(supData)
-      await reload()
+      await reload(['suppliers'])   // M10: دليل الموردين فقط
       clearSupForm()
     } catch (err) {
       showError('تعذّر حفظ المورد', err)
@@ -327,7 +327,7 @@ export default function Suppliers() {
     const rows = payRows.filter(r => r.amount > 0)
     try {
       await dbService.supplierInvoice.addDebtPayment(paySup.id, rows, payDate, settleNum)
-      await reload()
+      await reload(['supplierInvoices', 'purchaseInvoices'])   // M10
       setPaySup(null)
     } catch (err) {
       showError('تعذّر تسجيل دفعة المورد', err)
@@ -846,7 +846,7 @@ export default function Suppliers() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف المورد "${deleteSupplier.name}"؟`}
           onConfirm={async () => {
-            try { await dbService.suppliers.delete(deleteSupplier.id); await reload(); setDeleteSupplier(null) }
+            try { await dbService.suppliers.delete(deleteSupplier.id); await reload(['suppliers']); setDeleteSupplier(null) }
             catch (err) { showError('تعذّر حذف المورد', err) }
           }}
           onCancel={() => setDeleteSupplier(null)}
@@ -859,7 +859,7 @@ export default function Suppliers() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف فاتورة المورد "${deleteSup.supplierName}"؟`}
           onConfirm={async () => {
-            try { await dbService.supplierInvoice.delete(deleteSup.id); await reload(); setDeleteSup(null) }
+            try { await dbService.supplierInvoice.delete(deleteSup.id); await reload(['supplierInvoices', 'purchaseInvoices']); setDeleteSup(null) }
             catch (err) { showError('تعذّر حذف فاتورة المورد', err) }
           }}
           onCancel={() => setDeleteSup(null)}

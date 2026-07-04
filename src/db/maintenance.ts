@@ -3,6 +3,7 @@ import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, SALES_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import { applyDiscount } from './discount'
 import { applySettlementDiscount } from './payments'
+import { insertChequeOrVisaDetails } from './validate'
 import type {
   DiscountType,
   MaintenanceInvoiceInput,
@@ -65,33 +66,28 @@ function insertPayments(
 
     const payId = Number(lastInsertRowid)
 
-    if (p.method === 'cheque') {
-      db.prepare(`
-        INSERT INTO payment_cheque (payment_id, cheque_number, issue_date, cash_date, bank_name)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(payId, p.chequeNumber!, p.issueDate!, p.cashDate!, p.bankName!)
-    } else if (p.method === 'visa') {
-      db.prepare(`
-        INSERT INTO payment_visa (payment_id, bank_name, transaction_number)
-        VALUES (?, ?, ?)
-      `).run(payId, p.bankName!, p.transactionNumber!)
-    }
+    insertChequeOrVisaDetails(db, payId, p, { cheque: 'payment_cheque', visa: 'payment_visa' })
 
-    // Update invoice amounts
+    // Update invoice amounts (الشيك يُحتسب مدفوعاً على الفاتورة عند الاستلام)
     db.prepare(`
       UPDATE maintenance_invoices
       SET amount_paid = amount_paid + ?, amount_remaining = amount_remaining - ?
       WHERE id = ?
     `).run(p.amount, p.amount, invoiceId)
 
-    recordLedgerEntry({
-      transaction_date: paymentDate,
-      reference_type: ledgerRefType,
-      reference_id: payId,
-      amount_in: p.amount,
-      amount_out: 0,
-      notes: `${invoiceLabel} #${invoiceId} — ${p.method}`,
-    })
+    // M3: الشيك لا يُسجَّل نقداً في الصندوق عند الاستلام — فقط عند صرفه فعلياً
+    // (عبر cheque:updateStatus). النقد/الفيزا يُسجَّلان فوراً كما هو.
+    if (p.method !== 'cheque') {
+      recordLedgerEntry({
+        transaction_date: paymentDate,
+        reference_type: ledgerRefType,
+        reference_id: payId,
+        amount_in: p.amount,
+        amount_out: 0,
+        method: p.method as 'cash' | 'visa',
+        notes: `${invoiceLabel} #${invoiceId} — ${p.method}`,
+      })
+    }
   }
 }
 

@@ -217,6 +217,34 @@ export interface MaintenanceUpdateInput {
   items: InvoiceItemInput[]
 }
 
+/* ── C2: تحديث الترويسة فقط (بلا items) ──
+   الشاشات المجمّعة (فواتير البيع/الديون المعلقة) لا تعرض البنود ولا تعدّلها،
+   فيجب ألّا ترسل items إطلاقاً — إرسال [] كان يعني في عقد maintenance:update
+   "استبدل كل البنود بلا شيء" فيمسح بنود الفاتورة ويصفّر إجماليها. */
+export type CarHeaderFields = {
+  customerName?: string
+  phone?: string
+  carPlate?: string
+  carType?: string
+  carColor?: string
+  dateReceived?: string
+  notes?: string
+}
+
+/** CarHeaderFields (واجهة) → مدخلات maintenance:update جزئية (بلا items) —
+    يُرسل فقط الحقول المُمرَّرة فعلاً؛ ما لم يُمرَّر يبقى مخزَّناً كما هو. */
+export function carHeaderToUpdateInput(f: CarHeaderFields): Partial<MaintenanceUpdateInput> {
+  const out: Partial<MaintenanceUpdateInput> = {}
+  if (f.customerName !== undefined) out.customer_name  = f.customerName
+  if (f.phone        !== undefined) out.customer_phone = phoneToDb(f.phone)
+  if (f.carPlate     !== undefined) out.car_plate      = f.carPlate
+  if (f.carType      !== undefined) out.car_type       = f.carType || undefined
+  if (f.carColor     !== undefined) out.car_color      = f.carColor || undefined
+  if (f.dateReceived !== undefined) out.date_received  = f.dateReceived
+  if (f.notes        !== undefined) out.notes          = f.notes || undefined
+  return out
+}
+
 /** CarRecord (واجهة) → مدخلات maintenance:update (DB) — يحوّل البنود بنفس منطق الإضافة */
 export function carToUpdateInput(car: CarRecord): MaintenanceUpdateInput {
   return {
@@ -584,6 +612,9 @@ export function dbRowToUpcomingCheque(r: UpcomingChequeRow): UpcomingCheque {
     amount: r.amount,
     cashDate: r.cash_date,
     daysRemaining: r.days_remaining,
+    status: r.status,
+    chequeKind: r.cheque_kind,
+    paymentId: r.payment_id,
   }
 }
 

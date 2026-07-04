@@ -5,7 +5,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import MaintenanceForm, { hasMaintenanceDraft, clearMaintenanceDraft, type MaintenanceFormHandle } from '../components/forms/MaintenanceForm'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { useSettlementTotal } from '../utils/useSettlementTotal'
@@ -301,7 +301,7 @@ export default function MaintenanceInvoices() {
     const rows = paymentRows.filter(r => Number(r.amount) > 0)
     try {
       await dbService.maintenance.deliver(deliveryCar.id, deliveryDate, rows, settleNum)
-      await reload()
+      await reload(['maintenance', 'salesInvoices', 'debts'])   // M10
       setConfirmDeliveryDebt(false)
       setDeliveryCar(null)
     } catch (err) {
@@ -323,17 +323,17 @@ export default function MaintenanceInvoices() {
       const rows = full.items.map(item => `
         <tr>
           <td>${item.partType === 'service' ? 'خدمة' : 'قطعة'}</td>
-          <td>${item.name}</td>
+          <td>${esc(item.name)}</td>
           <td>${item.quantity}</td>
           <td>${fmt(item.unitPrice)} ₪</td>
           <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
-          <td>${warrantyLabel(item.warranty)}</td>
-          <td>${item.notes || '—'}</td>
+          <td>${esc(warrantyLabel(item.warranty))}</td>
+          <td>${item.notes ? esc(item.notes) : '—'}</td>
         </tr>`).join('')
       const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
       const payRows = payments.filter(p => Number(p.amount) > 0).map(p => `
         <tr>
-          <td>${PAY_AR[p.method] || p.method}</td>
+          <td>${PAY_AR[p.method] || esc(p.method)}</td>
           <td class="amount-in">${fmt(p.amount)} ₪</td>
         </tr>`).join('')
         + (settlementTotal > 0 ? `
@@ -343,15 +343,15 @@ export default function MaintenanceInvoices() {
         </tr>` : '')
       const body = `
         <div class="detail-grid">
-          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber || '—'}</span></div>
-          <div class="detail-item"><label>اسم الزبون</label><span>${full.customerName}</span></div>
-          <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? full.phone : 'غير معروف'}</span></div>
-          <div class="detail-item"><label>نمرة السيارة</label><span>${full.carPlate}</span></div>
-          <div class="detail-item"><label>نوع السيارة</label><span>${full.carType || '—'}</span></div>
-          <div class="detail-item"><label>اللون</label><span>${full.carColor || '—'}</span></div>
-          <div class="detail-item"><label>تاريخ الاستلام</label><span>${full.dateReceived}</span></div>
-          ${full.deliveredDate ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${full.deliveredDate}</span></div>` : ''}
-          ${full.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${full.notes}</span></div>` : ''}
+          <div class="detail-item"><label>رقم الفاتورة</label><span>${full.invoiceNumber ? esc(full.invoiceNumber) : '—'}</span></div>
+          <div class="detail-item"><label>اسم الزبون</label><span>${esc(full.customerName)}</span></div>
+          <div class="detail-item"><label>رقم الهاتف</label><span>${full.phone && full.phone !== '0000' ? esc(full.phone) : 'غير معروف'}</span></div>
+          <div class="detail-item"><label>نمرة السيارة</label><span>${esc(full.carPlate)}</span></div>
+          <div class="detail-item"><label>نوع السيارة</label><span>${full.carType ? esc(full.carType) : '—'}</span></div>
+          <div class="detail-item"><label>اللون</label><span>${full.carColor ? esc(full.carColor) : '—'}</span></div>
+          <div class="detail-item"><label>تاريخ الاستلام</label><span>${esc(full.dateReceived)}</span></div>
+          ${full.deliveredDate ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${esc(full.deliveredDate)}</span></div>` : ''}
+          ${full.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(full.notes)}</span></div>` : ''}
         </div>
         ${full.items.length > 0 ? `
         <table>
@@ -800,7 +800,7 @@ export default function MaintenanceInvoices() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف سيارة "${deleteCar.customerName}" — ${deleteCar.carPlate}؟`}
           onConfirm={async () => {
-            try { await dbService.maintenance.delete(deleteCar.id); await reload(); setDeleteCar(null) }
+            try { await dbService.maintenance.delete(deleteCar.id); await reload(['maintenance', 'salesInvoices', 'debts', 'warranties']); setDeleteCar(null) }
             catch (err) { showError('تعذّر حذف السيارة', err) }
           }}
           onCancel={() => setDeleteCar(null)}

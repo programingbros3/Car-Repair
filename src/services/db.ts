@@ -43,12 +43,13 @@ import type {
   CashAuditRow, CashAuditInput, CashSystemBreakdown,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
-  UpcomingChequeRow, ChequeRow, ChequeFilters,
+  UpcomingChequeRow, ChequeRow, ChequeFilters, ChequeStatus, ChequeTableKind,
   DebtAgingRow,
 } from '../db/types'
 
+import type { CarHeaderFields } from '../utils/dbMapper'
 import {
-  carToDbInput, carToUpdateInput, dbRowToCarRecord,
+  carToDbInput, carToUpdateInput, carHeaderToUpdateInput, dbRowToCarRecord,
   saleToDbInput, saleItemToDbInput, dbRowToSaleRecord,
   supplierToDbInput, dbRowToSupplierRecord,
   expenseToDbInput, dbRowToExpense,
@@ -102,6 +103,11 @@ export const dbService = {
     update: (car: CarRecord) =>
       invoke<void>('maintenance:update', car.id, carToUpdateInput(car)),
 
+    // C2: تحديث ترويسة الفاتورة فقط (اسم/هاتف/نمرة/تاريخ/ملاحظات) دون إرسال items —
+    // للشاشات المجمّعة التي لا تعرض البنود (فواتير البيع، الديون المعلقة).
+    updateHeader: (id: number, fields: CarHeaderFields) =>
+      invoke<void>('maintenance:update', id, carHeaderToUpdateInput(fields)),
+
     deliver: (invoiceId: number, date: string, payments: PaymentRow[] = [], settlementDiscount = 0) =>
       invoke<void>('maintenance:deliver', {
         invoiceId,
@@ -131,6 +137,16 @@ export const dbService = {
     update: (sale: SaleRecord) =>
       invoke<void>('directSale:update', sale.id, saleToDbInput(sale)),
 
+    // H1: تحديث ترويسة الفاتورة فقط دون المساس بالكفالة/البنود — للشاشات المجمّعة
+    // التي لا تعرض الكفالة (القناة الكاملة أعلاه تكتب warranty/notes بلا شروط).
+    updateHeader: (id: number, fields: { customerName?: string; phone?: string; saleDate?: string; notes?: string }) =>
+      invoke<void>('directSale:updateHeader', id, {
+        ...(fields.customerName !== undefined ? { customer_name: fields.customerName } : {}),
+        ...(fields.phone        !== undefined ? { customer_phone: fields.phone === '0000' || !fields.phone ? undefined : fields.phone } : {}),
+        ...(fields.saleDate     !== undefined ? { sale_date: fields.saleDate } : {}),
+        ...(fields.notes        !== undefined ? { notes: fields.notes } : {}),
+      }),
+
     // discount (اختياري): يُطبَّق ذرّياً مع البنود الجديدة في نفس transaction
     // (لا يُقيَّم الخصم الجديد مقابل البنود القديمة)
     updateItems: (id: number, items: SaleItem[], discount?: { type: DiscountTypeUi | null; value: number }) =>
@@ -159,6 +175,15 @@ export const dbService = {
 
     update: (sup: SupplierRecord) =>
       invoke<void>('supplierInvoice:update', sup.id, supplierToDbInput(sup)),
+
+    // C2: تحديث ترويسة الفاتورة فقط دون إرسال items — لشاشة فواتير الشراء المجمّعة.
+    updateHeader: (id: number, fields: { supplierName?: string; phone?: string; purchaseDate?: string; notes?: string }) =>
+      invoke<void>('supplierInvoice:updateHeader', id, {
+        ...(fields.supplierName !== undefined ? { supplier_name: fields.supplierName } : {}),
+        ...(fields.phone        !== undefined ? { supplier_phone: fields.phone === '0000' || !fields.phone ? undefined : fields.phone } : {}),
+        ...(fields.purchaseDate !== undefined ? { purchase_date: fields.purchaseDate } : {}),
+        ...(fields.notes        !== undefined ? { notes: fields.notes } : {}),
+      }),
 
     addPayment: (invoiceId: number, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
       invoke<void>('supplierInvoice:addPayment', invoiceId, payments.map(paymentRowToDbInput), date, settlementDiscount),
@@ -299,6 +324,9 @@ export const dbService = {
       invoke<ChequeRow[]>('cheques:getAll', filters).then(rows =>
         rows.map(dbRowToCheque),
       ),
+    // M3: تغيير حالة الشيك (معلّق/مصروف/مرتدّ)
+    updateStatus: (kind: ChequeTableKind, paymentId: number, status: ChequeStatus) =>
+      invoke<{ paymentId: number; status: ChequeStatus }>('cheque:updateStatus', kind, paymentId, status),
   },
 
   /* ─────────────── التقارير (قراءة فقط، أنواع DB) ─────────────── */
@@ -328,6 +356,8 @@ export const dbService = {
 
   /* ─────────────── الأمان: كلمة السر / القفل عند تجاوز المحاولات / القفل التلقائي ─────────────── */
   auth: {
+    needsPasswordSetup: () => invoke<boolean>('auth:needsPasswordSetup'),
+    setInitialPassword: (password: string) => invoke<void>('auth:setInitialPassword', password),
     verifyPassword: (password: string) => invoke<PasswordVerifyResult>('auth:verifyPassword', password),
     changePassword: (oldPassword: string, newPassword: string) =>
       invoke<void>('auth:changePassword', oldPassword, newPassword),

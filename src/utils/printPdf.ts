@@ -1,13 +1,25 @@
 import tajawal400 from '@fontsource/tajawal/400.css?inline'
 import tajawal700 from '@fontsource/tajawal/700.css?inline'
 
+/* H3: كل قيمة مصدرها المستخدم (اسم زبون، ملاحظة، اسم قطعة…) يجب أن تمرّ من هنا
+   قبل حقنها في HTML الطباعة — وإلا نفّذت نافذة الطباعة أي وسوم/سكربتات مكتوبة
+   داخل البيانات (حقن HTML مخزَّن). تُستخدم في printPdf نفسها وفي كل المستدعين. */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export function printPdf(title: string, bodyHtml: string): void {
   const win = window.open('', '_blank', 'width=794,height=1123')
   if (!win) return
   win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar">
 <head>
   <meta charset="UTF-8"/>
-  <title>${title}</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     ${tajawal400}
     ${tajawal700}
@@ -33,7 +45,7 @@ export function printPdf(title: string, bodyHtml: string): void {
 <body>
   <div class="header">
     <h1>🔧 كراج الخط الأخضر</h1>
-    <h2>${title}</h2>
+    <h2>${escapeHtml(title)}</h2>
   </div>
   ${bodyHtml}
   <div class="footer">تاريخ الطباعة: ${new Date().toLocaleDateString('ar-EG-u-nu-latn', { weekday:'long', year:'numeric', month:'long', day:'numeric' })}</div>

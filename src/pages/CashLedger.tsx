@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import type { LedgerRow, CashAuditRow, CashSystemBreakdown } from '../db/types'
@@ -60,11 +60,13 @@ const fmt      = (n: number) => Math.abs(n).toLocaleString('en-US')
 // للمجاميع/الفروق/الصافي القابلة للسالب فعلياً: يُظهر علامة السالب صراحةً (يبقى اللون أحمر)
 const fmtSigned = (n: number) => (n < 0 ? '−' : '') + fmt(n)
 
-// يستخرج طريقة الدفع من الملاحظة (صيغة: "وصف #N — cash")
+// M9: طريقة الدفع تُقرأ من عمود method الفعلي. يبقى الاستخراج النصي احتياطاً
+// للصفوف القديمة جداً التي قد لا يكون method فيها مملوءاً (نادر بعد الترحيل).
 const extractMethod = (notes: string | null): string => {
   const m = (notes ?? '').match(/[—–-]\s*(cash|visa|cheque|debt)\s*$/i)
   return m ? m[1].toLowerCase() : ''
 }
+const rowMethod = (r: LedgerRow): string => r.method ?? extractMethod(r.notes)
 
 const baseNote = (notes: string | null): string =>
   (notes ?? '').replace(/\s*[—–-]\s*(cash|visa|cheque|debt)\s*$/i, '').trim()
@@ -95,7 +97,7 @@ const groupEntries = (entries: LedgerRow[]): DisplayRow[] => {
 
     const breakdown: PaymentBreakdown[] = group
       .map(r => ({
-        method: extractMethod(r.notes),
+        method: rowMethod(r),
         amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
       }))
       .filter(b => b.method && b.amount > 0)
@@ -341,7 +343,7 @@ export default function CashLedger() {
     const statusTxt = Math.abs(rec.difference) < 0.001 ? 'مطابق' : rec.difference > 0 ? 'زيادة' : 'نقص'
     const body = `
       <div class="detail-grid">
-        <div class="detail-item"><label>التاريخ</label><span>${rec.audit_date}</span></div>
+        <div class="detail-item"><label>التاريخ</label><span>${esc(rec.audit_date)}</span></div>
         <div class="detail-item"><label>إجمالي النظام</label><span class="mi-amount">${fmtSigned(rec.system_total)} ₪</span></div>
         <div class="detail-item"><label>المبلغ الفعلي</label><span class="mi-amount">${fmt(rec.actual_amount)} ₪</span></div>
         <div class="detail-item"><label>الفرق</label><span class="${diffCls}">${diffSign}${fmt(rec.difference)} ₪</span></div>
@@ -357,12 +359,12 @@ export default function CashLedger() {
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>رقم العملية</label><span>${tx.id}</span></div>
-        <div class="detail-item"><label>التاريخ</label><span>${tx.date}</span></div>
+        <div class="detail-item"><label>التاريخ</label><span>${esc(tx.date)}</span></div>
         <div class="detail-item"><label>النوع</label><span class="${amountCls}">${TYPE_LABELS[tx.type]}</span></div>
-        <div class="detail-item"><label>المصدر</label><span>${tx.sourceLabel}</span></div>
+        <div class="detail-item"><label>المصدر</label><span>${esc(tx.sourceLabel)}</span></div>
         <div class="detail-item"><label>المبلغ</label><span class="${amountCls}">${sign}${fmt(tx.amount)} ₪</span></div>
         <div class="detail-item"><label>الرصيد بعد العملية</label><span>${fmt(tx.balanceAfter)} ₪</span></div>
-        ${tx.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${tx.notes}</span></div>` : ''}
+        ${tx.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${esc(tx.notes)}</span></div>` : ''}
       </div>`
     printPdf('إيصال عملية صندوق', body)
   }

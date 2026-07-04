@@ -1,5 +1,6 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, recomputeLedgerBalances, REF } from './ledger'
+import { assertPositiveAmount, assertNonNegative, assertNonEmpty } from './validate'
 import type {
   DailyExpenseInput,
   DailyExpenseRow,
@@ -29,6 +30,10 @@ const SALARY_COLS = `
 
 export function addDailyExpense(input: DailyExpenseInput): number {
   const db = getDB()
+
+  // M5: تحقّق دفاعي — الوصف مطلوب والمبلغ أكبر من صفر
+  assertNonEmpty(input.description, 'وصف المصروف')
+  assertPositiveAmount(input.amount, 'مبلغ المصروف')
 
   const run = db.transaction(() => {
     const { lastInsertRowid } = db.prepare(`
@@ -89,6 +94,10 @@ export function getDailyExpenses(filters: ExpenseFilters = {}): DailyExpenseRow[
 export function addEmployee(input: EmployeeInput): number {
   const db = getDB()
 
+  // M5: الاسم مطلوب واليومية غير سالبة
+  assertNonEmpty(input.name, 'اسم الموظف')
+  assertNonNegative(input.daily_wage, 'اليومية')
+
   const { lastInsertRowid } = db.prepare(`
     INSERT INTO employees (name, phone, daily_wage) VALUES (@name, @phone, @daily_wage)
   `).run({ name: input.name, phone: input.phone ?? null, daily_wage: input.daily_wage })
@@ -98,6 +107,8 @@ export function addEmployee(input: EmployeeInput): number {
 
 export function updateEmployee(id: number, input: EmployeeInput): void {
   const db = getDB()
+  assertNonEmpty(input.name, 'اسم الموظف')
+  assertNonNegative(input.daily_wage, 'اليومية')
   db.prepare(`UPDATE employees SET name=?, phone=?, daily_wage=? WHERE id=?`)
     .run(input.name, input.phone ?? null, input.daily_wage, id)
 }
@@ -117,8 +128,15 @@ export function addSalaryPayment(employeeId: number, input: SalaryInput): number
       'SELECT name, daily_wage FROM employees WHERE id = ?'
     ).get(employeeId) as { name: string; daily_wage: number } | undefined
 
+    // M5: القيم غير سالبة، والصافي لا يجوز أن يكون سالباً (الخصم أكبر من المستحق)
+    assertNonNegative(input.days_worked, 'عدد أيام الدوام')
+    assertNonNegative(input.bonus, 'البونص')
+    assertNonNegative(input.deduction, 'الخصم')
     const dailyWage = emp?.daily_wage ?? 0
     const amount = dailyWage * input.days_worked + input.bonus - input.deduction
+    if (amount < 0) {
+      throw new Error('صافي الراتب لا يمكن أن يكون سالباً — الخصم يتجاوز المستحق')
+    }
 
     const { lastInsertRowid } = db.prepare(`
       INSERT INTO salary_payments
@@ -152,9 +170,15 @@ export function updateSalaryPayment(id: number, input: SalaryInput): void {
       'SELECT daily_wage_snapshot, employee_id FROM salary_payments WHERE id = ?'
     ).get(id) as { daily_wage_snapshot: number; employee_id: number } | undefined
 
-    if (!existing) throw new Error(`salary payment ${id} not found`)
+    if (!existing) throw new Error('دفعة الراتب غير موجودة')
 
+    assertNonNegative(input.days_worked, 'عدد أيام الدوام')
+    assertNonNegative(input.bonus, 'البونص')
+    assertNonNegative(input.deduction, 'الخصم')
     const amount = existing.daily_wage_snapshot * input.days_worked + input.bonus - input.deduction
+    if (amount < 0) {
+      throw new Error('صافي الراتب لا يمكن أن يكون سالباً — الخصم يتجاوز المستحق')
+    }
 
     db.prepare(`
       UPDATE salary_payments

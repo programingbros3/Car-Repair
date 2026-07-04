@@ -1,5 +1,6 @@
 import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
+import { insertChequeOrVisaDetails } from './validate'
 import type { InvoiceType, PaymentInput, PendingDebt, DebtFilters } from './types'
 
 // ─── Internal: resolve table and ledger ref from invoice type ─────────────────
@@ -72,17 +73,7 @@ export function addPayment(
 
       const payId = Number(lastInsertRowid)
 
-      if (p.method === 'cheque') {
-        db.prepare(`
-          INSERT INTO payment_cheque (payment_id, cheque_number, issue_date, cash_date, bank_name)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(payId, p.chequeNumber!, p.issueDate!, p.cashDate!, p.bankName!)
-      } else if (p.method === 'visa') {
-        db.prepare(`
-          INSERT INTO payment_visa (payment_id, bank_name, transaction_number)
-          VALUES (?, ?, ?)
-        `).run(payId, p.bankName!, p.transactionNumber!)
-      }
+      insertChequeOrVisaDetails(db, payId, p, { cheque: 'payment_cheque', visa: 'payment_visa' })
 
       db.prepare(`
         UPDATE ${table}
@@ -90,14 +81,18 @@ export function addPayment(
         WHERE id = ?
       `).run(p.amount, p.amount, invoiceId)
 
-      recordLedgerEntry({
-        transaction_date: paymentDate,
-        reference_type: refType,
-        reference_id: payId,
-        amount_in: p.amount,
-        amount_out: 0,
-        notes: `دفعة ${label} #${invoiceId}`,
-      })
+      // M3: الشيك لا يُسجَّل نقداً في الصندوق إلا عند صرفه فعلياً (cheque:updateStatus)
+      if (p.method !== 'cheque') {
+        recordLedgerEntry({
+          transaction_date: paymentDate,
+          reference_type: refType,
+          reference_id: payId,
+          amount_in: p.amount,
+          amount_out: 0,
+          method: p.method as 'cash' | 'visa',
+          notes: `دفعة ${label} #${invoiceId}`,
+        })
+      }
     }
 
     // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية في cash_ledger
@@ -139,17 +134,7 @@ export function addDebtPayment(
 
       const payId = Number(lastInsertRowid)
 
-      if (p.method === 'cheque') {
-        db.prepare(`
-          INSERT INTO debt_payment_cheque (payment_id, cheque_number, issue_date, cash_date, bank_name)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(payId, p.chequeNumber!, p.issueDate!, p.cashDate!, p.bankName!)
-      } else if (p.method === 'visa') {
-        db.prepare(`
-          INSERT INTO debt_payment_visa (payment_id, bank_name, transaction_number)
-          VALUES (?, ?, ?)
-        `).run(payId, p.bankName!, p.transactionNumber!)
-      }
+      insertChequeOrVisaDetails(db, payId, p, { cheque: 'debt_payment_cheque', visa: 'debt_payment_visa' })
 
       db.prepare(`
         UPDATE ${table}
@@ -157,14 +142,18 @@ export function addDebtPayment(
         WHERE id = ?
       `).run(p.amount, p.amount, invoiceId)
 
-      recordLedgerEntry({
-        transaction_date: paymentDate,
-        reference_type: REF.DEBT_CUSTOMER,
-        reference_id: payId,
-        amount_in: p.amount,
-        amount_out: 0,
-        notes: `سداد دين ${label} #${invoiceId}`,
-      })
+      // M3: الشيك لا يُسجَّل نقداً في الصندوق إلا عند صرفه فعلياً (cheque:updateStatus)
+      if (p.method !== 'cheque') {
+        recordLedgerEntry({
+          transaction_date: paymentDate,
+          reference_type: REF.DEBT_CUSTOMER,
+          reference_id: payId,
+          amount_in: p.amount,
+          amount_out: 0,
+          method: p.method as 'cash' | 'visa',
+          notes: `سداد دين ${label} #${invoiceId}`,
+        })
+      }
     }
 
     // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية في cash_ledger

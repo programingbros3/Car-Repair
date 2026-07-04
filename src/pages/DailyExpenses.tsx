@@ -5,7 +5,7 @@ import type { Expense } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ExpenseForm, { hasExpenseDraft, clearExpenseDraft, type ExpenseFormHandle } from '../components/forms/ExpenseForm'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 
@@ -20,10 +20,10 @@ const normalizeAr = (s: string) =>
 function printExpense(exp: Expense): void {
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>الوصف</label><span>${exp.description}</span></div>
+      <div class="detail-item"><label>الوصف</label><span>${esc(exp.description)}</span></div>
       <div class="detail-item"><label>المبلغ</label><span class="amount-out">${exp.amount.toLocaleString('en-US')} ₪</span></div>
-      <div class="detail-item"><label>التاريخ</label><span>${exp.date}</span></div>
-      ${exp.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${exp.notes}</span></div>` : ''}
+      <div class="detail-item"><label>التاريخ</label><span>${esc(exp.date)}</span></div>
+      ${exp.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${esc(exp.notes)}</span></div>` : ''}
     </div>`
   printPdf('مصروف يومي', body)
 }
@@ -287,7 +287,7 @@ export default function DailyExpenses() {
           title="تأكيد الحذف"
           message={`هل أنت متأكد من حذف المصروف "${deleteExp.description}"؟`}
           onConfirm={async () => {
-            try { await dbService.expense.delete(deleteExp.id); await reload(); setDeleteExp(null) }
+            try { await dbService.expense.delete(deleteExp.id); await reload(['expenses', 'purchaseInvoices']); setDeleteExp(null) }
             catch (err) { showError('تعذّر حذف المصروف', err) }
           }}
           onCancel={() => setDeleteExp(null)}

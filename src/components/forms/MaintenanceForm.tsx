@@ -153,7 +153,8 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
     try {
       if (editingCar) await dbService.maintenance.update(carData)
       else            await dbService.maintenance.add(carData)
-      await reload()
+      // M10: الصيانة تؤثّر على قائمتها + فواتير البيع المجمّعة + الديون + الكفالات
+      await reload(['maintenance', 'salesInvoices', 'debts', 'warranties'])
       if (useDraft && !editingCar) localStorage.removeItem(MAINTENANCE_DRAFT_KEY)
       onSaved()
     } catch (err) {

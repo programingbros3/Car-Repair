@@ -104,8 +104,11 @@
   border-left-color: #2ECC71;
 }
 
+/* L10: أيقونة SVG بدل الإيموجي — حجم ثابت لا يتغيّر بين الأنظمة */
 .sidebar-nav li a .nav-icon {
-  font-size: 1.1rem;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
 }
 
 .sidebar-date {
@@ -279,6 +282,20 @@
   font-size: 0.88rem;
   color: #444;
   font-weight: 500;
+}
+
+/* H2: تلميح تحت الحقول المحسوبة تلقائياً (وحقول أخرى تحتاج شرحاً قصيراً) */
+.mi-field-hint {
+  font-size: 0.72rem;
+  color: #888;
+  font-weight: 400;
+}
+
+/* H2: مظهر الحقول المعطَّلة للقراءة فقط */
+.mi-field input:disabled {
+  background: #f0f2f5;
+  color: #777;
+  cursor: not-allowed;
 }
 
 .mi-field input,
@@ -1242,5 +1259,28 @@
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* ════════════════════════════════════════
+   L10: تحسين التجاوب على الشاشات الأضيق
+   (النافذة حدّها الأدنى 1024×640 — راجع M12). نضغط السايدبار والحواشي تدريجياً
+   بدل ترك المحتوى يتكدّس أو يفرض تمريراً أفقياً.
+════════════════════════════════════════ */
+@media (max-width: 1200px) {
+  .sidebar { width: 200px; min-width: 200px; }
+  .sidebar-logo { font-size: 1.4rem; padding: 1.25rem 1rem 0.85rem; }
+  .sidebar-nav li a { padding: 0.7rem 1rem; font-size: 0.9rem; gap: 0.5rem; }
+  .main-content { padding: 1.25rem; }
+  .mi-card { padding: 1.1rem; }
+}
+
+@media (max-width: 1080px) {
+  .sidebar { width: 176px; min-width: 176px; }
+  .sidebar-logo { font-size: 1.2rem; }
+  .sidebar-nav li a { padding: 0.6rem 0.85rem; font-size: 0.85rem; }
+  .main-content { padding: 1rem; }
+  .page-title { font-size: 1.35rem; }
+  /* أشرطة الفلاتر تلتف بدل أن تفيض */
+  .mi-filters, .pd-filter-bar { flex-wrap: wrap; gap: 0.6rem; }
 }
 

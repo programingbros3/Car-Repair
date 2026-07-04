@@ -22,6 +22,9 @@ declare namespace NodeJS {
 }
 
 // Used in Renderer process, expose in `preload.ts`
+// M1: يُعرَّض invoke فقط (بقائمة قنوات مسموحة) — لا on/off/send
 interface Window {
-  ipcRenderer: import('electron').IpcRenderer
+  ipcRenderer: {
+    invoke(channel: string, ...args: unknown[]): Promise<unknown>
+  }
 }

@@ -2,7 +2,7 @@
   "name": "car-repair-shop",
   "private": true,
   "version": "1.0.0",
-  "description": "Comprehensive garage management system for Al-Tal Al-Akhdar Garage, featuring maintenance management, direct sales, customer records, warranties, invoicing, and financial reporting.",
+  "description": "Comprehensive garage management system for Green Line Garage (كراج الخط الأخضر), featuring maintenance management, direct sales, customer records, warranties, invoicing, and financial reporting.",
   "author": "Anas Jaidi, Hashem Khader, Muhammad Mansour",
   "type": "module",
   "scripts": {
@@ -22,7 +22,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.18.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.6",

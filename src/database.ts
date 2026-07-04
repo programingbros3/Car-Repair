@@ -64,6 +64,8 @@ export function initDB(): void {
     `ALTER TABLE debt_payments          ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE supplier_payments      ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE supplier_debt_payments ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
+    // M9: طريقة الدفع كعمود فعلي في الصندوق (بدل استخراجها بـ regex من notes)
+    `ALTER TABLE cash_ledger            ADD COLUMN method TEXT`,
   ]
   for (const sql of migrations) {
     try { db.exec(sql) }
@@ -73,9 +75,87 @@ export function initDB(): void {
     }
   }
 
+  migrateChequeStatus(db)
+  migrateLedgerMethod(db)
+  migrateUniqueInvoiceNumbers(db)
   backfillInvoiceNumbers(db)
 
   console.log('✅ قاعدة البيانات جاهزة:', dbPath)
+}
+
+/**
+ * M3: حالة الشيك (pending | cashed | bounced) + تاريخ الصرف الفعلي.
+ * الشيكات الموجودة قبل هذا الترحيل سبق أن سجّلت قيد صندوق عند الاستلام، لذا
+ * تُعتبر "مصروفة" (cashed) كي لا يتغيّر رصيد الصندوق التاريخي. الشيكات الجديدة
+ * تُدرَج بحالة pending افتراضياً (بلا قيد صندوق حتى الصرف الفعلي).
+ * التحويل إلى cashed يُجرى مرة واحدة فقط عند إضافة العمود (WHERE على الوجود).
+ */
+function migrateChequeStatus(db: BetterSqlite3): void {
+  const chequeTables = [
+    'payment_cheque', 'debt_payment_cheque', 'supplier_payment_cheque', 'supplier_debt_cheque',
+  ]
+  const isDuplicate = (err: unknown) =>
+    err instanceof Error && err.message.includes('duplicate column name')
+
+  for (const t of chequeTables) {
+    let justAdded = false
+    try {
+      db.exec(`ALTER TABLE ${t} ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'`)
+      justAdded = true
+    } catch (err) {
+      if (!isDuplicate(err)) throw err
+    }
+    // فقط عند أول إضافة للعمود: كل الصفوف الموجودة حينها = شيكات قديمة مصروفة
+    if (justAdded) db.exec(`UPDATE ${t} SET status='cashed'`)
+
+    try {
+      db.exec(`ALTER TABLE ${t} ADD COLUMN cashed_date TEXT`)
+    } catch (err) {
+      if (!isDuplicate(err)) throw err
+    }
+  }
+}
+
+/**
+ * M9: يملأ عمود method للصفوف القديمة في cash_ledger من نمط الملاحظة ("… — cash").
+ * يعمل مرة واحدة فعلياً (WHERE method IS NULL) وآمن لإعادة التشغيل. الصفوف بلا
+ * لاحقة طريقة (مصاريف/رواتب) تُعتبر نقدية.
+ */
+function migrateLedgerMethod(db: BetterSqlite3): void {
+  const rows = db.prepare(
+    `SELECT id, notes FROM cash_ledger WHERE method IS NULL`,
+  ).all() as { id: number; notes: string | null }[]
+  if (rows.length === 0) return
+  const upd = db.prepare(`UPDATE cash_ledger SET method = ? WHERE id = ?`)
+  const run = db.transaction(() => {
+    for (const r of rows) {
+      const m = (r.notes ?? '').match(/[—–-]\s*(cash|visa|cheque)\s*$/i)
+      upd.run(m ? m[1].toLowerCase() : 'cash', r.id)
+    }
+  })
+  run()
+}
+
+/**
+ * M7: قيد فريد على invoice_number لكل جدول فواتير (شرطي على IS NOT NULL كي لا
+ * يمنع الصفوف القديمة غير المرقّمة قبل الـ backfill). لو وُجد تكرار فعلي في بيانات
+ * قديمة، نطبع تحذيراً بدل إيقاف الإقلاع (يحتاج تصحيحاً يدوياً، لكن الـ backfill
+ * يضمن التفرّد أصلاً).
+ */
+function migrateUniqueInvoiceNumbers(db: BetterSqlite3): void {
+  const indexes: [string, string][] = [
+    ['idx_uniq_maint_invno', 'maintenance_invoices'],
+    ['idx_uniq_ds_invno',    'direct_sale_invoices'],
+    ['idx_uniq_sup_invno',   'supplier_invoices'],
+  ]
+  for (const [idx, table] of indexes) {
+    try {
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${idx} ON ${table}(invoice_number) WHERE invoice_number IS NOT NULL`)
+    } catch (err) {
+      console.warn(`⚠️ تعذّر إنشاء قيد التفرّد ${idx} (قد يوجد رقم فاتورة مكرّر في ${table}):`,
+        err instanceof Error ? err.message : err)
+    }
+  }
 }
 
 /**

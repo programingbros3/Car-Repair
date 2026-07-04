@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { exportToCsv } from '../utils/exportCsv'
 import { exportToXlsx } from '../utils/exportXlsx'
 import { dbService } from '../services/db'
@@ -299,8 +299,8 @@ export default function Reports() {
       const rows = topCustomers.map((c, i) => `
         <tr>
           <td style="text-align:center;font-weight:700;">${i + 1}</td>
-          <td>${c.customer_name}</td>
-          <td>${c.customer_phone ?? '—'}</td>
+          <td>${esc(c.customer_name)}</td>
+          <td>${c.customer_phone ? esc(c.customer_phone) : '—'}</td>
           <td style="text-align:center;">${c.visit_count}</td>
           <td class="amount-in">${fmt(c.total_spent)} ₪</td>
         </tr>`).join('')
@@ -319,9 +319,9 @@ export default function Reports() {
       const rows = sortedAging.map(d => `
         <tr>
           <td><span class="${AGING_BUCKET_CLS[d.bucket]}">${AGING_BUCKET_LABELS[d.bucket]}</span></td>
-          <td>${d.party_name}</td>
+          <td>${esc(d.party_name)}</td>
           <td>${AGING_KIND_LABELS[d.kind]}</td>
-          <td>${d.invoice_date}</td>
+          <td>${esc(d.invoice_date)}</td>
           <td>${fmt(d.total_amount)} ₪</td>
           <td class="amount-out">${fmt(d.amount_remaining)} ₪</td>
           <td style="text-align:center;">${d.days_old}</td>
@@ -347,7 +347,7 @@ export default function Reports() {
       if (!debts) return
       const custRows = debts.customer_debts.map(d => `
         <tr>
-          <td>${d.customer_name}</td>
+          <td>${esc(d.customer_name)}</td>
           <td>${d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}</td>
           <td>${fmt(d.total_amount)} ₪</td>
           <td class="amount-in">${fmt(d.amount_paid)} ₪</td>
@@ -355,8 +355,8 @@ export default function Reports() {
         </tr>`).join('')
       const supRows = debts.supplier_debts.map(d => `
         <tr>
-          <td>${d.supplier_name}</td>
-          <td>${d.supplier_phone ?? '—'}</td>
+          <td>${esc(d.supplier_name)}</td>
+          <td>${d.supplier_phone ? esc(d.supplier_phone) : '—'}</td>
           <td>${fmt(d.total_amount)} ₪</td>
           <td class="amount-in">${fmt(d.amount_paid)} ₪</td>
           <td class="amount-out">${fmt(d.amount_remaining)} ₪</td>
@@ -405,11 +405,11 @@ export default function Reports() {
     if (tab === 'daily' && daily) {
       rowsHtml = daily.entries.map(e => `
         <tr>
-          <td>${e.transaction_date}</td>
+          <td>${esc(e.transaction_date)}</td>
           <td>${e.amount_in > 0 ? 'وارد' : 'صادر'}</td>
-          <td>${refLabel(e.reference_type)}</td>
+          <td>${esc(refLabel(e.reference_type))}</td>
           <td class="${e.amount_in > 0 ? 'amount-in' : 'amount-out'}">${e.amount_in > 0 ? '+' : '−'}${fmt(e.amount_in > 0 ? e.amount_in : e.amount_out)} ₪</td>
-          <td>${e.notes ?? '—'}</td>
+          <td>${e.notes ? esc(e.notes) : '—'}</td>
         </tr>`).join('')
     } else if (tab === 'monthly' && monthly) {
       rowsHtml = monthly.days.map(d => `

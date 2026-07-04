@@ -11,6 +11,15 @@
     "dist",
     "dist-electron"
   ],
+  // C1: قاعدة البيانات تُنشأ من schema.sql الذي يقرؤه database.ts من
+  // process.resourcesPath في النسخة المحزَّمة — يجب نسخه فعلياً إلى resources
+  // وإلا فشل أول تشغيل على جهاز جديد (لا جداول → تفشل الـ migrations).
+  "extraResources": [
+    {
+      "from": "electron/schema.sql",
+      "to": "schema.sql"
+    }
+  ],
   "mac": {
     "icon": "build/icon.icns",
     "target": [

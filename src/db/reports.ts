@@ -118,29 +118,47 @@ export function getMonthlyReport(month: number, year: number): MonthlyReport {
   const direct_sale_count = countIn('direct_sale_invoices', 'sale_date')
   const purchase_count    = countIn('supplier_invoices',    'purchase_date')
 
-  // ── ديون جديدة من فواتير أُنشئت في الفترة (المتبقّي الحالي لتلك الفواتير) ──
+  // ── ديون جديدة من فواتير أُنشئت في الفترة ──
+  // L7: المبلغ الأصلي وقت الإصدار = الإجمالي − ما دُفِع عند الإصدار (الدفعات المؤرّخة
+  // بتاريخ الفاتورة نفسه). لا يتغيّر بأثر رجعي عند سداد الدين لاحقاً (على عكس المتبقّي
+  // الحالي الذي كان يُستخدم سابقاً فيتقلّص كلما حُصِّل دين قديم).
   const new_debts = (db.prepare(`
-    SELECT COALESCE(SUM(amount_remaining), 0) AS s FROM (
-      SELECT amount_remaining FROM maintenance_invoices WHERE date_received LIKE ? AND amount_remaining > 0
+    SELECT COALESCE(SUM(new_debt), 0) AS s FROM (
+      SELECT mi.total_amount - COALESCE((
+               SELECT SUM(amount) FROM payments
+                WHERE invoice_id = mi.id AND invoice_type = 'maintenance' AND payment_date = mi.date_received
+             ), 0) AS new_debt
+        FROM maintenance_invoices mi WHERE mi.date_received LIKE ?
       UNION ALL
-      SELECT amount_remaining FROM direct_sale_invoices WHERE sale_date LIKE ? AND amount_remaining > 0
+      SELECT ds.total_amount - COALESCE((
+               SELECT SUM(amount) FROM payments
+                WHERE invoice_id = ds.id AND invoice_type = 'direct_sale' AND payment_date = ds.sale_date
+             ), 0) AS new_debt
+        FROM direct_sale_invoices ds WHERE ds.sale_date LIKE ?
       UNION ALL
-      SELECT amount_remaining FROM supplier_invoices WHERE purchase_date LIKE ? AND amount_remaining > 0
+      SELECT si.total_amount - COALESCE((
+               SELECT SUM(amount) FROM supplier_payments
+                WHERE invoice_id = si.id AND payment_date = si.purchase_date
+             ), 0) AS new_debt
+        FROM supplier_invoices si WHERE si.purchase_date LIKE ?
     )
+    WHERE new_debt > 0
   `).get(like, like, like) as { s: number }).s
 
   // ── خصومات الفواتير الممنوحة (صيانة + بيع مباشر): مجموع البنود قبل الخصم − الإجمالي بعد الخصم ──
+  // H5: بنود customer_owned مستثناة من total_amount أصلاً (calcTotal في maintenance.ts)،
+  // فيجب استثناؤها من مجموع البنود هنا أيضاً وإلا انتفخ الخصم بقيمة قطع الزبون الخاصة.
   const invoice_discounts = (db.prepare(`
     SELECT COALESCE(SUM(sub - total_amount), 0) AS s FROM (
       SELECT mi.total_amount AS total_amount,
              (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_items
-                WHERE invoice_id = mi.id AND invoice_type = 'maintenance') AS sub
+                WHERE invoice_id = mi.id AND invoice_type = 'maintenance' AND customer_owned = 0) AS sub
         FROM maintenance_invoices mi
        WHERE mi.date_received LIKE ? AND mi.discount_type IS NOT NULL
       UNION ALL
       SELECT ds.total_amount AS total_amount,
              (SELECT COALESCE(SUM(quantity * unit_price), 0) FROM invoice_items
-                WHERE invoice_id = ds.id AND invoice_type = 'direct_sale') AS sub
+                WHERE invoice_id = ds.id AND invoice_type = 'direct_sale' AND customer_owned = 0) AS sub
         FROM direct_sale_invoices ds
        WHERE ds.sale_date LIKE ? AND ds.discount_type IS NOT NULL
     )
@@ -302,17 +320,29 @@ export function getDebtsAging(): DebtAgingRow[] {
 export function getTopCustomers(limit = 10): TopCustomer[] {
   const db = getDB()
 
-  // Combine maintenance + direct sale customers
+  // Combine maintenance + direct sale customers.
+  // L8: التجميع بمفتاح ثابت = رقم الهاتف بعد إزالة الفراغات والرموز (مسافة، شرطة،
+  // أقواس، +). الزبون نفسه بهاتف مكتوب بصيغ مختلفة يُدمَج في صف واحد. من بلا هاتف
+  // (NULL) يُجمَّع بالاسم. الاسم/الهاتف المعروض يُؤخَذ كأحدث قيمة (MAX) للمجموعة.
   const rows = db.prepare(`
-    SELECT customer_name, customer_phone,
-           COUNT(*)          AS visit_count,
-           SUM(total_amount) AS total_spent
+    SELECT MAX(customer_name)  AS customer_name,
+           MAX(customer_phone) AS customer_phone,
+           COUNT(*)            AS visit_count,
+           SUM(total_amount)   AS total_spent
     FROM (
-      SELECT customer_name, customer_phone, total_amount FROM maintenance_invoices
-      UNION ALL
-      SELECT customer_name, customer_phone, total_amount FROM direct_sale_invoices
+      SELECT customer_name, customer_phone, total_amount,
+             CASE WHEN clean_phone <> '' THEN 'p:' || clean_phone ELSE 'n:' || customer_name END AS gkey
+      FROM (
+        SELECT customer_name, customer_phone, total_amount,
+               REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(customer_phone,''),' ',''),'-',''),'(',''),')',''),'+','') AS clean_phone
+        FROM (
+          SELECT customer_name, customer_phone, total_amount FROM maintenance_invoices
+          UNION ALL
+          SELECT customer_name, customer_phone, total_amount FROM direct_sale_invoices
+        )
+      )
     )
-    GROUP BY customer_name, customer_phone
+    GROUP BY gkey
     ORDER BY total_spent DESC
     LIMIT ?
   `).all(limit) as TopCustomer[]

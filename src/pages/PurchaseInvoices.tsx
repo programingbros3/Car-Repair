@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense, SupplierRecord } from '../store/GarageContext'
+import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddPurchaseInvoiceButton from '../components/AddPurchaseInvoiceButton'
 import Pagination from '../components/Pagination'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 
@@ -36,13 +36,13 @@ const blankRow = (): PaymentRow => ({
 function printInvoice(inv: PurchaseInvoice): void {
   const body = `
     <div class="detail-grid">
-      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber || `#${inv.id}`}</span></div>
-      <div class="detail-item"><label>التاريخ</label><span>${inv.date}</span></div>
+      <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber ? esc(inv.invoiceNumber) : `#${inv.id}`}</span></div>
+      <div class="detail-item"><label>التاريخ</label><span>${esc(inv.date)}</span></div>
       <div class="detail-item"><label>النوع</label><span>${TYPE_LABELS[inv.type]}</span></div>
       <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[inv.status]}</span></div>
-      <div class="detail-item"><label>الوصف / المورد</label><span>${inv.description}</span></div>
-      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? inv.phone : 'غير معروف'}</span></div>
-      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${inv.details}</span></div>` : ''}
+      <div class="detail-item"><label>الوصف / المورد</label><span>${esc(inv.description)}</span></div>
+      <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? esc(inv.phone) : 'غير معروف'}</span></div>
+      ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${esc(inv.details)}</span></div>` : ''}
     </div>
     <div class="detail-grid">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
@@ -186,7 +186,6 @@ export default function PurchaseInvoices() {
   const saveEdit = async () => {
     if (!editInv || !editForm) return
     const total = Number(editForm.total) || 0
-    const paid  = Math.min(Number(editForm.paid) || 0, total)
     const phone = editForm.phone.trim()
     /* فاتورة الشراء عرض مجمّع؛ التعديل يوجَّه للسجل الأصلي حسب نوعه. */
     try {
@@ -197,17 +196,17 @@ export default function PurchaseInvoices() {
         }
         await dbService.expense.update(exp)
       } else if (editInv.type === 'supplier') {
-        const sup: SupplierRecord = {
-          id: editInv.id, supplierName: editForm.description, phone,
+        /* C2: هذه الشاشة لا تعرض بنود فاتورة المورد — تحديث الترويسة فقط
+           (استدعاء update الكامل سابقاً مع items: [] كان يمسح البنود ويصفّر الإجمالي) */
+        await dbService.supplierInvoice.updateHeader(editInv.id, {
+          supplierName: editForm.description, phone,
           purchaseDate: editForm.date, notes: editForm.details,
-          total, amountPaid: paid, amountRemaining: total - paid, items: [], payments: [],
-        }
-        await dbService.supplierInvoice.update(sup)
+        })
       } else {
         showError('تعديل الرواتب يتم من صفحة الموظفين والرواتب')
         return
       }
-      await reload()
+      await reload(['supplierInvoices', 'purchaseInvoices', 'expenses'])   // M10
       setEditInv(null); setEditForm(null)
     } catch (err) {
       showError('تعذّر حفظ تعديلات الفاتورة', err)
@@ -240,7 +239,7 @@ export default function PurchaseInvoices() {
         showError('لا يمكن إضافة دفعة لهذا النوع من الفواتير')
         return
       }
-      await reload()
+      await reload(['supplierInvoices', 'purchaseInvoices'])   // M10
       setPayInvoice(null)
     } catch (err) {
       showError('تعذّر تسجيل الدفعة', err)
@@ -473,15 +472,9 @@ export default function PurchaseInvoices() {
                   <input type="date" value={editForm.date} max={today()}
                     onChange={e => setEditForm(f => f && { ...f, date: e.target.value > today() ? today() : e.target.value })} />
                 </label>
-                <label className="mi-field">
-                  <span>النوع</span>
-                  <select value={editForm.type}
-                    onChange={e => setEditForm(f => f && { ...f, type: e.target.value as PurchaseType })}>
-                    <option value="supplier">مورد</option>
-                    <option value="expense">مصروف يومي</option>
-                    <option value="salary">راتب</option>
-                  </select>
-                </label>
+                {/* H2: النوع يحدد السجل الأصلي (مورد/مصروف/راتب) ولا يُدعَم تحويله
+                    بين الأنواع، فلا يُعرَض حقل تعديله (editForm.type يبقى ثابتاً من
+                    الفاتورة الأصلية ويُستخدم داخلياً لتوجيه الحفظ). */}
                 <label className="mi-field mi-field-full">
                   <span>الوصف / المورد</span>
                   <input type="text" value={editForm.description}
@@ -493,20 +486,28 @@ export default function PurchaseInvoices() {
                     placeholder="05XXXXXXXX" onKeyDown={allowPhoneChars}
                     onChange={e => setEditForm(f => f && { ...f, phone: e.target.value })} />
                 </label>
+                {/* H2: للمورد/الراتب الإجمالي والمدفوع مشتقّان من البنود والدفعات (كانا
+                    قابلين للتحرير لكن قيمهما تُتجاهَل بصمت). للمصروف اليومي "الإجمالي"
+                    هو مبلغ المصروف الفعلي ويبقى قابلاً للتعديل شرعاً. */}
                 <label className="mi-field">
-                  <span>الإجمالي ₪</span>
+                  <span>{editForm.type === 'expense' ? 'المبلغ ₪' : 'الإجمالي ₪'}</span>
                   <input type="number" min={0} value={editForm.total}
+                    disabled={editForm.type !== 'expense'}
+                    readOnly={editForm.type !== 'expense'}
                     onChange={e => setEditForm(f => f && { ...f, total: e.target.value })}
                     onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, total: '' }) }}
                     onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, total: '0' }) }} />
+                  {editForm.type !== 'expense' && (
+                    <span className="mi-field-hint">يُحسب تلقائياً من بنود الفاتورة</span>
+                  )}
                 </label>
-                <label className="mi-field">
-                  <span>المدفوع ₪</span>
-                  <input type="number" min={0} value={editForm.paid}
-                    onChange={e => setEditForm(f => f && { ...f, paid: e.target.value })}
-                    onFocus={e => { if (e.target.value === '0') setEditForm(f => f && { ...f, paid: '' }) }}
-                    onBlur={e => { if (!e.target.value) setEditForm(f => f && { ...f, paid: '0' }) }} />
-                </label>
+                {editForm.type !== 'expense' && (
+                  <label className="mi-field">
+                    <span>المدفوع ₪</span>
+                    <input type="number" value={editForm.paid} disabled readOnly />
+                    <span className="mi-field-hint">يُحسب تلقائياً من الدفعات المسجَّلة</span>
+                  </label>
+                )}
                 <label className="mi-field mi-field-full">
                   <span>التفاصيل</span>
                   <textarea rows={3} value={editForm.details}
@@ -638,7 +639,7 @@ export default function PurchaseInvoices() {
               if (deleteInv.type === 'supplier')     await dbService.supplierInvoice.delete(deleteInv.id)
               else if (deleteInv.type === 'expense') await dbService.expense.delete(deleteInv.id)
               else                                   await dbService.salary.delete(deleteInv.id)
-              await reload()
+              await reload(['supplierInvoices', 'purchaseInvoices', 'expenses', 'salaries'])   // M10
               setDeleteInv(null)
             } catch (err) { showError('تعذّر حذف الفاتورة', err) }
           }}

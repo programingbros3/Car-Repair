@@ -1,10 +1,9 @@
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog, screen } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { initDB, getDB } from '../src/database'
 import { registerIpcHandlers } from './ipc-handlers'
 import { maybeRunAutoBackupOnStartup, runAutoBackupOnQuit } from './auto-backup'
-import { ensurePasswordSeeded } from './auth'
 import { verifyOrBindDevice } from './license'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -32,9 +31,24 @@ let win: BrowserWindow | null
 function createWindow() {
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC, 'icon.png'),
+    // M12: أبعاد افتراضية تتّسع للجداول (680–860px) + السايدبار (220px) بلا تمرير
+    // أفقي، وحدّ أدنى يمنع تكدّس الواجهة. تُفتح مكبّرة على الشاشات الأصغر.
+    width: 1280,
+    height: 800,
+    minWidth: 1024,
+    minHeight: 640,
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
     },
+  })
+
+  // إظهار النافذة بعد جهوزيتها (يتجنّب وميض الشاشة البيضاء)، مكبّرة إن كانت
+  // الشاشة أصغر من الأبعاد الافتراضية
+  win.once('ready-to-show', () => {
+    const { workAreaSize } = screen.getPrimaryDisplay()
+    if (workAreaSize.width < 1280 || workAreaSize.height < 800) win?.maximize()
+    win?.show()
   })
 
   if (VITE_DEV_SERVER_URL) {
@@ -68,16 +82,25 @@ app.whenReady().then(() => {
 
   // القفل الأمني: يتجاوز تلقائياً في وضع التطوير (npm run dev)
   // ويشتغل فعلياً فقط في النسخة النهائية (exe) المسلَّمة للعميل
-  if (!VITE_DEV_SERVER_URL && !verifyOrBindDevice(getDB())) {
-    dialog.showErrorBox(
-      'غير مصرح',
-      'هذا البرنامج غير مصرح له بالعمل على هذا الجهاز. تواصل مع المطوّر.'
-    )
-    app.quit()
-    return
+  if (!VITE_DEV_SERVER_URL) {
+    const licenseResult = verifyOrBindDevice(getDB())
+    if (licenseResult === 'blocked') {
+      dialog.showErrorBox(
+        'غير مصرح',
+        'هذا البرنامج غير مصرح له بالعمل على هذا الجهاز. تواصل مع المطوّر.'
+      )
+      app.quit()
+      return
+    }
+    // H4: فشل قراءة معرّف الجهاز لا يعطّل الإقلاع — رسالة واضحة ثم متابعة
+    if (licenseResult === 'hwid_error') {
+      dialog.showErrorBox(
+        'تنبيه — التحقق من الترخيص',
+        'تعذّرت قراءة معرّف هذا الجهاز، فلم يكتمل التحقق من الترخيص.\nسيستمر البرنامج بالعمل بشكل طبيعي. إذا تكررت هذه الرسالة تواصل مع المطوّر.'
+      )
+    }
   }
 
-  ensurePasswordSeeded(getDB())
   registerIpcHandlers(getDB())
   maybeRunAutoBackupOnStartup(getDB())
   createWindow()

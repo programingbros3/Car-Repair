@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ChequeRecord, UpcomingChequeSource } from '../store/GarageContext'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ChequeRecord, UpcomingChequeSource, ChequeStatusUi } from '../store/GarageContext'
 import type { ChequeFilters } from '../db/types'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
-import { printPdf } from '../utils/printPdf'
+import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import Pagination from '../components/Pagination'
 
 /* ════════════════════════════════════════
    صفحة الشيكات — عرض كل الشيكات التي دخلت البرنامج على الإطلاق
-   (الماضية والمستقبلية) من جداول الشيكات الأربعة. قراءة فقط بالكامل:
-   أي تعديل على شيك يبقى من صفحته الأصلية (نفس فلسفة الشيكات المستحقة قريباً).
+   (الماضية والمستقبلية) من جداول الشيكات الأربعة.
+   M3: يمكن تغيير حالة الشيك (معلّق/مصروف/مرتدّ) من هنا؛ الشيك المعلّق لا يُسجَّل
+   نقداً في الصندوق إلا عند تحويله إلى "مصروف"، والمرتدّ يعيد الدين على الفاتورة.
 ════════════════════════════════════════ */
 const fmt = (n: number) => n.toLocaleString('en-US')
 
@@ -18,6 +19,14 @@ const SOURCE_LABELS: Record<UpcomingChequeSource, string> = {
 }
 const SOURCE_CLS: Record<UpcomingChequeSource, string> = {
   maintenance: 'mi-badge-orange', direct_sale: 'mi-badge-blue', supplier: 'mi-badge-purple', supplier_debt: 'mi-badge-red',
+}
+
+/* M3: حالة الشيك */
+const STATUS_LABELS: Record<ChequeStatusUi, string> = {
+  pending: 'معلّق', cashed: 'مصروف', bounced: 'مرتدّ',
+}
+const STATUS_CLS: Record<ChequeStatusUi, string> = {
+  pending: 'mi-badge-yellow', cashed: 'mi-badge-green', bounced: 'mi-badge-red',
 }
 
 /* حالة الاستحقاق حسب مقارنة تاريخ الصرف (cash_date) باليوم الحالي */
@@ -60,6 +69,7 @@ function chequeDetailRows(c: ChequeRecord): { label: string; value: string }[] {
   rows.push({ label: 'تاريخ الإصدار', value: c.issueDate || '—' })
   rows.push({ label: 'تاريخ الصرف', value: c.cashDate })
   rows.push({ label: 'مبلغ الشيك', value: `${fmt(c.amount)} ₪` })
+  rows.push({ label: 'حالة الشيك', value: STATUS_LABELS[c.status] })
   rows.push({ label: 'حالة الاستحقاق', value: dueStatus(c.daysRemaining).label })
   return rows
 }
@@ -67,7 +77,7 @@ function chequeDetailRows(c: ChequeRecord): { label: string; value: string }[] {
 function printCheque(c: ChequeRecord): void {
   const body = `
     <div class="detail-grid">
-      ${chequeDetailRows(c).map(r => `<div class="detail-item"><label>${r.label}</label><span>${r.value}</span></div>`).join('')}
+      ${chequeDetailRows(c).map(r => `<div class="detail-item"><label>${esc(r.label)}</label><span>${esc(r.value)}</span></div>`).join('')}
     </div>`
   printPdf('إيصال شيك', body)
 }
@@ -83,9 +93,10 @@ export default function Cheques() {
 
   const [rows, setRows] = useState<ChequeRecord[]>([])
   const [detailsCheque, setDetailsCheque] = useState<ChequeRecord | null>(null)
+  const [updatingStatus, setUpdatingStatus] = useState(false)
 
   /* ── جلب الشيكات من الـ backend مع الفلاتر (SQL) ── */
-  useEffect(() => {
+  const loadCheques = useCallback(async () => {
     const filters: ChequeFilters = {}
     if (chequeNumber.trim()) filters.chequeNumber = chequeNumber.trim()
     if (bankName.trim())     filters.bankName     = bankName.trim()
@@ -93,13 +104,34 @@ export default function Cheques() {
     if (filterTo)            filters.dateTo       = filterTo
     if (amtMin !== '' && !Number.isNaN(Number(amtMin))) filters.amountMin = Number(amtMin)
     if (amtMax !== '' && !Number.isNaN(Number(amtMax))) filters.amountMax = Number(amtMax)
+    return dbService.cheques.getAll(filters)
+  }, [chequeNumber, bankName, filterFrom, filterTo, amtMin, amtMax])
 
+  useEffect(() => {
     let cancelled = false
-    dbService.cheques.getAll(filters)
+    loadCheques()
       .then(res => { if (!cancelled) setRows(res) })
       .catch(err => showError(err instanceof Error ? err.message : 'تعذّر تحميل الشيكات'))
     return () => { cancelled = true }
-  }, [chequeNumber, bankName, filterFrom, filterTo, amtMin, amtMax])
+  }, [loadCheques])
+
+  /* M3: تغيير حالة الشيك (يُعدّل الصندوق ومدفوع الفاتورة في الـ backend) */
+  const changeStatus = async (c: ChequeRecord, status: ChequeStatusUi) => {
+    if (updatingStatus || c.status === status) return
+    setUpdatingStatus(true)
+    try {
+      await dbService.cheques.updateStatus(c.chequeKind, c.paymentId, status)
+      const fresh = await loadCheques()
+      setRows(fresh)
+      setDetailsCheque(prev => prev && prev.paymentId === c.paymentId && prev.chequeKind === c.chequeKind
+        ? (fresh.find(x => x.paymentId === c.paymentId && x.chequeKind === c.chequeKind) ?? null)
+        : prev)
+    } catch (err) {
+      showError('تعذّر تغيير حالة الشيك', err)
+    } finally {
+      setUpdatingStatus(false)
+    }
+  }
 
   const hasFilters = useMemo(
     () => !!(chequeNumber || bankName || filterFrom || filterTo || amtMin || amtMax),
@@ -190,17 +222,18 @@ export default function Cheques() {
                 <th>المبلغ ₪</th>
                 <th>الطرف</th>
                 <th>نوع العملية</th>
+                <th>الحالة</th>
                 <th>حالة الاستحقاق</th>
                 <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
               {paginatedRows.length === 0 ? (
-                <tr><td colSpan={9} className="mi-empty-row">لا توجد شيكات تطابق البحث</td></tr>
+                <tr><td colSpan={10} className="mi-empty-row">لا توجد شيكات تطابق البحث</td></tr>
               ) : paginatedRows.map((c, i) => {
                 const due = dueStatus(c.daysRemaining)
                 return (
-                  <tr key={`${c.source}-${c.chequeNumber}-${c.cashDate}-${i}`}
+                  <tr key={`${c.chequeKind}-${c.paymentId}-${i}`}
                     className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                     onClick={() => setDetailsCheque(c)}>
                     <td>{c.chequeNumber || '—'}</td>
@@ -210,6 +243,7 @@ export default function Cheques() {
                     <td className="mi-amount">{fmt(c.amount)} ₪</td>
                     <td>{c.partyName}</td>
                     <td><span className={SOURCE_CLS[c.source]}>{SOURCE_LABELS[c.source]}</span></td>
+                    <td><span className={STATUS_CLS[c.status]}>{STATUS_LABELS[c.status]}</span></td>
                     <td><span className={due.cls}>{due.label}</span></td>
                     <td>
                       <div className="mi-actions" onClick={e => e.stopPropagation()}>
@@ -249,6 +283,27 @@ export default function Cheques() {
                     <span>{r.value}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+            {/* M3: تغيير حالة الشيك */}
+            <div style={{ padding: '0 1.25rem 0.5rem' }}>
+              <div style={{ fontSize: '0.85rem', color: '#555', marginBottom: '0.5rem', fontWeight: 600 }}>
+                حالة الشيك: <span className={STATUS_CLS[detailsCheque.status]}>{STATUS_LABELS[detailsCheque.status]}</span>
+              </div>
+              <div className="mi-actions">
+                {(['pending', 'cashed', 'bounced'] as ChequeStatusUi[]).map(st => (
+                  <button
+                    key={st}
+                    className={`btn btn-sm-outline${detailsCheque.status === st ? ' pd-tab-active' : ''}`}
+                    disabled={updatingStatus || detailsCheque.status === st}
+                    onClick={() => changeStatus(detailsCheque, st)}
+                  >
+                    {st === 'pending' ? 'تعليق' : st === 'cashed' ? 'تسجيل كمصروف' : 'تسجيل كمرتدّ'}
+                  </button>
+                ))}
+              </div>
+              <div className="mi-field-hint" style={{ marginTop: '0.4rem' }}>
+                الشيك المعلّق لا يُسجَّل في الصندوق حتى صرفه. المرتدّ يعيد المبلغ ديناً على الفاتورة.
               </div>
             </div>
             <div className="mi-modal-footer">

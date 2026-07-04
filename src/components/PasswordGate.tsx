@@ -17,6 +17,16 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   const [lockedUntil, setLockedUntil] = useState<number | null>(null)
   const [remainingSec, setRemainingSec] = useState(0)
 
+  /* M2: أول تشغيل بلا كلمة سر ⇒ شاشة تعيين كلمة السر بدل تسجيل الدخول */
+  const [mode, setMode] = useState<'loading' | 'setup' | 'login'>('loading')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  useEffect(() => {
+    dbService.auth.needsPasswordSetup()
+      .then(needs => setMode(needs ? 'setup' : 'login'))
+      .catch(() => setMode('login'))
+  }, [])
+
   useEffect(() => {
     if (!lockedUntil) return
     const tick = () => {
@@ -51,6 +61,60 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
     } finally {
       setChecking(false)
     }
+  }
+
+  /* M2: تعيين كلمة السر لأول مرة */
+  const handleSetup = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (checking) return
+    if (password.length < 6) { setError('كلمة السر يجب أن تكون 6 أحرف على الأقل'); return }
+    if (password !== confirmPassword) { setError('كلمة السر غير متطابقة مع التأكيد'); return }
+    setChecking(true)
+    try {
+      await dbService.auth.setInitialPassword(password)
+      setError('')
+      onUnlock()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذّر تعيين كلمة السر')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  if (mode === 'loading') {
+    return (
+      <div style={overlay}>
+        <div style={{ color: '#1E2A38', fontSize: '1rem' }}>جارٍ التحميل…</div>
+      </div>
+    )
+  }
+
+  if (mode === 'setup') {
+    return (
+      <div style={overlay}>
+        <form style={card} onSubmit={handleSetup}>
+          <div style={logo}>كراج الخط الأخضر</div>
+          <p style={subtitle}>مرحباً بك — عيّن كلمة سر للدخول (أول تشغيل)</p>
+          <PasswordInput
+            value={password}
+            onChange={v => { setPassword(v); setError('') }}
+            placeholder="كلمة السر الجديدة (6 أحرف على الأقل)"
+            autoFocus
+            inputStyle={{ ...inputBase, ...(error ? inputErr : undefined) }}
+          />
+          <PasswordInput
+            value={confirmPassword}
+            onChange={v => { setConfirmPassword(v); setError('') }}
+            placeholder="تأكيد كلمة السر"
+            inputStyle={{ ...inputBase, ...(error ? inputErr : undefined) }}
+          />
+          {error && <span style={errorText}>{error}</span>}
+          <button type="submit" style={button} disabled={checking || !password || !confirmPassword}>
+            {checking ? 'جارٍ الحفظ…' : 'تعيين كلمة السر والدخول'}
+          </button>
+        </form>
+      </div>
+    )
   }
 
   return (

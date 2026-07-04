@@ -24,8 +24,10 @@ import {
   getDirectSaleInvoices, getDirectSaleInvoice,
 } from '../src/db/direct-sale'
 import {
-  addSupplierInvoice, updateSupplierInvoice, addSupplierPayment, addSupplierDebtPayment,
+  addSupplierInvoice, updateSupplierInvoice, updateSupplierInvoiceHeader,
+  addSupplierPayment, addSupplierDebtPayment,
   getSupplierInvoices, getSupplierInvoice, getSupplierDebts, searchSupplierNames,
+  type SupplierInvoiceHeaderInput,
 } from '../src/db/suppliers'
 import {
   addDailyExpense, getDailyExpenses,
@@ -35,21 +37,23 @@ import {
 import { addPayment, addDebtPayment, getPendingDebts } from '../src/db/payments'
 import { getLedgerSummary, getLedgerByDateRange, recomputeLedgerBalances, REF } from '../src/db/ledger'
 import { getDailyReport, getMonthlyReport, getDebtReport, getTopCustomers, getDebtsAging } from '../src/db/reports'
-import { getUpcomingCheques, getAllCheques } from '../src/db/cheques'
+import { getUpcomingCheques, getAllCheques, updateChequeStatus } from '../src/db/cheques'
 import {
   getAutoBackupSettings, updateAutoBackupSettings, getAutoBackupStatus,
   runAutoBackup, pickAutoBackupFolder,
 } from './auto-backup'
 import { getVatSettings, updateVatSettings } from './vat'
+import { assertPositiveAmount, assertNonEmpty } from '../src/db/validate'
 import {
   verifyPassword, changePassword, getLockoutStatus,
   getAutoLockSettings, updateAutoLockSettings,
+  needsPasswordSetup, setInitialPassword,
   logActivity, getActivityLog,
 } from './auth'
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
-  ChequeFilters,
+  ChequeFilters, ChequeStatus, ChequeTableKind,
   PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput, DiscountType,
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
   DailyExpenseInput, EmployeeInput, SalaryInput,
@@ -58,30 +62,86 @@ import type {
 
 type DB = Database.Database
 
-/* ── مزامنة الكفالات مع جدول warranties عند حفظ الفواتير ── */
+/* ── مزامنة الكفالات مع جدول warranties عند حفظ الفواتير ──
+   M6: مطابقة تفاضلية بدل الحذف الكامل وإعادة الإدراج — الكفالات الموجودة تُحدَّث
+   في مكانها (نفس id، مع الحفاظ على حقل notes المُحرَّر يدوياً من صفحة الكفالات)،
+   الجديدة تُدرَج، والمحذوفة فقط تُزال. هذا يمنع ضياع تعديلات المستخدم اليدوية
+   على الكفالة عند أي إعادة حفظ للفاتورة الأم. */
+type WarrantyDesired = { item_name: string; value: number; unit: string }
+
+function reconcileWarranties(
+  db: DB,
+  source: 'maintenance' | 'direct_sale',
+  invoiceId: number,
+  header: { customer_name: string; customer_phone: string | null; car_plate: string | null; car_type: string | null; car_color: string | null; start_date: string },
+  desired: WarrantyDesired[],
+): void {
+  const existing = db.prepare(
+    `SELECT id, item_name FROM warranties WHERE source=? AND source_id=?`,
+  ).all(source, invoiceId) as { id: number; item_name: string }[]
+
+  const usedIds = new Set<number>()
+  const updateStmt = db.prepare(`
+    UPDATE warranties SET
+      customer_name=?, customer_phone=?, car_plate=?, car_type=?, car_color=?,
+      start_date=?, period_value=?, period_unit=?
+    WHERE id=?
+  `)
+  const insertStmt = db.prepare(`
+    INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, car_type, car_color, item_name, start_date, period_value, period_unit, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `)
+
+  for (const d of desired) {
+    const match = existing.find(e => e.item_name === d.item_name && !usedIds.has(e.id))
+    if (match) {
+      usedIds.add(match.id)
+      // لا نمسّ notes — يبقى تعديل المستخدم اليدوي محفوظاً
+      updateStmt.run(
+        header.customer_name, header.customer_phone, header.car_plate,
+        header.car_type, header.car_color, header.start_date, d.value, d.unit, match.id,
+      )
+    } else {
+      insertStmt.run(
+        source, invoiceId, header.customer_name, header.customer_phone, header.car_plate,
+        header.car_type, header.car_color, d.item_name, header.start_date, d.value, d.unit, null,
+      )
+    }
+  }
+
+  // إزالة الكفالات التي لم تعد موجودة (حُذف بندها أو أُزيلت كفالته)
+  for (const e of existing) {
+    if (!usedIds.has(e.id)) db.prepare(`DELETE FROM warranties WHERE id=?`).run(e.id)
+  }
+}
+
+function parseWarranty(raw: unknown): { value: number; unit: string } | null {
+  if (!raw) return null
+  try {
+    const w = JSON.parse(String(raw))
+    if (!w.value || !w.unit) return null
+    return { value: Number(w.value), unit: String(w.unit) }
+  } catch { return null }
+}
+
 function syncWarrantiesForMaintenance(db: DB, invoiceId: number): void {
   const inv = db.prepare(
     `SELECT customer_name, customer_phone, car_plate, car_type, car_color, date_received FROM maintenance_invoices WHERE id=?`,
   ).get(invoiceId) as any
   if (!inv) return
   db.transaction(() => {
-    db.prepare(`DELETE FROM warranties WHERE source='maintenance' AND source_id=?`).run(invoiceId)
     const items = db.prepare(
       `SELECT item_name, warranty FROM invoice_items WHERE invoice_id=? AND invoice_type='maintenance'`,
     ).all(invoiceId) as any[]
+    const desired: WarrantyDesired[] = []
     for (const item of items) {
-      if (!item.warranty) continue
-      try {
-        const w = JSON.parse(item.warranty)
-        if (!w.value || !w.unit) continue
-        db.prepare(`
-          INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, car_type, car_color, item_name, start_date, period_value, period_unit, notes)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        `).run('maintenance', invoiceId, inv.customer_name, inv.customer_phone, inv.car_plate,
-               inv.car_type ?? null, inv.car_color ?? null,
-               item.item_name, inv.date_received, Number(w.value), String(w.unit), null)
-      } catch { /* JSON غير صالح، تخطّ */ }
+      const w = parseWarranty(item.warranty)
+      if (w) desired.push({ item_name: item.item_name, value: w.value, unit: w.unit })
     }
+    reconcileWarranties(db, 'maintenance', invoiceId, {
+      customer_name: inv.customer_name, customer_phone: inv.customer_phone, car_plate: inv.car_plate,
+      car_type: inv.car_type ?? null, car_color: inv.car_color ?? null, start_date: inv.date_received,
+    }, desired)
   })()
 }
 
@@ -91,19 +151,33 @@ function syncWarrantiesForDirectSale(db: DB, invoiceId: number): void {
   ).get(invoiceId) as any
   if (!inv) return
   db.transaction(() => {
-    db.prepare(`DELETE FROM warranties WHERE source='direct_sale' AND source_id=?`).run(invoiceId)
-    if (!inv.warranty) return
-    try {
-      const w = JSON.parse(inv.warranty)
-      if (!w.value || !w.unit) return
-      db.prepare(`
-        INSERT INTO warranties (source, source_id, customer_name, customer_phone, car_plate, car_type, car_color, item_name, start_date, period_value, period_unit, notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-      `).run('direct_sale', invoiceId, inv.customer_name, inv.customer_phone, null,
-             null, null,
-             'كفالة شاملة', inv.sale_date, Number(w.value), String(w.unit), null)
-    } catch { /* JSON غير صالح، تخطّ */ }
+    const w = parseWarranty(inv.warranty)
+    const desired: WarrantyDesired[] = w ? [{ item_name: 'كفالة شاملة', value: w.value, unit: w.unit }] : []
+    reconcileWarranties(db, 'direct_sale', invoiceId, {
+      customer_name: inv.customer_name, customer_phone: inv.customer_phone, car_plate: null,
+      car_type: null, car_color: null, start_date: inv.sale_date,
+    }, desired)
   })()
+}
+
+/* M13: يترجم أخطاء SQLite الخام إلى رسائل عربية واضحة للمستخدم. رسائل التحقّق
+   العربية التي نرميها نحن (من validate.ts وطبقة db) تمرّ كما هي؛ فقط أخطاء
+   المحرّك التقنية تُترجَم. */
+function toArabicError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/FOREIGN KEY constraint failed/i.test(raw)) {
+    return 'لا يمكن إتمام العملية لوجود سجلات مرتبطة بهذا العنصر. احذف السجلات المرتبطة أولاً.'
+  }
+  if (/UNIQUE constraint failed/i.test(raw)) {
+    return 'قيمة مكرّرة غير مسموح بها (مثل رقم فاتورة مستخدَم مسبقاً).'
+  }
+  if (/NOT NULL constraint failed/i.test(raw)) {
+    return 'حقل مطلوب غير معبّأ.'
+  }
+  if (/no such table|no such column/i.test(raw)) {
+    return 'خطأ في بنية قاعدة البيانات — قد تحتاج النسخة إلى تحديث. تواصل مع المطوّر.'
+  }
+  return raw
 }
 
 /** يسجّل معالجاً ملفوفاً بـ try/catch موحّد */
@@ -112,7 +186,7 @@ function on(channel: string, fn: (...args: any[]) => any): void {
     try {
       return { success: true, data: fn(...args) }
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
+      return { success: false, error: toArabicError(err) }
     }
   })
 }
@@ -159,8 +233,12 @@ export function registerIpcHandlers(db: DB): void {
     })()
     logActivity(db, 'update', 'maintenance_invoice', id, `تعديل فاتورة صيانة #${id}${updates.customer_name ? ` — ${updates.customer_name}` : ''}`)
   })
-  on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[]; settlementDiscount?: number }) =>
-    releaseMaintenanceCar(input))
+  on('maintenance:deliver', (input: { invoiceId: number; date_released: string; payments: PaymentInput[]; settlementDiscount?: number }) => {
+    releaseMaintenanceCar(input)
+    // L9: توثيق التسليم في سجل النشاط مثل بقية العمليات الحساسة
+    logActivity(db, 'deliver', 'maintenance_invoice', input.invoiceId,
+      `تسليم سيارة فاتورة صيانة #${input.invoiceId} بتاريخ ${input.date_released}`)
+  })
   on('maintenance:delete', (id: number) => {
     db.transaction(() => {
       const payIds = paymentIds(db, 'payments', `invoice_id=? AND invoice_type='maintenance'`, id)
@@ -205,6 +283,29 @@ export function registerIpcHandlers(db: DB): void {
     })()
     logActivity(db, 'update', 'direct_sale_invoice', id, `تعديل فاتورة بيع مباشر #${id} — ${input.customer_name}`)
   })
+  /* H1: تحديث ترويسة فاتورة البيع المباشر فقط (اسم/هاتف/تاريخ/ملاحظات) —
+     للشاشات المجمّعة (فواتير البيع/الديون المعلقة) التي لا تعرض الكفالة ولا البنود.
+     قناة directSale:update الكاملة تكتب warranty/notes بلا شروط، فكانت هذه الشاشات
+     تمسح كفالة الفاتورة (وسجلّها في جدول warranties عبر المزامنة) دون قصد. */
+  on('directSale:updateHeader', (id: number, input: {
+    customer_name?: string; customer_phone?: string; sale_date?: string; notes?: string
+  }) => {
+    db.transaction(() => {
+      const fields: string[] = []
+      const values: unknown[] = []
+      if (input.customer_name  !== undefined) { fields.push('customer_name = ?');  values.push(input.customer_name) }
+      if (input.customer_phone !== undefined) { fields.push('customer_phone = ?'); values.push(input.customer_phone ?? null) }
+      if (input.sale_date      !== undefined) { fields.push('sale_date = ?');      values.push(input.sale_date) }
+      if (input.notes          !== undefined) { fields.push('notes = ?');          values.push(input.notes ?? null) }
+      if (fields.length === 0) return
+      values.push(id)
+      db.prepare(`UPDATE direct_sale_invoices SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+      // مزامنة نسخة اسم/هاتف الزبون وتاريخ البدء في جدول الكفالات (الكفالة نفسها لا تتغير)
+      syncWarrantiesForDirectSale(db, id)
+    })()
+    logActivity(db, 'update', 'direct_sale_invoice', id,
+      `تعديل بيانات فاتورة بيع مباشر #${id}${input.customer_name ? ` — ${input.customer_name}` : ''}`)
+  })
   on('directSale:updateItems', (invoiceId: number, items: DirectSaleItemInput[], discount?: { type: DiscountType | null; value: number }) =>
     updateDirectSaleItems(invoiceId, items, discount))
   on('directSale:addPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
@@ -234,6 +335,13 @@ export function registerIpcHandlers(db: DB): void {
     updateSupplierInvoice(id, input)
     logActivity(db, 'update', 'supplier_invoice', id, `تعديل فاتورة مورد #${id} — ${input.supplier_name}`)
   })
+  // C2: تحديث الترويسة فقط (اسم/هاتف/تاريخ/ملاحظات) — لا يمسّ البنود ولا الإجمالي.
+  // تستخدمه شاشة فواتير الشراء المجمّعة التي لا تعرض بنود الفاتورة.
+  on('supplierInvoice:updateHeader', (id: number, input: SupplierInvoiceHeaderInput) => {
+    updateSupplierInvoiceHeader(id, input)
+    logActivity(db, 'update', 'supplier_invoice', id,
+      `تعديل بيانات فاتورة مورد #${id}${input.supplier_name ? ` — ${input.supplier_name}` : ''}`)
+  })
   on('supplierInvoice:addPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
     addSupplierPayment(invoiceId, payments, date, settlementDiscount ?? 0))
   on('supplierInvoice:addDebtPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
@@ -257,6 +365,9 @@ export function registerIpcHandlers(db: DB): void {
   on('expense:getAll', (filters?: ExpenseFilters) => getDailyExpenses(filters ?? {}))
   on('expense:add', (input: DailyExpenseInput) => addDailyExpense(input))
   on('expense:update', (id: number, input: DailyExpenseInput) => {
+    // M5: نفس تحقّق الإضافة — الوصف مطلوب والمبلغ أكبر من صفر
+    assertNonEmpty(input.description, 'وصف المصروف')
+    assertPositiveAmount(input.amount, 'مبلغ المصروف')
     db.transaction(() => {
       db.prepare(`UPDATE daily_expenses SET description=?, amount=?, expense_date=?, notes=? WHERE id=?`).run(
         input.description, input.amount, input.expense_date, input.notes ?? null, id,
@@ -287,6 +398,13 @@ export function registerIpcHandlers(db: DB): void {
     logActivity(db, 'update', 'employee', id, `تعديل بيانات موظف #${id} — ${input.name}`)
   })
   on('employee:delete', (id: number) => {
+    // M13: رسالة واضحة بدل خطأ FOREIGN KEY الخام (الرواتب مرتبطة بـ RESTRICT)
+    const salaryCount = (db.prepare(
+      `SELECT COUNT(*) AS c FROM salary_payments WHERE employee_id=?`,
+    ).get(id) as { c: number }).c
+    if (salaryCount > 0) {
+      throw new Error(`لا يمكن حذف موظف له ${salaryCount} دفعة راتب مسجّلة — احذف دفعاته من صفحة الرواتب أولاً`)
+    }
     db.prepare(`DELETE FROM employees WHERE id=?`).run(id)
     logActivity(db, 'delete', 'employee', id, `حذف موظف #${id}`)
     return { id }
@@ -329,6 +447,12 @@ export function registerIpcHandlers(db: DB): void {
   /* ─────────────── الشيكات المستحقة قريباً (قراءة فقط) ─────────────── */
   on('cheques:getUpcoming', (daysAhead?: number) => getUpcomingCheques(daysAhead ?? 14))
   on('cheques:getAll', (filters?: ChequeFilters) => getAllCheques(filters ?? {}))
+  // M3: تغيير حالة الشيك (معلّق/مصروف/مرتدّ) — يعدّل الصندوق ومدفوع الفاتورة تبعاً
+  on('cheque:updateStatus', (kind: ChequeTableKind, paymentId: number, status: ChequeStatus) => {
+    updateChequeStatus(kind, paymentId, status)
+    logActivity(db, 'update', 'cheque', paymentId, `تغيير حالة شيك (دفعة #${paymentId}) إلى ${status}`)
+    return { paymentId, status }
+  })
 
   /* ─────────────── فواتير البيع (عرض مجمّع: صيانة + بيع مباشر) ─────────────── */
   on('salesInvoice:getAll', () =>
@@ -519,7 +643,7 @@ export function registerIpcHandlers(db: DB): void {
       fs.copyFileSync(dbPath, filePath)
       return { success: true, data: filePath }
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
+      return { success: false, error: toArabicError(err) }
     }
   })
 
@@ -558,7 +682,7 @@ export function registerIpcHandlers(db: DB): void {
       return { success: true, data: null }
     } catch (err) {
       try { db.prepare('DETACH DATABASE _imported_validate').run() } catch { /* تجاهل */ }
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
+      return { success: false, error: toArabicError(err) }
     }
   })
 
@@ -574,11 +698,13 @@ export function registerIpcHandlers(db: DB): void {
       const folder = await pickAutoBackupFolder()
       return { success: true, data: folder }
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
+      return { success: false, error: toArabicError(err) }
     }
   })
 
   /* ─────────────── الأمان: كلمة السر / القفل عند تجاوز المحاولات / القفل التلقائي / سجل النشاط ─────────────── */
+  on('auth:needsPasswordSetup', () => needsPasswordSetup(db))
+  on('auth:setInitialPassword', (password: string) => setInitialPassword(db, password))
   on('auth:verifyPassword', (password: string) => verifyPassword(db, password))
   on('auth:changePassword', (oldPassword: string, newPassword: string) => changePassword(db, oldPassword, newPassword))
   on('auth:getLockoutStatus', () => getLockoutStatus(db))

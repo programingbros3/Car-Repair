@@ -156,7 +156,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
       } else {
         await dbService.supplierInvoice.add(supData, paymentRows.filter(r => r.amount > 0))
       }
-      await reload()
+      await reload(['supplierInvoices', 'purchaseInvoices'])   // M10
       if (useDraft && !editing) localStorage.removeItem(SUPPLIER_DRAFT_KEY)
       onSaved()
     } catch (err) {
