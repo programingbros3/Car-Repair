@@ -198,7 +198,11 @@ export function getDebtReport(): DebtReport {
       date_received AS invoice_date,
       total_amount,
       amount_paid,
-      amount_remaining
+      amount_remaining,
+      car_plate,
+      car_type,
+      car_color,
+      notes
     FROM maintenance_invoices
     WHERE amount_remaining > 0
     ORDER BY date_received DESC
@@ -213,7 +217,11 @@ export function getDebtReport(): DebtReport {
       sale_date     AS invoice_date,
       total_amount,
       amount_paid,
-      amount_remaining
+      amount_remaining,
+      NULL AS car_plate,
+      NULL AS car_type,
+      NULL AS car_color,
+      notes
     FROM direct_sale_invoices
     WHERE amount_remaining > 0
     ORDER BY sale_date DESC

@@ -45,27 +45,35 @@ type DetailDef = { key: keyof PeriodDetail; label: string; kind: DetailKind }
 
 // مجموعات منطقية للعرض (بطاقات + طباعة + تصدير)
 const DETAIL_GROUPS: { title: string; items: DetailDef[] }[] = [
-  { title: 'الإيرادات', items: [
-    { key: 'maintenance_income', label: 'دخل الصيانة',        kind: 'in' },
-    { key: 'direct_sale_income', label: 'دخل البيع المباشر',  kind: 'in' },
-    { key: 'debt_collected',     label: 'الديون المُحصَّلة',   kind: 'in' },
-  ]},
-  { title: 'المصروفات', items: [
-    { key: 'daily_expenses',    label: 'المصاريف اليومية',        kind: 'out' },
-    { key: 'salaries',          label: 'الرواتب المدفوعة (الصافي)', kind: 'out' },
-    { key: 'supplier_payments', label: 'مدفوعات الموردين',        kind: 'out' },
-  ]},
-  { title: 'الديون والخصومات', items: [
-    { key: 'new_debts',            label: 'ديون جديدة متراكمة (متبقّي)', kind: 'out' },
-    { key: 'invoice_discounts',    label: 'خصومات الفواتير الممنوحة',   kind: 'neutral' },
-    { key: 'settlement_discounts', label: 'خصومات التسوية الممنوحة',    kind: 'neutral' },
-  ]},
-  { title: 'الأعداد', items: [
-    { key: 'maintenance_count', label: 'عدد فواتير الصيانة',      kind: 'count' },
-    { key: 'direct_sale_count', label: 'عدد فواتير البيع المباشر', kind: 'count' },
-    { key: 'purchase_count',    label: 'عدد فواتير المشتريات',     kind: 'count' },
-    { key: 'warranties_count',  label: 'كفالات جديدة مُصدَرة',     kind: 'count' },
-  ]},
+  {
+    title: 'الإيرادات', items: [
+      { key: 'maintenance_income', label: 'دخل الصيانة', kind: 'in' },
+      { key: 'direct_sale_income', label: 'دخل البيع المباشر', kind: 'in' },
+      { key: 'debt_collected', label: 'الديون المُحصَّلة', kind: 'in' },
+    ]
+  },
+  {
+    title: 'المصروفات', items: [
+      { key: 'daily_expenses', label: 'المصاريف اليومية', kind: 'out' },
+      { key: 'salaries', label: 'الرواتب المدفوعة (الصافي)', kind: 'out' },
+      { key: 'supplier_payments', label: 'مدفوعات الموردين', kind: 'out' },
+    ]
+  },
+  {
+    title: 'الديون والخصومات', items: [
+      { key: 'new_debts', label: 'ديون جديدة متراكمة (متبقّي)', kind: 'out' },
+      { key: 'invoice_discounts', label: 'خصومات الفواتير الممنوحة', kind: 'neutral' },
+      { key: 'settlement_discounts', label: 'خصومات التسوية الممنوحة', kind: 'neutral' },
+    ]
+  },
+  {
+    title: 'الأعداد', items: [
+      { key: 'maintenance_count', label: 'عدد فواتير الصيانة', kind: 'count' },
+      { key: 'direct_sale_count', label: 'عدد فواتير البيع المباشر', kind: 'count' },
+      { key: 'purchase_count', label: 'عدد فواتير المشتريات', kind: 'count' },
+      { key: 'warranties_count', label: 'كفالات جديدة مُصدَرة', kind: 'count' },
+    ]
+  },
 ]
 
 const DETAIL_ITEMS = DETAIL_GROUPS.flatMap(g => g.items)
@@ -77,11 +85,11 @@ const REF_LABELS: Record<string, string> = {
   maintenance_payment: 'صيانة',
   maintenance_release: 'صيانة',
   direct_sale_payment: 'بيع مباشر',
-  debt_customer:       'تحصيل دين',
-  supplier_payment:    'مورد',
-  supplier_debt:       'مورد',
-  daily_expense:       'مصروف',
-  salary:              'راتب',
+  debt_customer: 'تحصيل دين',
+  supplier_payment: 'مورد',
+  supplier_debt: 'مورد',
+  daily_expense: 'مصروف',
+  salary: 'راتب',
 }
 const refLabel = (t: string) => REF_LABELS[t] ?? t
 
@@ -90,48 +98,48 @@ const MONTH_NAMES = [
   'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
 ]
 
-const today     = () => new Date().toISOString().slice(0, 10)
+const today = () => new Date().toISOString().slice(0, 10)
 const thisMonth = () => new Date().toISOString().slice(0, 7)
-const thisYear  = () => new Date().getFullYear()
-const fmt       = (n: number) => n.toLocaleString('en-US')
+const thisYear = () => new Date().getFullYear()
+const fmt = (n: number) => n.toLocaleString('en-US')
 
 const YEARS = Array.from({ length: 6 }, (_, i) => thisYear() - i)
 
 const PERIOD_LABELS: Record<Tab, string> = {
-  daily:         'يومي',
-  monthly:       'شهري',
-  yearly:        'سنوي',
-  debts:         'تقرير الديون',
+  daily: 'يومي',
+  monthly: 'شهري',
+  yearly: 'سنوي',
+  debts: 'تقرير الديون',
   top_customers: 'أفضل الزبائن',
-  debts_aging:   'أعمار الديون',
+  debts_aging: 'أعمار الديون',
 }
 
 const AGING_BUCKETS: DebtAgingBucket[] = ['0-30', '31-60', '61-90', '90+']
 
 const AGING_BUCKET_LABELS: Record<DebtAgingBucket, string> = {
-  '0-30':  '0-30 يوم',
+  '0-30': '0-30 يوم',
   '31-60': '31-60 يوم',
   '61-90': '61-90 يوم',
-  '90+':   'أكثر من 90 يوم',
+  '90+': 'أكثر من 90 يوم',
 }
 
 const AGING_BUCKET_CLS: Record<DebtAgingBucket, string> = {
-  '0-30':  'mi-badge-green',
+  '0-30': 'mi-badge-green',
   '31-60': 'mi-badge-yellow',
   '61-90': 'mi-badge-orange',
-  '90+':   'mi-badge-red',
+  '90+': 'mi-badge-red',
 }
 
 const AGING_KIND_LABELS: Record<DebtAgingRow['kind'], string> = {
   maintenance: 'صيانة',
   direct_sale: 'بيع مباشر',
-  supplier:    'مورد',
+  supplier: 'مورد',
 }
 
 const AGING_KIND_CLS: Record<DebtAgingRow['kind'], string> = {
   maintenance: 'mi-badge-orange',
   direct_sale: 'mi-badge-blue',
-  supplier:    'mi-badge-purple',
+  supplier: 'mi-badge-purple',
 }
 
 /* ════════════════════════════════════════
@@ -141,19 +149,19 @@ export default function Reports() {
   const [tab, setTab] = useState<Tab>('daily')
 
   /* period filters */
-  const [day, setDay]     = useState(today())
+  const [day, setDay] = useState(today())
   const [month, setMonth] = useState(thisMonth())
-  const [year, setYear]   = useState(thisYear())
+  const [year, setYear] = useState(thisYear())
 
   /* fetched reports */
-  const [daily, setDaily]             = useState<DailyReport | null>(null)
-  const [monthly, setMonthly]         = useState<MonthlyReport | null>(null)
-  const [yearly, setYearly]           = useState<YearlyReport | null>(null)
-  const [debts, setDebts]             = useState<DebtReport | null>(null)
+  const [daily, setDaily] = useState<DailyReport | null>(null)
+  const [monthly, setMonthly] = useState<MonthlyReport | null>(null)
+  const [yearly, setYearly] = useState<YearlyReport | null>(null)
+  const [debts, setDebts] = useState<DebtReport | null>(null)
   const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([])
-  const [debtsAging, setDebtsAging]   = useState<DebtAgingRow[]>([])
-  const [agingSort, setAgingSort]     = useState<'asc' | 'desc'>('desc')
-  const [loading, setLoading]         = useState(false)
+  const [debtsAging, setDebtsAging] = useState<DebtAgingRow[]>([])
+  const [agingSort, setAgingSort] = useState<'asc' | 'desc'>('desc')
+  const [loading, setLoading] = useState(false)
 
   /* ── Modal States for Debt Details ── */
   const [detailsDebt, setDetailsDebt] = useState<PendingDebt | null>(null)
@@ -178,25 +186,25 @@ export default function Reports() {
         const sum = (pick: (r: MonthlyReport) => number) => reports.reduce((s, r) => s + pick(r), 0)
         const agg: YearlyReport = {
           year,
-          total_in:  sum(r => r.total_in),
+          total_in: sum(r => r.total_in),
           total_out: sum(r => r.total_out),
-          net:       sum(r => r.net),
+          net: sum(r => r.net),
           months: reports.map((r, i) => ({
             month: i + 1, total_in: r.total_in, total_out: r.total_out, net: r.net,
           })),
-          maintenance_income:   sum(r => r.maintenance_income),
-          direct_sale_income:   sum(r => r.direct_sale_income),
-          daily_expenses:       sum(r => r.daily_expenses),
-          salaries:             sum(r => r.salaries),
-          supplier_payments:    sum(r => r.supplier_payments),
-          debt_collected:       sum(r => r.debt_collected),
-          new_debts:            sum(r => r.new_debts),
-          maintenance_count:    sum(r => r.maintenance_count),
-          direct_sale_count:    sum(r => r.direct_sale_count),
-          purchase_count:       sum(r => r.purchase_count),
-          invoice_discounts:    sum(r => r.invoice_discounts),
+          maintenance_income: sum(r => r.maintenance_income),
+          direct_sale_income: sum(r => r.direct_sale_income),
+          daily_expenses: sum(r => r.daily_expenses),
+          salaries: sum(r => r.salaries),
+          supplier_payments: sum(r => r.supplier_payments),
+          debt_collected: sum(r => r.debt_collected),
+          new_debts: sum(r => r.new_debts),
+          maintenance_count: sum(r => r.maintenance_count),
+          direct_sale_count: sum(r => r.direct_sale_count),
+          purchase_count: sum(r => r.purchase_count),
+          invoice_discounts: sum(r => r.invoice_discounts),
           settlement_discounts: sum(r => r.settlement_discounts),
-          warranties_count:     sum(r => r.warranties_count),
+          warranties_count: sum(r => r.warranties_count),
         }
         setYearly(agg)
       } else if (tab === 'debts') {
@@ -223,7 +231,7 @@ export default function Reports() {
   /* ── Pagination & Filtering ── */
   const [reportSearch, setReportSearch] = useState('')
   const [reportPageSize, setReportPageSize] = useState(10)
-  
+
   const [topCustPage, setTopCustPage] = useState(1)
   const [agingPage, setAgingPage] = useState(1)
   const [custDebtPage, setCustDebtPage] = useState(1)
@@ -371,9 +379,9 @@ export default function Reports() {
       return
     }
 
-    const totalIn  = tab === 'daily' ? daily?.total_in  : tab === 'monthly' ? monthly?.total_in  : yearly?.total_in
+    const totalIn = tab === 'daily' ? daily?.total_in : tab === 'monthly' ? monthly?.total_in : yearly?.total_in
     const totalOut = tab === 'daily' ? daily?.total_out : tab === 'monthly' ? monthly?.total_out : yearly?.total_out
-    const net      = tab === 'daily' ? daily?.net       : tab === 'monthly' ? monthly?.net       : yearly?.net
+    const net = tab === 'daily' ? daily?.net : tab === 'monthly' ? monthly?.net : yearly?.net
     if (totalIn === undefined || totalOut === undefined || net === undefined) return
     const profitColor = net >= 0 ? '#2563eb' : '#E74C3C'
 
@@ -601,9 +609,9 @@ export default function Reports() {
 
   /* القيم المعروضة في بطاقات الإحصائيات للفترة الحالية */
   const periodTotals = useMemo(() => {
-    if (tab === 'daily')   return daily   ? { in: daily.total_in,   out: daily.total_out,   net: daily.net }   : null
+    if (tab === 'daily') return daily ? { in: daily.total_in, out: daily.total_out, net: daily.net } : null
     if (tab === 'monthly') return monthly ? { in: monthly.total_in, out: monthly.total_out, net: monthly.net } : null
-    if (tab === 'yearly')  return yearly  ? { in: yearly.total_in,  out: yearly.total_out,  net: yearly.net }  : null
+    if (tab === 'yearly') return yearly ? { in: yearly.total_in, out: yearly.total_out, net: yearly.net } : null
     return null
   }, [tab, daily, monthly, yearly])
 
@@ -641,11 +649,11 @@ export default function Reports() {
       {/* ── Main tabs ── */}
       <div className="pd-type-tabs rp-tabs">
         {([
-          ['daily',         'يومي'],
-          ['monthly',       'شهري'],
-          ['yearly',        'سنوي'],
-          ['debts',         'تقرير الديون'],
-          ['debts_aging',   'أعمار الديون'],
+          ['daily', 'يومي'],
+          ['monthly', 'شهري'],
+          ['yearly', 'سنوي'],
+          ['debts', 'تقرير الديون'],
+          ['debts_aging', 'أعمار الديون'],
           ['top_customers', 'أفضل الزبائن'],
         ] as [Tab, string][]).map(([val, label]) => (
           <button
@@ -1122,11 +1130,11 @@ export default function Reports() {
               ) : (
                 <table className="mi-table" style={{ fontSize: '0.9rem' }}>
                   <thead>
-                    <tr><th>اسم العنصر / القطعة</th><th style={{width: 60}}>الكمية</th><th style={{width: 80}}>السعر</th><th style={{width: 80}}>المجموع</th></tr>
+                    <tr><th>اسم العنصر / القطعة</th><th style={{ width: 60 }}>الكمية</th><th style={{ width: 80 }}>السعر</th><th style={{ width: 80 }}>المجموع</th></tr>
                   </thead>
                   <tbody>
                     {debtItems.map((it, i) => {
-                      const name = it.itemName || it.item_name || ''
+                      const name = it.name || it.itemName || it.item_name || ''
                       const qty = it.quantity || 0
                       const price = it.unitPrice || it.unit_price || 0
                       return (
@@ -1172,11 +1180,11 @@ export default function Reports() {
               ) : (
                 <table className="mi-table" style={{ fontSize: '0.9rem' }}>
                   <thead>
-                    <tr><th>اسم العنصر / القطعة</th><th style={{width: 60}}>الكمية</th><th style={{width: 80}}>السعر</th><th style={{width: 80}}>المجموع</th></tr>
+                    <tr><th>اسم العنصر / القطعة</th><th style={{ width: 60 }}>الكمية</th><th style={{ width: 80 }}>السعر</th><th style={{ width: 80 }}>المجموع</th></tr>
                   </thead>
                   <tbody>
                     {supDebtItems.map((it, i) => {
-                      const name = it.itemName || it.item_name || ''
+                      const name = it.name || it.itemName || it.item_name || ''
                       const qty = it.quantity || 0
                       const price = it.unitPrice || it.unit_price || 0
                       return (
