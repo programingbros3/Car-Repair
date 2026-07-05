@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense } from '../store/GarageContext'
+import type { PurchaseInvoice, PurchaseType, PurchaseStatus, PaymentRow, Expense, SupplierItem } from '../store/GarageContext'
+import { applyDiscount } from '../db/discount'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddPurchaseInvoiceButton from '../components/AddPurchaseInvoiceButton'
 import Pagination from '../components/Pagination'
@@ -33,7 +34,37 @@ const blankRow = (): PaymentRow => ({
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
 })
 
-function printInvoice(inv: PurchaseInvoice): void {
+/* خصم على مستوى البند الفردي — وصف للعرض + الإجمالي بعد الخصم (نفس منطق شاشة الموردين) */
+const itemDiscountLabel = (item: SupplierItem): string =>
+  !item.discountType ? '—'
+    : item.discountType === 'percentage'
+      ? `${fmt(item.discountValue ?? 0)}%`
+      : `−${fmt(item.discountValue ?? 0)} ₪`
+const itemNetTotal = (item: SupplierItem): number =>
+  applyDiscount(item.quantity * item.unitPrice, item.discountType ?? null, item.discountValue ?? 0)
+
+async function printInvoice(inv: PurchaseInvoice): Promise<void> {
+  /* الشاشة المجمّعة لا تحمل البنود — فواتير الموردين وحدها لها بنود، تُجلب من الأصل */
+  let items: SupplierItem[] = []
+  if (inv.type === 'supplier') {
+    try {
+      const full = await dbService.supplierInvoice.getOne(inv.id)
+      items = full?.items ?? []
+    } catch (err) {
+      showError('تعذّر جلب بنود الفاتورة للطباعة', err)
+      return
+    }
+  }
+  const itemRows = items.map(item => `
+        <tr>
+          <td>${esc(item.name)}</td>
+          <td>${item.quantity}</td>
+          <td>${fmt(item.unitPrice)} ₪</td>
+          <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+          <td>${esc(itemDiscountLabel(item))}</td>
+          <td>${fmt(itemNetTotal(item))} ₪</td>
+          <td>${item.notes ? esc(item.notes) : '—'}</td>
+        </tr>`).join('')
   const body = `
     <div class="detail-grid">
       <div class="detail-item"><label>رقم الفاتورة</label><span>${inv.invoiceNumber ? esc(inv.invoiceNumber) : `#${inv.id}`}</span></div>
@@ -44,7 +75,12 @@ function printInvoice(inv: PurchaseInvoice): void {
       <div class="detail-item"><label>رقم الهاتف</label><span>${inv.phone && inv.phone !== '0000' ? esc(inv.phone) : 'غير معروف'}</span></div>
       ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${esc(inv.details)}</span></div>` : ''}
     </div>
-    <div class="detail-grid">
+    ${items.length > 0 ? `
+    <table>
+      <thead><tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الخصم</th><th>بعد الخصم</th><th>ملاحظات</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>` : ''}
+    <div class="detail-grid" style="margin-top:16px;">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.paid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
@@ -101,7 +137,8 @@ const invToForm = (inv: PurchaseInvoice): EditForm => ({
    Component
 ════════════════════════════════════════ */
 export default function PurchaseInvoices() {
-  const { purchaseInvoices, reload } = useGarage()
+  const { purchaseInvoices, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['purchaseInvoices']) }, [ensureDomains])
 
   /* ── Search & Filter ── */
   const [search,       setSearch]       = useState('')
@@ -440,7 +477,7 @@ export default function PurchaseInvoices() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => printInvoice(detailsInv)}>طباعة</button>
+                onClick={() => void printInvoice(detailsInv)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsInv(null)}>إغلاق</button>
             </div>
           </div>

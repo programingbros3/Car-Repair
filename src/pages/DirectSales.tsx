@@ -113,7 +113,8 @@ function LinkedOpsSection({ phone, id }: { phone: string; id: number }) {
    Component
 ════════════════════════════════════════ */
 export default function DirectSales() {
-  const { directSales: invoices, reload } = useGarage()
+  const { directSales: invoices, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['directSale']) }, [ensureDomains])
 
   /* form (add inline + edit modal via shared DirectSaleForm) */
   const [showAddForm, setShowAddForm]       = useState(hasDirectSaleDraft())

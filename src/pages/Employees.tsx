@@ -27,7 +27,8 @@ const emptyEmpForm = () => ({ name: '', phone: '', dailyWage: '' })
    Component
 ════════════════════════════════════════ */
 export default function Employees() {
-  const { employees, salaries, reload } = useGarage()
+  const { employees, salaries, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['employees', 'salaries']) }, [ensureDomains])
 
   /* employee form */
   const [showEmpForm,  setShowEmpForm]  = useState(false)

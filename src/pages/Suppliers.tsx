@@ -143,7 +143,8 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
    Component
 ════════════════════════════════════════ */
 export default function Suppliers() {
-  const { suppliers, supplierInvoices, reload } = useGarage()
+  const { suppliers, supplierInvoices, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['suppliers', 'supplierInvoices']) }, [ensureDomains])
 
   /* ── Suppliers list form ── */
   const [showSupForm,  setShowSupForm]  = useState(false)

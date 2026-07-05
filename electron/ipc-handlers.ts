@@ -11,10 +11,17 @@
      فقط، مع SQL مضمّن للفجوات (الحذف/التعديل/الدليل/الكفالات/العروض المجمّعة).
 ════════════════════════════════════════════════════════════════════════ */
 import { ipcMain, dialog, app } from 'electron'
+import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
 import type Database from 'better-sqlite3'
 
+// نحتاج منشئ better-sqlite3 وقت التشغيل (لا نوعاً فقط) لفتح القاعدة المستوردة
+// وتثبيت كلمة سر الجهاز عليها قبل تفعيلها. نفس أسلوب التحميل في src/database.ts.
+const nodeRequire = createRequire(import.meta.url)
+const BetterSqlite3 = nodeRequire('better-sqlite3') as typeof Database
+
+import { applySchemaAndMigrations } from '../src/database'
 import {
   addMaintenanceInvoice, updateMaintenanceInvoice,
   releaseMaintenanceCar, getMaintenanceInvoices, getMaintenanceInvoice, getCarHistory,
@@ -49,6 +56,7 @@ import {
   getAutoLockSettings, updateAutoLockSettings,
   needsPasswordSetup, setInitialPassword,
   logActivity, getActivityLog,
+  readDeviceAuthState, applyDeviceAuthState,
 } from './auth'
 
 import type {
@@ -736,15 +744,46 @@ export function registerIpcHandlers(db: DB): void {
         return { success: false, error: 'الملف المختار ليس نسخة احتياطية صالحة لتطبيق الكراج' }
       }
 
-      // نسخة احتياطية تلقائية من قاعدة البيانات الحالية
-      const timestamp = Date.now()
-      const autoBackupPath = `${dbPath}.backup-${timestamp}`
+      // كلمة السر تخصّ الجهاز لا الملف: نلتقط حالة مصادقة الجهاز الحالية قبل
+      // التبديل كي نطبّقها على القاعدة المستوردة (فلا يُطلب من المستخدم كلمة سر
+      // النسخة القديمة عند فتحها).
+      const deviceAuth = readDeviceAuthState(db)
+
+      // ── تجهيز على نسخة مؤقّتة أولاً ثم التبديل عند النجاح فقط ──
+      // نُحضّر النسخة المستوردة على ملف مؤقّت (ترقية بنيتها للبنية الحالية عبر
+      // applySchemaAndMigrations ثم تثبيت كلمة سر الجهاز). هكذا لو كانت النسخة
+      // قديمة/تالفة (مثلاً بلا جدول app_settings) يفشل التجهيز **دون أن نمسّ قاعدة
+      // الإنتاج إطلاقاً** — لا تبديل، لا فقدان بيانات، لا حاجة لاستعادة يدوية.
+      const tempPath = `${dbPath}.import-tmp-${Date.now()}`
+      const cleanupTemp = () => {
+        for (const s of ['', '-wal', '-shm']) { try { fs.rmSync(tempPath + s, { force: true }) } catch { /* تجاهل */ } }
+      }
+      try {
+        fs.copyFileSync(importPath, tempPath)
+        const temp = new BetterSqlite3(tempPath)
+        try {
+          applySchemaAndMigrations(temp)          // ترقية بنية النسخة القديمة للبنية الحالية
+          applyDeviceAuthState(temp, deviceAuth)  // تثبيت كلمة سر الجهاز الحالية
+          temp.pragma('wal_checkpoint(TRUNCATE)') // ضمان كتابة كل شيء في الملف قبل النسخ
+        } finally {
+          temp.close()
+        }
+      } catch (err) {
+        cleanupTemp()
+        return { success: false, error: `تعذّر تجهيز النسخة الاحتياطية للاستيراد (قد تكون تالفة أو من إصدار غير متوافق): ${toArabicError(err)}` }
+      }
+
+      // التجهيز نجح → الآن فقط نبدّل قاعدة الإنتاج (مع نسخة احتياطية أمان منها)
+      const autoBackupPath = `${dbPath}.backup-${Date.now()}`
       db.pragma('wal_checkpoint(FULL)')
       fs.copyFileSync(dbPath, autoBackupPath)
-
-      // إغلاق الاتصال، تبديل الملف، إعادة التشغيل
       db.close()
-      fs.copyFileSync(importPath, dbPath)
+      // إزالة WAL/SHM القديمَين كي لا يُطبَّقا على الملف المُبدَّل
+      for (const s of ['-wal', '-shm']) { try { fs.rmSync(dbPath + s, { force: true }) } catch { /* تجاهل */ } }
+      fs.copyFileSync(tempPath, dbPath)
+      cleanupTemp()
+
+      // إعادة التشغيل
       app.relaunch()
       app.exit(0)
       return { success: true, data: null }

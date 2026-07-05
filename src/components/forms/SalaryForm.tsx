@@ -1,4 +1,4 @@
-import { useState, forwardRef, useImperativeHandle } from 'react'
+import { useState, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { useGarage } from '../../store/GarageContext'
 import type { SalaryRecord } from '../../store/GarageContext'
 import { dbService } from '../../services/db'
@@ -32,7 +32,8 @@ type Props = {
 const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
   { editingSalary, onSaved }, ref,
 ) {
-  const { employees, reload } = useGarage()
+  const { employees, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['employees']) }, [ensureDomains])
 
   const [salaryForm, setSalaryForm] = useState(() => editingSalary ? formFromRecord(editingSalary) : emptyForm())
   const [salarySubmitted, setSalarySubmitted] = useState(false)

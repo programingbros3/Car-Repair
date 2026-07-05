@@ -133,7 +133,8 @@ function LinkedOpsSection({ phone, source, id }: { phone: string; source: string
    Component
 ════════════════════════════════════════ */
 export default function PendingDebts() {
-  const { debts, reload } = useGarage()
+  const { debts, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['debts']) }, [ensureDomains])
 
   /* filters */
   const [search,      setSearch]      = useState('')

@@ -32,7 +32,8 @@ function printExpense(exp: Expense): void {
    Component
 ════════════════════════════════════════ */
 export default function DailyExpenses() {
-  const { expenses, reload } = useGarage()
+  const { expenses, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['expenses']) }, [ensureDomains])
 
   /* form */
   const [showForm,       setShowForm]       = useState(hasExpenseDraft())

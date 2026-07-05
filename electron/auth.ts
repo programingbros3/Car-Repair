@@ -132,6 +132,40 @@ export function changePassword(db: DB, oldPassword: string, newPassword: string)
   setSetting(db, KEYS.passwordHash, bcrypt.hashSync(newPassword, SALT_ROUNDS))
 }
 
+/* ── كلمة السر تتبع الجهاز لا الملف المستورد ──
+   كلمة السر وإعدادات القفل مخزَّنة داخل جدول app_settings في ملف القاعدة نفسه،
+   لذا لو استوردنا نسخة احتياطية قديمة "كما هي" لعادت كلمة السر إلى ما كانت عليه
+   وقت أخذ تلك النسخة — وهذا يُجبر المستخدم على تذكّر كلمة سر كل نسخة قديمة.
+   الحل: نحفظ حالة مصادقة الجهاز الحالية قبل الاستيراد ونطبّقها على القاعدة
+   المستوردة، فتبقى كلمة السر الحالية سارية بغضّ النظر عن عمر النسخة. */
+export interface DeviceAuthState {
+  passwordHash: string | null
+  autoLockEnabled: string | null
+  autoLockMinutes: string | null
+}
+
+/** يقرأ حالة مصادقة الجهاز الحالية (كلمة السر + إعدادات القفل التلقائي). */
+export function readDeviceAuthState(db: DB): DeviceAuthState {
+  return {
+    passwordHash: getSetting(db, KEYS.passwordHash),
+    autoLockEnabled: getSetting(db, KEYS.autoLockEnabled),
+    autoLockMinutes: getSetting(db, KEYS.autoLockMinutes),
+  }
+}
+
+/** يطبّق حالة مصادقة الجهاز على قاعدة مستوردة، مع تصفير حالة القفل المؤقت.
+    لو كان الجهاز الحالي بلا كلمة سر (passwordHash = null) تُمحى كلمة سر النسخة
+    المستوردة أيضاً فتظهر شاشة "تعيين كلمة السر" — فالمصادقة تخصّ الجهاز. */
+export function applyDeviceAuthState(db: DB, state: DeviceAuthState): void {
+  setSetting(db, KEYS.passwordHash, state.passwordHash)
+  setSetting(db, KEYS.autoLockEnabled, state.autoLockEnabled)
+  setSetting(db, KEYS.autoLockMinutes, state.autoLockMinutes)
+  // تصفير عدّاد المحاولات/القفل المؤقت الموروث من النسخة المستوردة
+  setSetting(db, KEYS.failedAttempts, null)
+  setSetting(db, KEYS.lockoutUntil, null)
+  setSetting(db, KEYS.lockoutLevel, null)
+}
+
 /* ── القفل التلقائي عند الخمول ── */
 export function getAutoLockSettings(db: DB): AutoLockSettings {
   const enabledRaw = getSetting(db, KEYS.autoLockEnabled)

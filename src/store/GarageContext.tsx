@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
 import { dbService } from '../services/db'
 import { calcEndDate, daysRemaining } from '../utils/warranty'
 
@@ -177,12 +177,20 @@ export type ReloadDomain =
   | 'supplierInvoices' | 'suppliers' | 'expenses' | 'employees'
   | 'salaries' | 'debts' | 'warranties'
 
+const ALL_DOMAINS: ReloadDomain[] = [
+  'maintenance', 'directSale', 'salesInvoices', 'purchaseInvoices',
+  'supplierInvoices', 'suppliers', 'expenses', 'employees',
+  'salaries', 'debts', 'warranties',
+]
+
 type GarageContextType = {
   /* status */
   loading:          boolean
   /* يعيد جلب البيانات من قاعدة البيانات. بلا وسيط = كل الجداول؛ مع نطاقات =
      المجالات المتأثرة فقط. يُستدعى بعد كل عملية كتابة ناجحة. */
   reload:           (domains?: ReloadDomain[]) => Promise<void>
+  /* يضمن تحميل المجالات المطلوبة كسولاً (مرّة واحدة). تستدعيه كل شاشة لمجالها عند فتحها. */
+  ensureDomains:    (domains: ReloadDomain[]) => Promise<void>
   /* data */
   maintenanceCars:  CarRecord[];       setMaintenanceCars:  React.Dispatch<React.SetStateAction<CarRecord[]>>
   directSales:      SaleRecord[];      setDirectSales:      React.Dispatch<React.SetStateAction<SaleRecord[]>>
@@ -221,31 +229,55 @@ export function GarageProvider({ children }: { children: ReactNode }) {
   const [warranties,       setWarranties]       = useState<WarrantyRecord[]>([])
   const [loading,          setLoading]          = useState(true)
 
-  /* ── جلب البيانات من قاعدة البيانات (تحميل أولي + إعادة مزامنة انتقائية) ──
-     M10: عند تمرير نطاقات، تُجلَب وتُحدَّث المجالات المطلوبة فقط بالتوازي. */
-  const reload = useCallback(async (domains?: ReloadDomain[]): Promise<void> => {
-    const want = (d: ReloadDomain) => !domains || domains.includes(d)
-    await Promise.all([
-      want('maintenance')      && dbService.maintenance.getAll().then(setMaintenanceCars),
-      want('directSale')       && dbService.directSale.getAll().then(setDirectSales),
-      want('salesInvoices')    && dbService.salesInvoice.getAll().then(setSalesInvoices),
-      want('purchaseInvoices') && dbService.purchaseInvoice.getAll().then(setPurchaseInvoices),
-      want('supplierInvoices') && dbService.supplierInvoice.getAll().then(setSupplierInvoices),
-      want('suppliers')        && dbService.suppliers.getAll().then(setSuppliers),
-      want('expenses')         && dbService.expense.getAll().then(setExpenses),
-      want('employees')        && dbService.employee.getAll().then(setEmployees),
-      want('salaries')         && dbService.salary.getAll().then(setSalaries),
-      want('debts')            && dbService.debt.getAll().then(setDebts),
-      want('warranties')       && dbService.warranty.getAll().then(setWarranties),
-    ].filter(Boolean) as Promise<void>[])
+  /* ── التحميل الكسول للمجالات (Lazy loading) ──────────────────────────────
+     سابقاً كان التطبيق يجلب المجالات الأحد عشر كلها دفعةً واحدة عند الإقلاع
+     ويحتفظ بها في ذاكرة الواجهة. مع قاعدة كبيرة (عشرات آلاف الفواتير) يعني ذلك
+     نقل +150MB عبر IPC والاحتفاظ بها فوراً → تجمّد/انهيار الـ renderer وشاشة
+     بيضاء بعد الاستيراد أو الإقلاع.
+
+     الحل: لا نجلب شيئاً ثقيلاً عند الإقلاع. كل شاشة تستدعي ensureDomains لمجالها
+     عند فتحها فيُجلَب عند الحاجة فقط. وإعادة الجلب بعد الكتابة (reload) تقتصر على
+     المجالات المُحمَّلة فعلاً؛ المجالات التي لم تُفتح شاشتها بعد ستُجلَب حديثةً
+     أول ما تُزار، فلا داعي لإعادة جلبها الآن. */
+  const loadedDomains = useRef<Set<ReloadDomain>>(new Set())
+
+  const loadDomain = useCallback((d: ReloadDomain): Promise<void> => {
+    switch (d) {
+      case 'maintenance':      return dbService.maintenance.getAll().then(setMaintenanceCars)
+      case 'directSale':       return dbService.directSale.getAll().then(setDirectSales)
+      case 'salesInvoices':    return dbService.salesInvoice.getAll().then(setSalesInvoices)
+      case 'purchaseInvoices': return dbService.purchaseInvoice.getAll().then(setPurchaseInvoices)
+      case 'supplierInvoices': return dbService.supplierInvoice.getAll().then(setSupplierInvoices)
+      case 'suppliers':        return dbService.suppliers.getAll().then(setSuppliers)
+      case 'expenses':         return dbService.expense.getAll().then(setExpenses)
+      case 'employees':        return dbService.employee.getAll().then(setEmployees)
+      case 'salaries':         return dbService.salary.getAll().then(setSalaries)
+      case 'debts':            return dbService.debt.getAll().then(setDebts)
+      case 'warranties':       return dbService.warranty.getAll().then(setWarranties)
+    }
   }, [])
 
-  /* ── Initial load ── */
-  useEffect(() => {
-    reload()
-      .catch(err => console.error('فشل تحميل البيانات من قاعدة البيانات:', err))
-      .finally(() => setLoading(false))
-  }, [reload])
+  /* يضمن تحميل المجالات المطلوبة مرّة واحدة (لا يُعيد الجلب إن كانت محمَّلة). تستدعيه
+     كل شاشة لمجالها عند التركيب (mount). */
+  const ensureDomains = useCallback(async (domains: ReloadDomain[]): Promise<void> => {
+    const toLoad = domains.filter(d => !loadedDomains.current.has(d))
+    if (toLoad.length === 0) return
+    await Promise.all(toLoad.map(async d => {
+      await loadDomain(d)
+      loadedDomains.current.add(d)
+    }))
+  }, [loadDomain])
+
+  /* إعادة الجلب بعد عملية كتابة: تُحدِّث فقط المجالات المُحمَّلة حالياً (أي التي
+     زُرِت شاشتها). المجالات غير المُحمَّلة تُترَك — ستُجلَب حديثةً عند أول زيارة. */
+  const reload = useCallback(async (domains?: ReloadDomain[]): Promise<void> => {
+    const targets = (domains ?? ALL_DOMAINS).filter(d => loadedDomains.current.has(d))
+    if (targets.length === 0) return
+    await Promise.all(targets.map(d => loadDomain(d)))
+  }, [loadDomain])
+
+  /* ── Initial load: لا جلب ثقيل عند الإقلاع — الواجهة جاهزة فوراً ── */
+  useEffect(() => { setLoading(false) }, [])
 
   /* ── Cross-screen: previous operations by phone ── */
   const getLinkedOps = useCallback((phone: string, currentSource: string, currentId: number): LinkedOp[] => {
@@ -367,6 +399,7 @@ export function GarageProvider({ children }: { children: ReactNode }) {
   const value = useMemo<GarageContextType>(() => ({
     loading,
     reload,
+    ensureDomains,
     maintenanceCars,  setMaintenanceCars,
     directSales,      setDirectSales,
     salesInvoices,    setSalesInvoices,
@@ -381,7 +414,7 @@ export function GarageProvider({ children }: { children: ReactNode }) {
     getLinkedOps,
     getLinkedOpsByPlate,
   }), [
-    loading, reload,
+    loading, reload, ensureDomains,
     maintenanceCars, directSales, salesInvoices, purchaseInvoices,
     suppliers, supplierInvoices, expenses, employees, salaries, debts,
     warranties,

@@ -344,10 +344,10 @@ CREATE TABLE IF NOT EXISTS daily_cash_audits (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_audit_date ON daily_cash_audits(audit_date);
 
--- M7: تفرّد رقم الفاتورة داخل كل جدول (شرطي على غير NULL — لا يمنع صفوفاً قديمة
--- غير مرقّمة قبل الـ backfill). التفرّد عبر جدولي البيع مضمون بالتسلسل المشترك.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_maint_invno ON maintenance_invoices(invoice_number) WHERE invoice_number IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_ds_invno    ON direct_sale_invoices(invoice_number) WHERE invoice_number IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uniq_sup_invno   ON supplier_invoices(invoice_number)   WHERE invoice_number IS NOT NULL;
+-- M7: تفرّد رقم الفاتورة داخل كل جدول — تُنشأ فهارسه في migrateUniqueInvoiceNumbers()
+-- (electron/database.ts) وليس هنا. السبب: عمود invoice_number يُضاف عبر migration
+-- (ALTER TABLE) الذي يُنفَّذ بعد db.exec(schema)؛ لو أنشأنا الفهرس هنا لفشل
+-- db.exec على أي قاعدة قديمة (نسخة احتياطية) لا تملك العمود بعد
+-- (SqliteError: no such column: invoice_number) → تعطّل الإقلاع/الاستيراد.
 
 -- M3: فهارس على حالة الشيك لتسريع صفحة الشيكات والاستحقاق القريب

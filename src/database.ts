@@ -23,6 +23,19 @@ export function initDB(): void {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 
+  applySchemaAndMigrations(db)
+
+  console.log('✅ قاعدة البيانات جاهزة:', dbPath)
+}
+
+/**
+ * ينشئ/يحدّث بنية القاعدة على اتصال مفتوح: تنفيذ schema.sql (CREATE TABLE IF NOT
+ * EXISTS + الفهارس) ثم كل عمليات الترحيل (إضافة الأعمدة الجديدة، فهارس التفرّد،
+ * تعبئة أرقام الفواتير…). مُصدَّرة كي يستخدمها مسار الاستيراد (backup:import) أيضاً
+ * لترقية نسخة احتياطية قديمة إلى البنية الحالية قبل تفعيلها — لا تكرار للمنطق.
+ * آمنة لإعادة التشغيل (كل الخطوات idempotent).
+ */
+export function applySchemaAndMigrations(db: BetterSqlite3): void {
   // In packaged app: schema is placed next to the executable via extraResources.
   // In development: schema lives in electron/schema.sql.
   const schemaPath = app.isPackaged
@@ -80,8 +93,6 @@ export function initDB(): void {
   migrateCashAuditLock(db)
   migrateUniqueInvoiceNumbers(db)
   backfillInvoiceNumbers(db)
-
-  console.log('✅ قاعدة البيانات جاهزة:', dbPath)
 }
 
 /**

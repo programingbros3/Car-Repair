@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
-import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow } from '../store/GarageContext'
+import type { SaleInvoice, SaleInvoiceType, SaleInvoiceStatus, PaymentRow, WarrantyPeriodUnit } from '../store/GarageContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import AddSalesInvoiceButton from '../components/AddSalesInvoiceButton'
 import Pagination from '../components/Pagination'
@@ -33,7 +33,58 @@ const blankRow = (): PaymentRow => ({
   checkNumber: '', issueDate: '', clearDate: '', bankName: '', transactionNum: '',
 })
 
-function printInvoice(inv: SaleInvoice): void {
+/* كفالة البند تُخزَّن كنص JSON {value, unit} — نفس منطق شاشة الصيانة */
+const UNIT_AR: Record<string, string> = { week: 'أسبوع', month: 'شهر', year: 'سنة' }
+
+function warrantyLabel(raw: string): string {
+  if (!raw) return '—'
+  try {
+    const w = JSON.parse(raw) as { value?: number; unit?: WarrantyPeriodUnit }
+    if (w.value && w.unit) return `${w.value} ${UNIT_AR[w.unit] ?? w.unit}`
+  } catch {
+    // ignore malformed warranty JSON
+  }
+  return raw
+}
+
+/* شكل موحّد لبنود الطباعة (صيانة: مع نوع البند والكفالة، بيع مباشر: بدونهما) */
+type PrintItem = {
+  name: string; quantity: number; unitPrice: number; notes: string
+  partType: 'part' | 'service' | null; warranty: string
+}
+
+async function printInvoice(inv: SaleInvoice): Promise<void> {
+  /* الشاشة المجمّعة لا تحمل البنود — تُجلب من الفاتورة الأصلية حسب النوع */
+  let items: PrintItem[] = []
+  try {
+    if (inv.type === 'maintenance') {
+      const full = await dbService.maintenance.getOne(inv.id)
+      items = (full?.items ?? []).map(it => ({
+        name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
+        notes: it.notes, partType: it.partType, warranty: it.warranty,
+      }))
+    } else {
+      const full = await dbService.directSale.getOne(inv.id)
+      items = (full?.items ?? []).map(it => ({
+        name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
+        notes: it.notes, partType: null, warranty: '',
+      }))
+    }
+  } catch (err) {
+    showError('تعذّر جلب بنود الفاتورة للطباعة', err)
+    return
+  }
+  const isMaint = inv.type === 'maintenance'
+  const itemRows = items.map(item => `
+        <tr>
+          ${isMaint ? `<td>${item.partType === 'service' ? 'خدمة' : 'قطعة'}</td>` : ''}
+          <td>${esc(item.name)}</td>
+          <td>${item.quantity}</td>
+          <td>${fmt(item.unitPrice)} ₪</td>
+          <td>${fmt(item.quantity * item.unitPrice)} ₪</td>
+          ${isMaint ? `<td>${esc(warrantyLabel(item.warranty))}</td>` : ''}
+          <td>${item.notes ? esc(item.notes) : '—'}</td>
+        </tr>`).join('')
   const body = `
     <div class="detail-grid">
       <div class="detail-item"><label>رقم الفاتورة</label><span>${esc(inv.invoiceNumber)}</span></div>
@@ -49,7 +100,15 @@ function printInvoice(inv: SaleInvoice): void {
       ${inv.type === 'maintenance' && inv.dateReleased ? `<div class="detail-item"><label>تاريخ التسليم</label><span>${esc(inv.dateReleased)}</span></div>` : ''}
       ${inv.details ? `<div class="detail-item"><label>التفاصيل</label><span>${esc(inv.details)}</span></div>` : ''}
     </div>
-    <div class="detail-grid">
+    ${items.length > 0 ? `
+    <table>
+      <thead><tr>${isMaint
+        ? '<th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th>'
+        : '<th>الصنف</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th>'
+      }</tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>` : ''}
+    <div class="detail-grid" style="margin-top:16px;">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.paid)} ₪</span></div>
       <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
@@ -107,7 +166,8 @@ const invToForm = (inv: SaleInvoice): EditForm => ({
    Component
 ════════════════════════════════════════ */
 export default function SalesInvoices() {
-  const { salesInvoices, reload } = useGarage()
+  const { salesInvoices, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['salesInvoices']) }, [ensureDomains])
 
   /* ── Search & Filter ── */
   const [search,       setSearch]       = useState('')
@@ -493,7 +553,7 @@ export default function SalesInvoices() {
             </div>
             <div className="mi-modal-footer">
               <button className="btn btn-secondary"
-                onClick={() => printInvoice(detailsInv)}>طباعة</button>
+                onClick={() => void printInvoice(detailsInv)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsInv(null)}>إغلاق</button>
             </div>
           </div>

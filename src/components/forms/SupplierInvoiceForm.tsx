@@ -78,7 +78,9 @@ type Props = {
 const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(function SupplierInvoiceForm(
   { editing, useDraft = false, onSaved }, ref,
 ) {
-  const { suppliers, reload } = useGarage()
+  const { suppliers, reload, ensureDomains } = useGarage()
+  // قد يُفتح هذا النموذج من شاشة فواتير الشراء التي لا تُحمِّل دليل الموردين — نضمن تحميله
+  useEffect(() => { void ensureDomains(['suppliers']) }, [ensureDomains])
 
   const [form, setForm] = useState(() => editing ? formFromRecord(editing) : emptyForm())
   const [parts, setParts] = useState<FormPart[]>(() => editing ? partsFromRecord(editing) : [newFormPart()])

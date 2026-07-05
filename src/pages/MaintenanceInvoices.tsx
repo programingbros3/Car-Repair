@@ -169,7 +169,8 @@ function LinkedOpsByPlateSection({ carPlate, source, id }: { carPlate: string; s
    Component
 ════════════════════════════════════════ */
 export default function MaintenanceInvoices() {
-  const { maintenanceCars: cars, reload } = useGarage()
+  const { maintenanceCars: cars, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['maintenance']) }, [ensureDomains])
 
   /* form (add inline + edit modal via shared MaintenanceForm) */
   const [showAddForm, setShowAddForm] = useState(hasMaintenanceDraft())
@@ -247,12 +248,7 @@ export default function MaintenanceInvoices() {
   useEffect(() => { dbService.vat.getSettings().then(setVat).catch(() => { /* تجاهل — تبقى الضريبة مخفية */ }) }, [])
 
   /* Edit flow — يجلب البنود الكاملة ثم يفتح نموذج التعديل المشترك */
-  const openEdit = (car: CarRecord) => setWarnCar(car)
-
-  const confirmEditCar = async () => {
-    if (!warnCar) return
-    const car = warnCar
-    setWarnCar(null)
+  const loadAndEdit = async (car: CarRecord) => {
     clearMaintenanceDraft()
     try {
       const full = await dbService.maintenance.getOne(car.id)
@@ -260,6 +256,20 @@ export default function MaintenanceInvoices() {
     } catch (err) {
       showError('تعذّر تحميل بيانات الفاتورة', err)
     }
+  }
+
+  /* قيد الصيانة: تعديل سلس مباشرةً (بدون كلمة سر) — يُعدَّل عليها يومياً بإضافة قطع
+     أو تحديث بيانات الزبون. المُسلَّمة: تبقى محمية بكلمة السر عبر تأكيد warnCar. */
+  const openEdit = (car: CarRecord) => {
+    if (car.status === 'in_progress') { void loadAndEdit(car); return }
+    setWarnCar(car)
+  }
+
+  const confirmEditCar = async () => {
+    if (!warnCar) return
+    const car = warnCar
+    setWarnCar(null)
+    await loadAndEdit(car)
   }
 
   const openAddForm = () => { setEditCar(null); setShowAddForm(true) }

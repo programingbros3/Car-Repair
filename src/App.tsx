@@ -5,6 +5,7 @@ import { useAutoLock } from './utils/useAutoLock'
 import PasswordGate from './components/PasswordGate'
 import Sidebar from './components/Sidebar'
 import ErrorToast from './components/ErrorToast'
+import ErrorBoundary from './components/ErrorBoundary'
 import CashLedger from './pages/CashLedger'
 import MaintenanceInvoices from './pages/MaintenanceInvoices'
 import DirectSales from './pages/DirectSales'
@@ -87,12 +88,16 @@ export default function App() {
 
   useAutoLock(isUnlocked, lock)
 
-  if (!isUnlocked) return <PasswordGate onUnlock={() => setIsUnlocked(true)} />
-
   return (
-    <GarageProvider>
-      <AppShell />
-      <ErrorToast />
-    </GarageProvider>
+    <ErrorBoundary>
+      {!isUnlocked ? (
+        <PasswordGate onUnlock={() => setIsUnlocked(true)} />
+      ) : (
+        <GarageProvider>
+          <AppShell />
+          <ErrorToast />
+        </GarageProvider>
+      )}
+    </ErrorBoundary>
   )
 }

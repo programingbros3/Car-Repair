@@ -59,7 +59,8 @@ type FormState = ReturnType<typeof emptyForm>
    Component
 ════════════════════════════════════════ */
 export default function Warranties() {
-  const { warranties, reload } = useGarage()
+  const { warranties, reload, ensureDomains } = useGarage()
+  useEffect(() => { void ensureDomains(['warranties']) }, [ensureDomains])
 
   /* form */
   const [editingWarranty, setEditingWarranty] = useState<WarrantyRecord | null>(null)
