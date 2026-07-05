@@ -564,6 +564,8 @@ export interface AutoBackupSettings {
   enabled: boolean
   folder: string | null
   keepCount: number
+  /** مسار النسخ الاحتياطي الثاني (اختياري) — null يعني الميزة غير مفعّلة */
+  secondaryFolder: string | null
 }
 
 export interface AutoBackupStatus {
@@ -571,12 +573,20 @@ export interface AutoBackupStatus {
   lastStatus: 'success' | 'failed' | null
   lastError: string | null
   lastSuccessAt: string | null
+  secondaryLastRunAt: string | null
+  secondaryLastStatus: 'success' | 'failed' | null
+  secondaryLastError: string | null
+  secondaryLastSuccessAt: string | null
 }
 
 export interface AutoBackupRunResult {
   success: boolean
   filePath?: string
   error?: string
+  /** skipped = المسار الثاني غير معبّأ؛ فشل المسار الثاني لا يؤثر على success الأساسي */
+  secondaryStatus?: 'success' | 'failed' | 'skipped'
+  secondaryFilePath?: string
+  secondaryError?: string
 }
 
 // ── الشيكات المستحقة قريباً (cheques) — قراءة فقط، من جداول الشيكات الأربعة الموجودة ──

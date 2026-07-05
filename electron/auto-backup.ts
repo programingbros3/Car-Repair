@@ -29,6 +29,11 @@ const KEYS = {
   lastStatus: 'auto_backup_last_status',
   lastError: 'auto_backup_last_error',
   lastSuccessAt: 'auto_backup_last_success_at',
+  secondaryFolder: 'auto_backup_secondary_folder',
+  secondaryLastRunAt: 'auto_backup_secondary_last_run_at',
+  secondaryLastStatus: 'auto_backup_secondary_last_status',
+  secondaryLastError: 'auto_backup_secondary_last_error',
+  secondaryLastSuccessAt: 'auto_backup_secondary_last_success_at',
 } as const
 
 const DEFAULT_KEEP_COUNT = 14
@@ -57,28 +62,37 @@ export function getAutoBackupSettings(db: DB): AutoBackupSettings {
     enabled: getSetting(db, KEYS.enabled) === '1',
     folder: getSetting(db, KEYS.folder),
     keepCount: Number(getSetting(db, KEYS.keepCount) ?? DEFAULT_KEEP_COUNT) || DEFAULT_KEEP_COUNT,
+    secondaryFolder: getSetting(db, KEYS.secondaryFolder),
   }
 }
 
 export function updateAutoBackupSettings(
   db: DB,
-  updates: Partial<{ enabled: boolean; folder: string | null; keepCount: number }>,
+  updates: Partial<{ enabled: boolean; folder: string | null; keepCount: number; secondaryFolder: string | null }>,
 ): AutoBackupSettings {
   if (updates.enabled !== undefined) setSetting(db, KEYS.enabled, updates.enabled ? '1' : '0')
   if (updates.folder !== undefined) setSetting(db, KEYS.folder, updates.folder)
   if (updates.keepCount !== undefined) {
     setSetting(db, KEYS.keepCount, String(Math.max(1, Math.floor(updates.keepCount))))
   }
+  if (updates.secondaryFolder !== undefined) {
+    setSetting(db, KEYS.secondaryFolder, updates.secondaryFolder?.trim() || null)
+  }
   return getAutoBackupSettings(db)
 }
 
 export function getAutoBackupStatus(db: DB): AutoBackupStatus {
   const lastStatus = getSetting(db, KEYS.lastStatus)
+  const secondaryLastStatus = getSetting(db, KEYS.secondaryLastStatus)
   return {
     lastRunAt: getSetting(db, KEYS.lastRunAt),
     lastStatus: lastStatus === 'success' || lastStatus === 'failed' ? lastStatus : null,
     lastError: getSetting(db, KEYS.lastError),
     lastSuccessAt: getSetting(db, KEYS.lastSuccessAt),
+    secondaryLastRunAt: getSetting(db, KEYS.secondaryLastRunAt),
+    secondaryLastStatus: secondaryLastStatus === 'success' || secondaryLastStatus === 'failed' ? secondaryLastStatus : null,
+    secondaryLastError: getSetting(db, KEYS.secondaryLastError),
+    secondaryLastSuccessAt: getSetting(db, KEYS.secondaryLastSuccessAt),
   }
 }
 
@@ -97,6 +111,51 @@ function applyRotation(folder: string, keepCount: number): void {
   if (excess <= 0) return
   for (const f of files.slice(0, excess)) {
     try { fs.unlinkSync(path.join(folder, f)) } catch { /* تجاهل فشل حذف نسخة قديمة واحدة */ }
+  }
+}
+
+/** يحوّل أخطاء نظام الملفات الشائعة لرسالة عربية واضحة لصاحب المحل */
+function describeFsError(err: unknown): string {
+  const code = (err as NodeJS.ErrnoException)?.code
+  if (code === 'ENOENT') return 'المجلد غير موجود'
+  if (code === 'EACCES' || code === 'EPERM') return 'لا توجد صلاحية كتابة على المجلد'
+  return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * ينسخ ملف النسخة الاحتياطية إلى المسار الثاني إن كان معبّأً، مع rotation
+ * مستقل بنفس keepCount. لا يرمي استثناءً أبداً — فشل المسار الثاني يُسجَّل
+ * كتحذير فقط ولا يمس نجاح النسخة الأساسية.
+ */
+function copyToSecondary(
+  db: DB,
+  sourceBackupPath: string,
+  fileName: string,
+  keepCount: number,
+): Pick<AutoBackupRunResult, 'secondaryStatus' | 'secondaryFilePath' | 'secondaryError'> {
+  const folder = getSetting(db, KEYS.secondaryFolder)
+  if (!folder) return { secondaryStatus: 'skipped' }
+
+  const nowIso = new Date().toISOString()
+  setSetting(db, KEYS.secondaryLastRunAt, nowIso)
+  try {
+    if (!fs.statSync(folder).isDirectory()) throw new Error('المسار الثاني ليس مجلداً')
+    fs.accessSync(folder, fs.constants.W_OK)
+
+    const destPath = path.join(folder, fileName)
+    fs.copyFileSync(sourceBackupPath, destPath)
+    applyRotation(folder, keepCount)
+
+    setSetting(db, KEYS.secondaryLastStatus, 'success')
+    setSetting(db, KEYS.secondaryLastError, null)
+    setSetting(db, KEYS.secondaryLastSuccessAt, nowIso)
+    return { secondaryStatus: 'success', secondaryFilePath: destPath }
+  } catch (err) {
+    const error = describeFsError(err)
+    console.warn(`[auto-backup] فشل النسخ إلى المسار الثاني (${folder}): ${error}`)
+    setSetting(db, KEYS.secondaryLastStatus, 'failed')
+    setSetting(db, KEYS.secondaryLastError, error)
+    return { secondaryStatus: 'failed', secondaryError: error }
   }
 }
 
@@ -130,7 +189,10 @@ export function runAutoBackup(db: DB): AutoBackupRunResult {
     setSetting(db, KEYS.lastStatus, 'success')
     setSetting(db, KEYS.lastError, null)
     setSetting(db, KEYS.lastSuccessAt, nowIso)
-    return { success: true, filePath: destPath }
+
+    // المسار الثاني: يُنسخ نفس الملف بنفس الاسم، وفشله لا يُفشل النسخة الأساسية
+    const secondary = copyToSecondary(db, destPath, fileName, settings.keepCount)
+    return { success: true, filePath: destPath, ...secondary }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     setSetting(db, KEYS.lastStatus, 'failed')

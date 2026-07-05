@@ -756,7 +756,7 @@ export function registerIpcHandlers(db: DB): void {
 
   /* ─────────────── النسخ الاحتياطي التلقائي (منفصل تماماً عن backup:export/backup:import أعلاه) ─────────────── */
   on('autoBackup:getSettings', () => getAutoBackupSettings(db))
-  on('autoBackup:updateSettings', (updates: Partial<{ enabled: boolean; folder: string | null; keepCount: number }>) =>
+  on('autoBackup:updateSettings', (updates: Partial<{ enabled: boolean; folder: string | null; keepCount: number; secondaryFolder: string | null }>) =>
     updateAutoBackupSettings(db, updates))
   on('autoBackup:runNow', () => runAutoBackup(db))
   on('autoBackup:getStatus', () => getAutoBackupStatus(db))

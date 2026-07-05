@@ -54,6 +54,7 @@ export default function Settings() {
   const [autoSaving, setAutoSaving]   = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoRunMsg, setAutoRunMsg]   = useState<string | null>(null)
+  const [secondaryFolderText, setSecondaryFolderText] = useState('')
 
   useEffect(() => {
     (async () => {
@@ -76,6 +77,7 @@ export default function Settings() {
     setAutoFolder(settings.folder)
     setAutoEnabled(settings.enabled)
     setAutoKeepCount(settings.keepCount)
+    setSecondaryFolderText(settings.secondaryFolder ?? '')
   }
 
   const persistAutoSettings = async (updates: Partial<AutoBackupSettings>) => {
@@ -108,6 +110,19 @@ export default function Settings() {
     void persistAutoSettings({ keepCount: autoKeepCount })
   }
 
+  const handleSecondaryFolderBlur = () => {
+    void persistAutoSettings({ secondaryFolder: secondaryFolderText.trim() || null })
+  }
+
+  const handlePickSecondaryFolder = async () => {
+    try {
+      const folder = await dbService.autoBackup.pickFolder()
+      if (folder) await persistAutoSettings({ secondaryFolder: folder })
+    } catch (err) {
+      showError('فشل اختيار المجلد', err)
+    }
+  }
+
   const handleRunNow = async () => {
     setAutoRunning(true)
     setAutoRunMsg(null)
@@ -115,7 +130,10 @@ export default function Settings() {
       const result = await dbService.autoBackup.runNow()
       const status = await dbService.autoBackup.getStatus()
       setAutoStatus(status)
-      setAutoRunMsg(result.success ? `تم الحفظ في: ${result.filePath}` : `فشلت المحاولة: ${result.error}`)
+      let msg = result.success ? `تم الحفظ في: ${result.filePath}` : `فشلت المحاولة: ${result.error}`
+      if (result.success && result.secondaryStatus === 'success') msg += ' — ونُسخت أيضاً إلى المسار الثاني'
+      if (result.success && result.secondaryStatus === 'failed') msg += ` — تنبيه: فشل النسخ إلى المسار الثاني (${result.secondaryError ?? ''})`
+      setAutoRunMsg(msg)
     } catch (err) {
       showError('فشل تنفيذ النسخة الاحتياطية التلقائية', err)
     } finally {
@@ -400,6 +418,54 @@ export default function Settings() {
 
           <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
 
+          {/* المسار الثاني (اختياري) */}
+          <div style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <div style={rowTitle}>مسار النسخ الاحتياطي الثاني (اختياري)</div>
+              <div style={rowDesc}>
+                مجلد إضافي تُنسخ إليه نفس النسخة بنفس الاسم (مثلاً مجلد OneDrive أو Google Drive
+                المتزامن محلياً). اتركه فارغاً لتعطيل الميزة. فشل النسخ إليه لا يؤثر إطلاقاً على
+                النسخة المحلية الأساسية، ويُطبَّق عليه نفس عدد النسخ المحتفظ بها بشكل مستقل.
+              </div>
+              <input
+                type="text"
+                dir="ltr"
+                style={textInputStyle}
+                placeholder="مثال: C:\Users\...\OneDrive\GarageBackups"
+                value={secondaryFolderText}
+                disabled={!autoLoaded || autoSaving}
+                onChange={e => setSecondaryFolderText(e.target.value)}
+                onBlur={handleSecondaryFolderBlur}
+              />
+              <div style={{ marginTop: '0.5rem', fontSize: '0.83rem', color: '#444' }}>
+                آخر نسخة للمسار الثاني:{' '}
+                {secondaryFolderText.trim() === '' ? (
+                  <span style={{ color: '#999' }}>غير مفعّل</span>
+                ) : autoStatus?.secondaryLastStatus === 'success' ? (
+                  <span style={{ color: '#1a7a45', fontWeight: 600 }}>
+                    نجحت ({formatDateTime(autoStatus.secondaryLastSuccessAt)})
+                  </span>
+                ) : autoStatus?.secondaryLastStatus === 'failed' ? (
+                  <span style={{ color: '#E74C3C', fontWeight: 600, wordBreak: 'break-all' }}>
+                    فشلت — تحقق من المسار{autoStatus.secondaryLastError ? ` (${autoStatus.secondaryLastError})` : ''}
+                  </span>
+                ) : (
+                  <span style={{ color: '#999' }}>لم تُنفَّذ أي نسخة بعد</span>
+                )}
+              </div>
+            </div>
+            <button
+              className="btn btn-secondary"
+              style={{ flexShrink: 0 }}
+              onClick={handlePickSecondaryFolder}
+              disabled={!autoLoaded || autoSaving}
+            >
+              اختيار مجلد…
+            </button>
+          </div>
+
+          <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
+
           {/* نسخ الآن + الحالة */}
           <div style={rowStyle}>
             <div>
@@ -624,4 +690,10 @@ const numberInputStyle: React.CSSProperties = {
   width: 80, padding: '0.5rem 0.65rem', border: '1px solid #ddd',
   borderRadius: 6, background: '#fafafa', fontSize: '0.92rem',
   textAlign: 'center', outline: 'none',
+}
+
+const textInputStyle: React.CSSProperties = {
+  width: '100%', marginTop: '0.5rem', padding: '0.5rem 0.65rem',
+  border: '1px solid #ddd', borderRadius: 6, background: '#fafafa',
+  fontSize: '0.88rem', outline: 'none', boxSizing: 'border-box',
 }
