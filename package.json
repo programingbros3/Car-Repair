@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "reset-dev-license": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-dev-license.ps1",
     "preview": "vite preview"
   },
   "dependencies": {
