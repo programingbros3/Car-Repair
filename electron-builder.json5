@@ -5,7 +5,7 @@
   "asar": true,
   "productName": "GreenLineGarage",
   "directories": {
-    "output": "release/${version}"
+    "output": "../Car-Repair-release/${version}"
   },
   "files": [
     "dist",
