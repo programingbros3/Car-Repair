@@ -9,7 +9,8 @@
 | الملف | الغرض |
 |---|---|
 | `simulate-history.ts` | يولّد ~10 سنوات من بيانات كراج واقعية عبر **قنوات IPC الحقيقية** للتطبيق. |
-| `verify-integrity.ts` | 7 فحوص سلامة تقارن قنوات التقارير بمجاميع الجداول الخام. |
+| `verify-integrity.ts` | 8 فحوص سلامة تقارن قنوات التقارير بمجاميع الجداول الخام (منها اتساق جداول الدفعة العامة للمورد). |
+| `run-verify.mjs` | مشغّل مؤتمت لـ `verify-integrity.ts` بأمر واحد (يحلّ تعارض ABI آلياً). |
 | `electron-stub.mjs` | بديل تجريبي لوحدة `electron` (يلتقط معالجات IPC ويوفّر `invoke`). |
 | `hooks.mjs` / `register.mjs` | خطاف حلّ الوحدات (يوجّه `electron` للـ stub + يحلّ استيرادات `.ts`). |
 | `preview-db/garage-simulation-preview.db` | نسخة معزولة معبّأة ببيانات المحاكاة، **للمعاينة داخل التطبيق**. |
@@ -30,6 +31,21 @@ GARAGE_DB_PATH=./scripts/preview-db/garage-simulation-preview.db npm run dev
 
 > عزل مضمون: اسم الملف مختلف بوضوح (`garage-simulation-preview.db`)، ومسار مختلف
 > (`scripts/preview-db/`)، ولا يُقرأ إلا حين تمرّر `GARAGE_DB_PATH` صراحةً.
+
+## فحص سلامة القاعدة بأمر واحد
+
+```bash
+npm run verify:integrity
+```
+
+يشغّل كل فحوص `verify-integrity.ts` بلا أي خطوة يدوية: يجمّع الملف بـ esbuild ثم
+يشغّله عبر Electron كـ Node (فيطابق ABI الخاص بـ `better-sqlite3`) — لا حاجة لـ
+`npm rebuild` ولا لضبط أي متغيّر بيئة. يعمل افتراضياً على **قاعدة الإنتاج الحقيقية**
+(الفحوص قراءة فقط). للتشغيل على نسخة اختبارية بدلاً منها مرّر `GARAGE_DB_PATH`:
+
+```bash
+GARAGE_DB_PATH=./scripts/preview-db/garage-simulation-preview.db npm run verify:integrity
+```
 
 ## إعادة توليد قاعدة المحاكاة/المعاينة
 

@@ -6,6 +6,7 @@ import type { LedgerRow, CashAuditRow, CashSystemBreakdown } from '../db/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import Pagination from '../components/Pagination'
+import { fmt, isBulkNote, parseBulkInvoiceLabel, buildBulkSummary, type BulkAllocation } from '../utils/bulkNote'
 
 /* ════════════════════════════════════════
    Types
@@ -23,6 +24,10 @@ type DisplayRow = {
   balanceAfter: number
   notes: string
   breakdown: PaymentBreakdown[]
+  // ── دفعة عامة لمورد: العملية الواحدة تغطّي عدة فواتير بنفس طريقة الدفع ──
+  isBulk: boolean
+  method: string              // طريقة الدفع الموحّدة للدفعة (كاش/شيك/فيزا) — تُعرض مرة واحدة
+  allocations: BulkAllocation[]
 }
 
 /* ════════════════════════════════════════
@@ -55,8 +60,14 @@ const METHOD_COLORS: Record<string, string> = {
   debt:   '#E74C3C',
 }
 
+// شارة «دفعة عامة» — بنفسجي بارز يميّزها فوراً عن دفعة الفاتورة العادية
+const bulkBadgeStyle: React.CSSProperties = {
+  fontSize: '0.72rem', padding: '2px 9px', borderRadius: '10px',
+  background: '#8E44AD1f', color: '#8E44AD', fontWeight: 700, whiteSpace: 'nowrap',
+}
+
 const todayStr = () => new Date().toISOString().slice(0, 10)
-const fmt      = (n: number) => Math.abs(n).toLocaleString('en-US')
+// fmt مستورد من ../utils/bulkNote (مصدر واحد مشترك مع اختبار المحاكاة)
 // للمجاميع/الفروق/الصافي القابلة للسالب فعلياً: يُظهر علامة السالب صراحةً (يبقى اللون أحمر)
 const fmtSigned = (n: number) => (n < 0 ? '−' : '') + fmt(n)
 
@@ -70,6 +81,10 @@ const rowMethod = (r: LedgerRow): string => r.method ?? extractMethod(r.notes)
 
 const baseNote = (notes: string | null): string =>
   (notes ?? '').replace(/\s*[—–-]\s*(cash|visa|cheque|debt)\s*$/i, '').trim()
+
+/* دفعة عامة لمورد: منطق بناء نص الملاحظة (isBulkNote/parseBulkInvoiceLabel/
+   BULK_NOTE_MAX/buildBulkSummary) مستورد من ../utils/bulkNote — مصدر واحد مشترك
+   مع اختبار المحاكاة scripts/simulate-bulk-payments.ts. */
 
 // مفتاح التجميع: التاريخ + نوع المرجع + رقم الفاتورة من الـ notes
 // (reference_id في اللِّيدجر هو payment_id وليس invoice_id)
@@ -95,12 +110,25 @@ const groupEntries = (entries: LedgerRow[]): DisplayRow[] => {
     const totalOut = group.reduce((s, r) => s + r.amount_out, 0)
     const type: TxType = totalIn > 0 ? 'incoming' : 'outgoing'
 
-    const breakdown: PaymentBreakdown[] = group
-      .map(r => ({
-        method: rowMethod(r),
-        amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
-      }))
-      .filter(b => b.method && b.amount > 0)
+    const isBulk = isBulkNote(first.notes)
+
+    // دفعة عامة: كل صف = توزيع على فاتورة بنفس طريقة الدفع → نعرضه كتوزيع على الفواتير
+    // وليس كوسائل دفع متعددة. غيرها: كل صف وسيلة دفع مستقلة (كاش+شيك مثلاً).
+    const allocations: BulkAllocation[] = isBulk
+      ? group.map(r => ({
+          invoiceLabel: parseBulkInvoiceLabel(r.notes),
+          amount:       r.amount_out > 0 ? r.amount_out : r.amount_in,
+        }))
+      : []
+
+    const breakdown: PaymentBreakdown[] = isBulk
+      ? []
+      : group
+          .map(r => ({
+            method: rowMethod(r),
+            amount: r.amount_in > 0 ? r.amount_in : r.amount_out,
+          }))
+          .filter(b => b.method && b.amount > 0)
 
     return {
       id:           first.id,
@@ -109,8 +137,11 @@ const groupEntries = (entries: LedgerRow[]): DisplayRow[] => {
       sourceLabel:  refLabel(first.reference_type),
       amount:       totalIn > 0 ? totalIn : totalOut,
       balanceAfter: last.balance_after,
-      notes:        baseNote(first.notes),
+      notes:        isBulk ? buildBulkSummary(first.notes, allocations) : baseNote(first.notes),
       breakdown,
+      isBulk,
+      method:       rowMethod(first),
+      allocations,
     }
   })
 }
@@ -372,6 +403,12 @@ export default function CashLedger() {
   const handlePrint = (tx: DisplayRow) => {
     const sign      = tx.type === 'incoming' ? '+' : '−'
     const amountCls = tx.type === 'incoming' ? 'amount-in' : 'amount-out'
+    const bulkRows = tx.isBulk
+      ? `
+        <div class="detail-item"><label>نوع العملية</label><span>دفعة عامة لمورد (${tx.allocations.length} فواتير)</span></div>
+        ${tx.method ? `<div class="detail-item"><label>طريقة الدفع</label><span>${esc(METHOD_LABELS[tx.method] ?? tx.method)}</span></div>` : ''}
+        ${tx.allocations.length ? `<div class="detail-item"><label>توزيع الدفعة على الفواتير</label><span>${tx.allocations.map(a => `${esc(a.invoiceLabel || '—')} (${fmt(a.amount)} ₪)`).join('، ')}</span></div>` : ''}`
+      : ''
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>رقم العملية</label><span>${tx.id}</span></div>
@@ -380,6 +417,7 @@ export default function CashLedger() {
         <div class="detail-item"><label>المصدر</label><span>${esc(tx.sourceLabel)}</span></div>
         <div class="detail-item"><label>المبلغ</label><span class="${amountCls}">${sign}${fmt(tx.amount)} ₪</span></div>
         <div class="detail-item"><label>الرصيد بعد العملية</label><span>${fmt(tx.balanceAfter)} ₪</span></div>
+        ${bulkRows}
         ${tx.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${esc(tx.notes)}</span></div>` : ''}
       </div>`
     printPdf('إيصال عملية صندوق', body)
@@ -728,7 +766,19 @@ export default function CashLedger() {
                     <div className={tx.type === 'incoming' ? 'cl-amount-in' : 'cl-amount-out'} style={{ fontWeight: 700 }}>
                       {tx.type === 'incoming' ? '+' : '−'}{fmt(tx.amount)} ₪
                     </div>
-                    {tx.breakdown.length > 1 && (
+                    {tx.isBulk ? (
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.3rem', alignItems: 'center' }}>
+                        <span style={bulkBadgeStyle}>دفعة عامة · {tx.allocations.length} فواتير</span>
+                        <span style={{
+                          fontSize: '0.75rem', padding: '1px 7px', borderRadius: '10px',
+                          background: (METHOD_COLORS[tx.method] ?? '#999') + '22',
+                          color: METHOD_COLORS[tx.method] ?? '#999',
+                          fontWeight: 600, whiteSpace: 'nowrap',
+                        }}>
+                          {METHOD_LABELS[tx.method] ?? tx.method}
+                        </span>
+                      </div>
+                    ) : tx.breakdown.length > 1 && (
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.3rem' }}>
                         {tx.breakdown.map((b, bi) => (
                           <span key={bi} style={{
@@ -826,7 +876,10 @@ export default function CashLedger() {
         <div className="mi-modal-overlay" onClick={() => setDetailsTx(null)}>
           <div className="mi-modal mi-modal-sm" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>تفاصيل العملية</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                تفاصيل العملية
+                {detailsTx.isBulk && <span style={bulkBadgeStyle}>دفعة عامة</span>}
+              </h3>
               <button className="mi-modal-close" onClick={() => setDetailsTx(null)}>✕</button>
             </div>
             <div className="mi-modal-body">
@@ -855,7 +908,40 @@ export default function CashLedger() {
                   <span className="mi-detail-label">الرصيد بعد العملية</span>
                   <span className="mi-amount">{fmt(detailsTx.balanceAfter)} ₪</span>
                 </div>
-                {detailsTx.breakdown.length > 0 && (
+
+                {/* دفعة عامة: طريقة دفع واحدة موحّدة + توزيع على الفواتير (وليست وسائل دفع متعددة) */}
+                {detailsTx.isBulk && detailsTx.method && (
+                  <div className="mi-detail-item">
+                    <span className="mi-detail-label">طريقة الدفع</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700, color: METHOD_COLORS[detailsTx.method] ?? '#555' }}>
+                      <span style={{
+                        width: '8px', height: '8px', borderRadius: '50%',
+                        background: METHOD_COLORS[detailsTx.method] ?? '#999', flexShrink: 0,
+                      }} />
+                      {METHOD_LABELS[detailsTx.method] ?? detailsTx.method}
+                    </span>
+                  </div>
+                )}
+
+                {detailsTx.isBulk ? (
+                  detailsTx.allocations.length > 0 && (
+                    <div className="mi-detail-item mi-detail-full">
+                      <span className="mi-detail-label">توزيع الدفعة على الفواتير</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.3rem' }}>
+                        {detailsTx.allocations.map((a, i) => (
+                          <div key={i} style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            gap: '0.6rem', maxWidth: '340px',
+                            padding: '0.3rem 0.55rem', borderRadius: '6px', background: '#f6f2fa',
+                          }}>
+                            <span style={{ fontWeight: 600, color: '#6c3483' }}>🧾 {a.invoiceLabel || '—'}</span>
+                            <span style={{ fontWeight: 700 }}>{fmt(a.amount)} ₪</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                ) : detailsTx.breakdown.length > 0 && (
                   <div className="mi-detail-item mi-detail-full">
                     <span className="mi-detail-label">تفصيل وسائل الدفع</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.2rem' }}>

@@ -2,13 +2,17 @@ import { getDB } from '../database'
 import { recordLedgerEntry, REF } from './ledger'
 import { nextInvoiceNumber, PURCHASE_INVOICE_NUMBER_TABLES } from './invoiceNumber'
 import { applyDiscount } from './discount'
-import { insertChequeOrVisaDetails } from './validate'
+import { insertChequeOrVisaDetails, assertPositiveAmount, assertNonEmpty } from './validate'
 import type {
   SupplierInvoiceInput,
   SupplierInvoiceRow,
   SupplierInvoiceDetail,
   SupplierFilters,
   SupplierPendingDebt,
+  SupplierBulkPaymentInput,
+  SupplierBulkPaymentFilters,
+  SupplierBulkPaymentRow,
+  SupplierBulkPaymentAllocationRow,
   PaymentInput,
 } from './types'
 
@@ -277,6 +281,110 @@ export function addSupplierDebtPayment(
   run()
 }
 
+// ─── دفعة عامة لمورد: توزيع مبلغ واحد على عدة فواتير غير مسدَّدة ───────────────
+// كل توزيع يُسجَّل كصف supplier_debt_payments عادي — فتبقى دورة الصندوق (M3:
+// الشيك لا يدخل الصندوق إلا عند صرفه) وصفحة الشيكات وحذف الفواتير كلها بلا أي
+// تغيير — مع ترويسة supplier_bulk_payments وصفوف ربط في
+// supplier_bulk_payment_allocations. شيك واحد يغطي عدة فواتير تُدرَج تفاصيله على
+// كل دفعة فرعية (نفس رقم الشيك بمبالغ موزَّعة) — تماماً كما لو سدّد المستخدم كل
+// فاتورة يدوياً بنفس الشيك. آلية الدفع لكل فاتورة على حدة تبقى كما هي بجانب هذه.
+export function addSupplierBulkPayment(input: SupplierBulkPaymentInput): number {
+  const db = getDB()
+  const p = input.payment
+
+  assertNonEmpty(input.supplier_name, 'اسم المورد')
+  assertPositiveAmount(p.amount, 'مبلغ الدفعة')
+  if (p.method === 'debt') throw new Error('طريقة الدفع غير صالحة لدفعة عامة (نقد/شيك/فيزا فقط)')
+  if (!input.allocations || input.allocations.length === 0) {
+    throw new Error('لا يوجد توزيع للدفعة — لا فواتير غير مسدَّدة لهذا المورد')
+  }
+
+  const run = db.transaction(() => {
+    // امنع تماماً تجاوز إجمالي الديون المستحقة لهذا المورد
+    const totalDebt = (db.prepare(`
+      SELECT COALESCE(SUM(amount_remaining), 0) AS v FROM supplier_invoices
+      WHERE supplier_name = ? AND amount_remaining > 0
+    `).get(input.supplier_name) as { v: number }).v
+    if (p.amount > totalDebt + 0.001) {
+      throw new Error(`مبلغ الدفعة (${p.amount.toFixed(2)} ₪) يتجاوز إجمالي الديون المستحقة للمورد (${totalDebt.toFixed(2)} ₪)`)
+    }
+
+    // المبلغ يجب أن يُوزَّع بالكامل — توزيع أقل يترك نقدية بلا وجهة، وأكثر يتجاوز الدفعة
+    const allocTotal = input.allocations.reduce((s, a) => s + a.amount, 0)
+    if (Math.abs(allocTotal - p.amount) > 0.001) {
+      throw new Error(`مجموع التوزيع (${allocTotal.toFixed(2)} ₪) يجب أن يساوي مبلغ الدفعة (${p.amount.toFixed(2)} ₪)`)
+    }
+
+    const { lastInsertRowid: bulkRowid } = db.prepare(`
+      INSERT INTO supplier_bulk_payments (supplier_name, payment_date, method, amount, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(input.supplier_name, input.payment_date, p.method, p.amount, input.notes ?? null)
+    const bulkId = Number(bulkRowid)
+
+    const insertAlloc = db.prepare(`
+      INSERT INTO supplier_bulk_payment_allocations (bulk_payment_id, invoice_id, payment_id, amount)
+      VALUES (?, ?, ?, ?)
+    `)
+
+    const seen = new Set<number>()
+    for (const alloc of input.allocations) {
+      assertPositiveAmount(alloc.amount, 'مبلغ التوزيع')
+      if (seen.has(alloc.invoice_id)) throw new Error(`الفاتورة #${alloc.invoice_id} مكرّرة في التوزيع`)
+      seen.add(alloc.invoice_id)
+
+      const inv = db.prepare(
+        'SELECT id, invoice_number, supplier_name, amount_remaining FROM supplier_invoices WHERE id = ?',
+      ).get(alloc.invoice_id) as { id: number; invoice_number: string; supplier_name: string; amount_remaining: number } | undefined
+      if (!inv) throw new Error(`الفاتورة #${alloc.invoice_id} غير موجودة`)
+      if (inv.supplier_name !== input.supplier_name) {
+        throw new Error(`الفاتورة #${alloc.invoice_id} لا تخصّ المورد "${input.supplier_name}"`)
+      }
+      if (alloc.amount > inv.amount_remaining + 0.001) {
+        throw new Error(`التوزيع على الفاتورة #${alloc.invoice_id} (${alloc.amount.toFixed(2)} ₪) يتجاوز المتبقي عليها (${inv.amount_remaining.toFixed(2)} ₪)`)
+      }
+
+      // الملاحظة تحمل رقم الفاتورة الفعلي (PUR-…) واسم المورد — سجل الصندوق يجمّع صفوف
+      // الدفعة العامة في عملية واحدة ويبني منها ملخّص «توزيع الدفعة على الفواتير».
+      const invoiceLabel = inv.invoice_number || `#${alloc.invoice_id}`
+      const { lastInsertRowid } = db.prepare(`
+        INSERT INTO supplier_debt_payments (invoice_id, payment_date, method, amount, notes)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        alloc.invoice_id, input.payment_date, p.method, alloc.amount,
+        `دفعة عامة لمورد ${input.supplier_name} #${bulkId} — فاتورة ${invoiceLabel}${input.notes ? ` — ${input.notes}` : ''}`,
+      )
+      const payId = Number(lastInsertRowid)
+
+      insertChequeOrVisaDetails(db, payId, p, { cheque: 'supplier_debt_cheque', visa: 'supplier_debt_visa' })
+
+      db.prepare(`
+        UPDATE supplier_invoices
+        SET amount_paid = amount_paid + ?, amount_remaining = amount_remaining - ?
+        WHERE id = ?
+      `).run(alloc.amount, alloc.amount, alloc.invoice_id)
+
+      // M3: الشيك الصادر لا يُسجَّل نقداً في الصندوق إلا عند صرفه فعلياً (cheque:updateStatus)
+      if (p.method !== 'cheque') {
+        recordLedgerEntry({
+          transaction_date: input.payment_date,
+          reference_type: REF.SUPPLIER_DEBT,
+          reference_id: payId,
+          amount_in: 0,
+          amount_out: alloc.amount,
+          method: p.method as 'cash' | 'visa',
+          notes: `دفعة عامة لمورد ${input.supplier_name} #${bulkId} — فاتورة ${invoiceLabel} — ${p.method}`,
+        })
+      }
+
+      insertAlloc.run(bulkId, alloc.invoice_id, payId, alloc.amount)
+    }
+
+    return bulkId
+  })
+
+  return run()
+}
+
 // ─── Day 3: Get supplier invoices with filters ────────────────────────────────
 
 export function getSupplierInvoices(filters: SupplierFilters = {}): SupplierInvoiceRow[] {
@@ -341,6 +449,87 @@ export function getSupplierDebts(): SupplierPendingDebt[] {
     WHERE amount_remaining > 0
     ORDER BY purchase_date DESC
   `).all() as SupplierPendingDebt[]
+}
+
+// ─── سجل الدفعات العامة: صفوف ترويسة supplier_bulk_payments مع توزيعها ─────────
+// يدعم نفس فلاتر قسم الفواتير (اسم المورد/هاتف/من-إلى تاريخ/من-إلى مبلغ). الهاتف
+// غير مخزَّن على ترويسة الدفعة، فيُستخرَج من آخر فاتورة للمورد تحمل هاتفاً صالحاً.
+export function getSupplierBulkPayments(
+  filters: SupplierBulkPaymentFilters = {},
+): SupplierBulkPaymentRow[] {
+  const db = getDB()
+
+  // هاتف المورد: آخر فاتورة له تحمل رقماً غير فارغ وغير مجهول
+  const phoneSubquery = `(
+    SELECT si2.supplier_phone FROM supplier_invoices si2
+    WHERE si2.supplier_name = bp.supplier_name
+      AND si2.supplier_phone IS NOT NULL AND si2.supplier_phone != '' AND si2.supplier_phone != '0000'
+    ORDER BY si2.id DESC LIMIT 1
+  )`
+
+  const conditions: string[] = []
+  const params: unknown[] = []
+
+  if (filters.supplier_name) {
+    conditions.push('bp.supplier_name LIKE ?')
+    params.push(`%${filters.supplier_name}%`)
+  }
+  if (filters.phone) {
+    conditions.push(`${phoneSubquery} LIKE ?`)
+    params.push(`%${filters.phone}%`)
+  }
+  if (filters.date_from) {
+    conditions.push('bp.payment_date >= ?')
+    params.push(filters.date_from)
+  }
+  if (filters.date_to) {
+    conditions.push('bp.payment_date <= ?')
+    params.push(filters.date_to)
+  }
+  if (filters.amount_min != null) {
+    conditions.push('bp.amount >= ?')
+    params.push(filters.amount_min)
+  }
+  if (filters.amount_max != null) {
+    conditions.push('bp.amount <= ?')
+    params.push(filters.amount_max)
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  const rows = db.prepare(`
+    SELECT
+      bp.id,
+      bp.supplier_name,
+      ${phoneSubquery} AS supplier_phone,
+      bp.payment_date,
+      bp.method,
+      bp.amount,
+      bp.notes,
+      COUNT(a.id) AS invoice_count
+    FROM supplier_bulk_payments bp
+    LEFT JOIN supplier_bulk_payment_allocations a ON a.bulk_payment_id = bp.id
+    ${where}
+    GROUP BY bp.id
+    ORDER BY bp.payment_date DESC, bp.id DESC
+  `).all(...params) as Omit<SupplierBulkPaymentRow, 'allocations'>[]
+
+  const allocStmt = db.prepare(`
+    SELECT
+      a.invoice_id,
+      si.invoice_number,
+      si.purchase_date,
+      a.amount
+    FROM supplier_bulk_payment_allocations a
+    LEFT JOIN supplier_invoices si ON si.id = a.invoice_id
+    WHERE a.bulk_payment_id = ?
+    ORDER BY a.id ASC
+  `)
+
+  return rows.map(r => ({
+    ...r,
+    allocations: allocStmt.all(r.id) as SupplierBulkPaymentAllocationRow[],
+  }))
 }
 
 // ─── Utility: search suppliers by name (for autocomplete) ────────────────────

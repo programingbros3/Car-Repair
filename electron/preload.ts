@@ -20,8 +20,9 @@ const ALLOWED_CHANNELS = new Set<string>([
   // فواتير الموردين
   'supplierInvoice:getAll', 'supplierInvoice:getOne', 'supplierInvoice:add',
   'supplierInvoice:update', 'supplierInvoice:updateHeader',
-  'supplierInvoice:addPayment', 'supplierInvoice:addDebtPayment',
-  'supplierInvoice:getDebts', 'supplierInvoice:searchNames', 'supplierInvoice:delete',
+  'supplierInvoice:addPayment', 'supplierInvoice:addDebtPayment', 'supplierInvoice:addBulkPayment',
+  'supplierInvoice:getDebts', 'supplierInvoice:getBulkPayments',
+  'supplierInvoice:searchNames', 'supplierInvoice:delete',
   // المصاريف
   'expense:getAll', 'expense:add', 'expense:update', 'expense:delete',
   // الموظفون والرواتب
@@ -55,6 +56,8 @@ const ALLOWED_CHANNELS = new Set<string>([
   'activityLog:getAll',
   // الضريبة
   'vat:getSettings', 'vat:updateSettings',
+  // روابط خارجية
+  'shell:openExternal',
 ])
 
 contextBridge.exposeInMainWorld('ipcRenderer', {

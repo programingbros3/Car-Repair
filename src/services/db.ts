@@ -33,6 +33,7 @@ import type {
   MaintenanceInvoiceRow, MaintenanceInvoiceDetail, MaintenanceFilters,
   DirectSaleRow, DirectSaleDetail, DirectSaleFilters,
   SupplierInvoiceRow, SupplierInvoiceDetail, SupplierFilters, SupplierPendingDebt,
+  SupplierBulkPaymentFilters, SupplierBulkPaymentRow,
   DailyExpenseRow, ExpenseFilters,
   EmployeeRow, SalaryRow,
   PendingDebt, DebtFilters,
@@ -191,8 +192,25 @@ export const dbService = {
     addDebtPayment: (invoiceId: number, payments: PaymentRow[], date: string, settlementDiscount = 0) =>
       invoke<void>('supplierInvoice:addDebtPayment', invoiceId, payments.map(paymentRowToDbInput), date, settlementDiscount),
 
+    // دفعة عامة للمورد: مبلغ واحد (طريقة دفع واحدة) يُوزَّع على عدة فواتير غير مسدَّدة
+    addBulkPayment: (
+      supplierName: string, payment: PaymentRow, date: string,
+      allocations: { invoice_id: number; amount: number }[], notes?: string,
+    ) =>
+      invoke<number>('supplierInvoice:addBulkPayment', {
+        supplier_name: supplierName,
+        payment_date: date,
+        payment: paymentRowToDbInput(payment),
+        notes,
+        allocations,
+      }),
+
     // لا نظير UI لـ SupplierPendingDebt في dbMapper بعد — تُعاد كنوع DB
     getDebts: () => invoke<SupplierPendingDebt[]>('supplierInvoice:getDebts'),
+
+    // سجل الدفعات العامة: صفوف الدفعات العامة مع توزيعها على الفواتير (فلترة اختيارية)
+    getBulkPayments: (filters?: SupplierBulkPaymentFilters) =>
+      invoke<SupplierBulkPaymentRow[]>('supplierInvoice:getBulkPayments', filters),
 
     searchNames: (query: string) => invoke<string[]>('supplierInvoice:searchNames', query),
 

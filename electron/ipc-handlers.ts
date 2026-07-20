@@ -10,7 +10,7 @@
    • منطق الأعمال الأساسي يعيش في src/db/* (Layer A)؛ هذا الملف يربطه بالقنوات
      فقط، مع SQL مضمّن للفجوات (الحذف/التعديل/الدليل/الكفالات/العروض المجمّعة).
 ════════════════════════════════════════════════════════════════════════ */
-import { ipcMain, dialog, app } from 'electron'
+import { ipcMain, dialog, app, shell } from 'electron'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -32,8 +32,9 @@ import {
 } from '../src/db/direct-sale'
 import {
   addSupplierInvoice, updateSupplierInvoice, updateSupplierInvoiceHeader,
-  addSupplierPayment, addSupplierDebtPayment,
+  addSupplierPayment, addSupplierDebtPayment, addSupplierBulkPayment,
   getSupplierInvoices, getSupplierInvoice, getSupplierDebts, searchSupplierNames,
+  getSupplierBulkPayments,
   type SupplierInvoiceHeaderInput,
 } from '../src/db/suppliers'
 import {
@@ -63,7 +64,8 @@ import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
   ChequeFilters, ChequeStatus, ChequeTableKind,
   PaymentInput, InvoiceType, InvoiceItemInput, DirectSaleItemInput, DiscountType,
-  MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput,
+  MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput, SupplierBulkPaymentInput,
+  SupplierBulkPaymentFilters,
   DailyExpenseInput, EmployeeInput, SalaryInput,
   SupplierDirectoryInput, WarrantyInput, AutoLockSettings,
 } from '../src/db/types'
@@ -219,6 +221,17 @@ function paymentIds(db: DB, table: string, where: string, ...params: any[]): num
    التسجيل الرئيسي للمعالجات
 ════════════════════════════════════════ */
 export function registerIpcHandlers(db: DB): void {
+  /* ─────────────── روابط خارجية ─────────────── */
+  // فتح رابط في المتصفح الافتراضي بدل نافذة التطبيق. نقيّد على http/https فقط
+  // لمنع فتح مخططات خطيرة (file:, javascript:) عبر قناة الـ IPC.
+  on('shell:openExternal', (url: string) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+      throw new Error('رابط غير صالح')
+    }
+    void shell.openExternal(url)
+    return true
+  })
+
   /* ─────────────── الصيانة ─────────────── */
   on('maintenance:getAll', (filters?: MaintenanceFilters) => getMaintenanceInvoices(filters ?? {}))
   on('maintenance:getOne', (id: number) => getMaintenanceInvoice(id))
@@ -354,18 +367,66 @@ export function registerIpcHandlers(db: DB): void {
     addSupplierPayment(invoiceId, payments, date, settlementDiscount ?? 0))
   on('supplierInvoice:addDebtPayment', (invoiceId: number, payments: PaymentInput[], date: string, settlementDiscount?: number) =>
     addSupplierDebtPayment(invoiceId, payments, date, settlementDiscount ?? 0))
+  // دفعة عامة للمورد: مبلغ واحد يُوزَّع على عدة فواتير غير مسدَّدة (كشف حساب المورد)
+  on('supplierInvoice:addBulkPayment', (input: SupplierBulkPaymentInput) => {
+    const bulkId = addSupplierBulkPayment(input)
+    logActivity(db, 'payment', 'supplier_bulk_payment', bulkId,
+      `دفعة عامة للمورد "${input.supplier_name}" بمبلغ ${input.payment.amount} ₪ موزَّعة على ${input.allocations.length} فاتورة`)
+    return bulkId
+  })
   on('supplierInvoice:getDebts', () => getSupplierDebts())
+  // سجل الدفعات العامة: كل دفعة عامة سُجّلت مع توزيعها على الفواتير (فلترة اختيارية)
+  on('supplierInvoice:getBulkPayments', (filters: SupplierBulkPaymentFilters = {}) =>
+    getSupplierBulkPayments(filters))
   on('supplierInvoice:searchNames', (query: string) => searchSupplierNames(query))
   on('supplierInvoice:delete', (id: number) => {
+    // تعديلات تلقائية على ترويسات الدفعات العامة المتأثرة — تُسجَّل بعد نجاح الـ transaction
+    const bulkAdjustments: { bulkId: number; action: 'deleted' | 'updated'; newAmount: number }[] = []
     db.transaction(() => {
       const payIds = paymentIds(db, 'supplier_payments', `invoice_id=?`, id)
       const debtIds = paymentIds(db, 'supplier_debt_payments', `invoice_id=?`, id)
       clearLedgerForPayments(db, [REF.SUPPLIER_PAYMENT], payIds)
       clearLedgerForPayments(db, [REF.SUPPLIER_DEBT], debtIds)
-      db.prepare(`DELETE FROM supplier_invoices WHERE id=?`).run(id) // FK cascade للعناصر والدفعات
+
+      // الدفعات العامة المتأثرة بهذه الفاتورة — تُلتقَط ترويساتها قبل الحذف لأن
+      // الـ CASCADE سيمسح صف توزيع هذه الفاتورة (عبر FK invoice_id/payment_id).
+      const affectedBulkIds = (db.prepare(
+        `SELECT DISTINCT bulk_payment_id FROM supplier_bulk_payment_allocations WHERE invoice_id = ?`,
+      ).all(id) as { bulk_payment_id: number }[]).map(r => r.bulk_payment_id)
+
+      db.prepare(`DELETE FROM supplier_invoices WHERE id=?`).run(id) // FK cascade للعناصر والدفعات والتوزيعات
+
+      // بعد الحذف: أعِد مواءمة كل ترويسة دفعة عامة تأثرت مع مجموع توزيعها المتبقّي
+      // الفعلي — فإمّا تُحذف (فرغت تماماً) أو يُصحَّح مبلغها ليطابق تفاصيلها دائماً.
+      for (const bulkId of affectedBulkIds) {
+        const agg = db.prepare(
+          `SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS cnt
+             FROM supplier_bulk_payment_allocations WHERE bulk_payment_id = ?`,
+        ).get(bulkId) as { total: number; cnt: number }
+
+        if (agg.cnt === 0) {
+          db.prepare(`DELETE FROM supplier_bulk_payments WHERE id = ?`).run(bulkId)
+          bulkAdjustments.push({ bulkId, action: 'deleted', newAmount: 0 })
+        } else {
+          const header = db.prepare(
+            `SELECT amount FROM supplier_bulk_payments WHERE id = ?`,
+          ).get(bulkId) as { amount: number } | undefined
+          if (header && Math.abs(header.amount - agg.total) > 0.001) {
+            db.prepare(`UPDATE supplier_bulk_payments SET amount = ? WHERE id = ?`).run(agg.total, bulkId)
+            bulkAdjustments.push({ bulkId, action: 'updated', newAmount: agg.total })
+          }
+        }
+      }
+
       recomputeLedgerBalances()
     })()
     logActivity(db, 'delete', 'supplier_invoice', id, `حذف فاتورة مورد #${id}`)
+    for (const adj of bulkAdjustments) {
+      logActivity(db, 'update', 'supplier_bulk_payment', adj.bulkId,
+        adj.action === 'deleted'
+          ? `حذف تلقائي لدفعة عامة #${adj.bulkId} بعد حذف آخر فاتورة مرتبطة بها (فاتورة مورد #${id})`
+          : `تحديث تلقائي لدفعة عامة #${adj.bulkId} بعد حذف فاتورة مرتبطة (فاتورة مورد #${id}) — المبلغ الجديد ${adj.newAmount} ₪`)
+    }
     return { id }
   })
 

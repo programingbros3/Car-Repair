@@ -237,6 +237,51 @@ export interface SupplierPendingDebt {
   amount_remaining: number
 }
 
+// ── دفعة عامة لمورد (مبلغ واحد يُوزَّع على عدة فواتير غير مسدَّدة) ─────────────
+export interface SupplierBulkAllocationInput {
+  invoice_id: number
+  amount: number
+}
+
+export interface SupplierBulkPaymentInput {
+  supplier_name: string
+  payment_date: string
+  // طريقة دفع واحدة (نقد/شيك/فيزا) بمبلغ الدفعة الكامل — تفاصيل الشيك/الفيزا
+  // تُدرَج على كل دفعة فرعية ناتجة عن التوزيع (نفس نمط الدفعات الحالية)
+  payment: PaymentInput
+  notes?: string
+  allocations: SupplierBulkAllocationInput[]
+}
+
+// ── سجل الدفعات العامة (قراءة): فلترة + صف الدفعة مع توزيعها على الفواتير ─────
+export interface SupplierBulkPaymentFilters {
+  supplier_name?: string
+  phone?: string
+  date_from?: string
+  date_to?: string
+  amount_min?: number
+  amount_max?: number
+}
+
+export interface SupplierBulkPaymentAllocationRow {
+  invoice_id: number
+  invoice_number: string | null
+  purchase_date: string
+  amount: number
+}
+
+export interface SupplierBulkPaymentRow {
+  id: number
+  supplier_name: string
+  supplier_phone: string | null
+  payment_date: string
+  method: string            // cash | cheque | visa
+  amount: number
+  notes: string | null
+  invoice_count: number
+  allocations: SupplierBulkPaymentAllocationRow[]
+}
+
 // ── Cash Ledger ───────────────────────────────────────────────────────────────
 
 // M9: طريقة الدفع مخزَّنة كعمود فعلي (بدل استخراجها بـ regex من notes)

@@ -4,6 +4,7 @@ import { GarageProvider, useGarage } from './store/GarageContext'
 import { useAutoLock } from './utils/useAutoLock'
 import PasswordGate from './components/PasswordGate'
 import Sidebar from './components/Sidebar'
+import Footer from './components/Footer'
 import ErrorToast from './components/ErrorToast'
 import ErrorBoundary from './components/ErrorBoundary'
 import CashLedger from './pages/CashLedger'
@@ -37,8 +38,9 @@ function AppShell() {
     <HashRouter>
       <div className="app-layout">
         <Sidebar />
-        <main className="main-content">
-          <Routes>
+        <div className="app-main">
+          <main className="main-content">
+            <Routes>
             <Route path="/"                   element={<Navigate to="/cash-ledger" replace />} />
             <Route path="/cash-ledger"        element={<CashLedger />} />
             <Route path="/sales-invoices"     element={<SalesInvoices />} />
@@ -53,8 +55,10 @@ function AppShell() {
             <Route path="/warranties"         element={<Warranties />} />
             <Route path="/reports"            element={<Reports />} />
             <Route path="/settings"           element={<Settings />} />
-          </Routes>
-        </main>
+            </Routes>
+          </main>
+          <Footer />
+        </div>
       </div>
     </HashRouter>
   )

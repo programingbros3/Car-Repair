@@ -53,23 +53,28 @@ type PrintItem = {
   partType: 'part' | 'service' | null; warranty: string
 }
 
+/* جلب بنود الفاتورة الأصلية حسب النوع — تُستخدم في الطباعة وفي مودال التفاصيل معاً
+   (الشاشة المجمّعة SaleInvoiceRow لا تحمل البنود، فتُجلب عند الطلب عبر getOne). */
+async function fetchSaleItems(inv: SaleInvoice): Promise<PrintItem[]> {
+  if (inv.type === 'maintenance') {
+    const full = await dbService.maintenance.getOne(inv.id)
+    return (full?.items ?? []).map(it => ({
+      name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
+      notes: it.notes, partType: it.partType, warranty: it.warranty,
+    }))
+  }
+  const full = await dbService.directSale.getOne(inv.id)
+  return (full?.items ?? []).map(it => ({
+    name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
+    notes: it.notes, partType: null, warranty: '',
+  }))
+}
+
 async function printInvoice(inv: SaleInvoice): Promise<void> {
   /* الشاشة المجمّعة لا تحمل البنود — تُجلب من الفاتورة الأصلية حسب النوع */
   let items: PrintItem[] = []
   try {
-    if (inv.type === 'maintenance') {
-      const full = await dbService.maintenance.getOne(inv.id)
-      items = (full?.items ?? []).map(it => ({
-        name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
-        notes: it.notes, partType: it.partType, warranty: it.warranty,
-      }))
-    } else {
-      const full = await dbService.directSale.getOne(inv.id)
-      items = (full?.items ?? []).map(it => ({
-        name: it.name, quantity: it.quantity, unitPrice: it.unitPrice,
-        notes: it.notes, partType: null, warranty: '',
-      }))
-    }
+    items = await fetchSaleItems(inv)
   } catch (err) {
     showError('تعذّر جلب بنود الفاتورة للطباعة', err)
     return
@@ -182,6 +187,8 @@ export default function SalesInvoices() {
 
   /* ── Modal states ── */
   const [detailsInv, setDetailsInv] = useState<SaleInvoice | null>(null)
+  /* بنود الفاتورة المعروضة في المودال — null = قيد التحميل (تُجلب عند الطلب مثل الطباعة) */
+  const [detailItems, setDetailItems] = useState<PrintItem[] | null>(null)
   const [warnInv,    setWarnInv]    = useState<SaleInvoice | null>(null)
   const [editInv,    setEditInv]    = useState<SaleInvoice | null>(null)
   const [editForm,   setEditForm]   = useState<EditForm | null>(null)
@@ -238,6 +245,22 @@ export default function SalesInvoices() {
     const start = (currentPage - 1) * pageSize
     return filtered.slice(start, start + pageSize)
   }, [filtered, currentPage, pageSize])
+
+  /* جلب بنود الفاتورة عند فتح مودال التفاصيل (تُلغى إن أُغلق المودال قبل اكتمال الجلب) */
+  useEffect(() => {
+    if (!detailsInv) { setDetailItems(null); return }
+    let cancelled = false
+    setDetailItems(null)
+    void (async () => {
+      try {
+        const items = await fetchSaleItems(detailsInv)
+        if (!cancelled) setDetailItems(items)
+      } catch (err) {
+        if (!cancelled) { setDetailItems([]); showError('تعذّر جلب بنود الفاتورة', err) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [detailsInv])
 
   const clearFilters = () => {
     setSearch(''); setPhoneSearch(''); setPlateSearch(''); setTypeFilter('all'); setStatusFilter('all')
@@ -549,6 +572,46 @@ export default function SalesInvoices() {
                   </div>
                 )}
               </div>
+
+              {/* بنود الفاتورة — تُجلب عند الطلب حسب النوع (صيانة: نوع البند + الكفالة) */}
+              <h4 className="mi-modal-subtitle">
+                {detailsInv.type === 'maintenance' ? 'القطع والخدمات' : 'البنود'}
+              </h4>
+              {detailItems === null ? (
+                <p className="mi-empty-row">جارٍ تحميل البنود…</p>
+              ) : detailItems.length === 0 ? (
+                <p className="mi-empty-row">لا توجد بنود لهذه الفاتورة</p>
+              ) : (
+                <div className="mi-parts-table-wrap">
+                  <table className="mi-parts-table">
+                    <thead>
+                      {detailsInv.type === 'maintenance'
+                        ? <tr><th>النوع</th><th>القطعة / الخدمة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الكفالة</th><th>ملاحظات</th></tr>
+                        : <tr><th>الصنف</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th></tr>}
+                    </thead>
+                    <tbody>
+                      {detailItems.map((item, idx) => (
+                        <tr key={idx}>
+                          {detailsInv.type === 'maintenance' && (
+                            <td className="mi-td-center">
+                              {item.partType === 'service'
+                                ? <span className="mi-badge-blue">خدمة</span>
+                                : <span className="mi-badge-orange">قطعة</span>}
+                            </td>
+                          )}
+                          <td>{item.name}</td>
+                          <td className="mi-td-center">{item.quantity}</td>
+                          <td className="mi-td-center">{fmt(item.unitPrice)} ₪</td>
+                          <td className="mi-td-center">{fmt(item.quantity * item.unitPrice)} ₪</td>
+                          {detailsInv.type === 'maintenance' && <td>{warrantyLabel(item.warranty)}</td>}
+                          <td>{item.notes || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <LinkedOpsSection phone={detailsInv.phone} source="sales_invoice" id={detailsInv.id} />
             </div>
             <div className="mi-modal-footer">

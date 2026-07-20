@@ -79,6 +79,10 @@ export function applySchemaAndMigrations(db: BetterSqlite3): void {
     `ALTER TABLE supplier_debt_payments ADD COLUMN settlement_discount REAL NOT NULL DEFAULT 0`,
     // M9: طريقة الدفع كعمود فعلي في الصندوق (بدل استخراجها بـ regex من notes)
     `ALTER TABLE cash_ledger            ADD COLUMN method TEXT`,
+    // دفعة عامة لمورد: جدولا supplier_bulk_payments/supplier_bulk_payment_allocations
+    // جديدان بالكامل (لا أعمدة على جداول موجودة) — ترحيلهما يتمّ عبر db.exec(schema)
+    // أعلاه (CREATE TABLE IF NOT EXISTS) الذي يعمل في كل إقلاع وعلى النسخ المستوردة،
+    // فلا حاجة لأي ALTER هنا. أي عمود يُضاف لاحقاً عليهما يجب أن يُكتب هنا كالمعتاد.
   ]
   for (const sql of migrations) {
     try { db.exec(sql) }

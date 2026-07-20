@@ -223,6 +223,37 @@ CREATE TABLE IF NOT EXISTS supplier_debt_visa (
     FOREIGN KEY (payment_id) REFERENCES supplier_debt_payments(id) ON DELETE CASCADE
 );
 
+-- دفعة عامة لمورد: مبلغ واحد يُوزَّع على عدة فواتير غير مسدَّدة (FIFO افتراضياً).
+-- التوزيع الفعلي يُسجَّل كصفوف supplier_debt_payments عادية (فتبقى دورة الصندوق
+-- والشيكات وحذف الفواتير بلا أي تغيير)، وهذا الجدول ترويسة تجمعها معاً.
+-- جدولان جديدان (لا أعمدة على جداول موجودة) ⇒ لا يحتاجان ALTER في migrations:
+-- db.exec(schema) يعمل في كل إقلاع فيُنشئهما على القواعد القديمة أيضاً (IF NOT EXISTS).
+CREATE TABLE IF NOT EXISTS supplier_bulk_payments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    supplier_name TEXT    NOT NULL,
+    payment_date  TEXT    NOT NULL,
+    method        TEXT    NOT NULL,   -- cash | cheque | visa
+    amount        REAL    NOT NULL,
+    notes         TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+-- توزيع الدفعة العامة: كم غطّت من كل فاتورة، مع مرجع صف الدفعة الفعلي الناتج
+CREATE TABLE IF NOT EXISTS supplier_bulk_payment_allocations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    bulk_payment_id INTEGER NOT NULL,
+    invoice_id      INTEGER NOT NULL,
+    payment_id      INTEGER NOT NULL,   -- صف supplier_debt_payments المقابل
+    amount          REAL    NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now','localtime')),
+    FOREIGN KEY (bulk_payment_id) REFERENCES supplier_bulk_payments(id)  ON DELETE CASCADE,
+    FOREIGN KEY (invoice_id)      REFERENCES supplier_invoices(id)       ON DELETE CASCADE,
+    FOREIGN KEY (payment_id)      REFERENCES supplier_debt_payments(id)  ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_alloc_bulk ON supplier_bulk_payment_allocations(bulk_payment_id);
+CREATE INDEX IF NOT EXISTS idx_bulk_alloc_inv  ON supplier_bulk_payment_allocations(invoice_id);
+
 
 CREATE TABLE IF NOT EXISTS daily_expenses (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

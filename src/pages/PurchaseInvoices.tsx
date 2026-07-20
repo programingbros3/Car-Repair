@@ -43,17 +43,21 @@ const itemDiscountLabel = (item: SupplierItem): string =>
 const itemNetTotal = (item: SupplierItem): number =>
   applyDiscount(item.quantity * item.unitPrice, item.discountType ?? null, item.discountValue ?? 0)
 
+/* الشاشة المجمّعة PurchaseInvoiceRow لا تحمل البنود — فواتير الموردين وحدها لها بنود،
+   تُجلب عند الطلب من الفاتورة الأصلية (تُستخدم في الطباعة وفي مودال التفاصيل معاً). */
+async function fetchSupplierItems(inv: PurchaseInvoice): Promise<SupplierItem[]> {
+  if (inv.type !== 'supplier') return []
+  const full = await dbService.supplierInvoice.getOne(inv.id)
+  return full?.items ?? []
+}
+
 async function printInvoice(inv: PurchaseInvoice): Promise<void> {
-  /* الشاشة المجمّعة لا تحمل البنود — فواتير الموردين وحدها لها بنود، تُجلب من الأصل */
   let items: SupplierItem[] = []
-  if (inv.type === 'supplier') {
-    try {
-      const full = await dbService.supplierInvoice.getOne(inv.id)
-      items = full?.items ?? []
-    } catch (err) {
-      showError('تعذّر جلب بنود الفاتورة للطباعة', err)
-      return
-    }
+  try {
+    items = await fetchSupplierItems(inv)
+  } catch (err) {
+    showError('تعذّر جلب بنود الفاتورة للطباعة', err)
+    return
   }
   const itemRows = items.map(item => `
         <tr>
@@ -152,6 +156,8 @@ export default function PurchaseInvoices() {
 
   /* ── Modal states ── */
   const [detailsInv, setDetailsInv] = useState<PurchaseInvoice | null>(null)
+  /* بنود فاتورة المورد المعروضة في المودال — null = قيد التحميل (تُجلب عند الطلب مثل الطباعة) */
+  const [detailItems, setDetailItems] = useState<SupplierItem[] | null>(null)
   const [warnInv,    setWarnInv]    = useState<PurchaseInvoice | null>(null)
   const [editInv,    setEditInv]    = useState<PurchaseInvoice | null>(null)
   const [editForm,   setEditForm]   = useState<EditForm | null>(null)
@@ -211,6 +217,22 @@ export default function PurchaseInvoices() {
     const start = (currentPage - 1) * pageSize
     return filtered.slice(start, start + pageSize)
   }, [filtered, currentPage, pageSize])
+
+  /* جلب بنود فاتورة المورد عند فتح مودال التفاصيل (فواتير الموردين وحدها لها بنود) */
+  useEffect(() => {
+    if (!detailsInv || detailsInv.type !== 'supplier') { setDetailItems(null); return }
+    let cancelled = false
+    setDetailItems(null)
+    void (async () => {
+      try {
+        const items = await fetchSupplierItems(detailsInv)
+        if (!cancelled) setDetailItems(items)
+      } catch (err) {
+        if (!cancelled) { setDetailItems([]); showError('تعذّر جلب بنود الفاتورة', err) }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [detailsInv])
 
   /* ── Edit flow ── */
   const confirmEdit = () => {
@@ -471,6 +493,40 @@ export default function PurchaseInvoices() {
                   </div>
                 )}
               </div>
+
+              {/* بنود الشراء — فواتير الموردين وحدها لها بنود، تُجلب عند الطلب */}
+              {detailsInv.type === 'supplier' && (
+                <>
+                  <h4 className="mi-modal-subtitle">بنود الشراء</h4>
+                  {detailItems === null ? (
+                    <p className="mi-empty-row">جارٍ تحميل البنود…</p>
+                  ) : detailItems.length === 0 ? (
+                    <p className="mi-empty-row">لا توجد بنود لهذه الفاتورة</p>
+                  ) : (
+                    <div className="mi-parts-table-wrap">
+                      <table className="mi-parts-table">
+                        <thead>
+                          <tr><th>القطعة</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>الخصم</th><th>بعد الخصم</th><th>ملاحظات</th></tr>
+                        </thead>
+                        <tbody>
+                          {detailItems.map((item, idx) => (
+                            <tr key={idx}>
+                              <td>{item.name}</td>
+                              <td className="mi-td-center">{item.quantity}</td>
+                              <td className="mi-td-center">{fmt(item.unitPrice)} ₪</td>
+                              <td className="mi-td-center">{fmt(item.quantity * item.unitPrice)} ₪</td>
+                              <td className="mi-td-center">{itemDiscountLabel(item)}</td>
+                              <td className="mi-td-center"><strong>{fmt(itemNetTotal(item))} ₪</strong></td>
+                              <td>{item.notes || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+
               {detailsInv.phone && detailsInv.phone !== '' && (
                 <LinkedOpsSection phone={detailsInv.phone} source="purchase_invoice" id={detailsInv.id} />
               )}

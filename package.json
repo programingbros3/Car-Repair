@@ -9,8 +9,11 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build && electron-builder",
+    "build:win": "tsc && vite build && node scripts/pack-win.mjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "reset-dev-license": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/reset-dev-license.ps1",
+    "verify:integrity": "node scripts/run-verify.mjs",
+    "test:bulk": "node scripts/run-bulk-test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

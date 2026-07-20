@@ -185,6 +185,38 @@ checkInvoiceBalance('موردين', 'supplier_invoices', ['supplier_payments', '
   else fail('report:debtsAging', `مجموع التقرير ${agingSum.toFixed(2)} ≠ الخام ${rawDebt.toFixed(2)}`)
 }
 
+// ── 8) اتساق جداول الدفعة العامة للمورد ─────────────────────────────────────
+{
+  // (أ) amount بالترويسة = مجموع توزيعاتها الفعلي (تسامح 0.001)
+  const headers = all<{ id: number; amount: number; alloc_total: number; alloc_count: number }>(`
+    SELECT bp.id, bp.amount,
+           COALESCE(SUM(a.amount), 0) AS alloc_total,
+           COUNT(a.id)               AS alloc_count
+      FROM supplier_bulk_payments bp
+      LEFT JOIN supplier_bulk_payment_allocations a ON a.bulk_payment_id = bp.id
+     GROUP BY bp.id`)
+  const mismatched = headers.filter(h => Math.abs(h.amount - h.alloc_total) > 0.001)
+  if (mismatched.length === 0) ok(`الدفعات العامة: amount كل ${headers.length} ترويسة = مجموع توزيعاتها`)
+  else fail('تطابق مبلغ الدفعة العامة مع توزيعها',
+    `${mismatched.length} ترويسة غير مطابقة. أمثلة: ${mismatched.slice(0, 5).map(h => `#${h.id}: amount ${h.amount.toFixed(2)} ≠ Σalloc ${h.alloc_total.toFixed(2)}`).join('، ')}`)
+
+  // (ب) لا ترويسة يتيمة بلا أي صف توزيع مرتبط بها إطلاقاً
+  const orphanHeaders = headers.filter(h => h.alloc_count === 0)
+  if (orphanHeaders.length === 0) ok('الدفعات العامة: لا ترويسة يتيمة بلا توزيع')
+  else fail('ترويسات دفعة عامة يتيمة',
+    `${orphanHeaders.length} ترويسة بلا أي توزيع. أمثلة: ${orphanHeaders.slice(0, 5).map(h => `#${h.id} (amount ${h.amount.toFixed(2)})`).join('، ')}`)
+
+  // (ج) لا صف توزيع يشير لفاتورة مورد غير موجودة فعلياً
+  const orphanAllocs = all<{ id: number; bulk_payment_id: number; invoice_id: number }>(`
+    SELECT a.id, a.bulk_payment_id, a.invoice_id
+      FROM supplier_bulk_payment_allocations a
+     WHERE NOT EXISTS (SELECT 1 FROM supplier_invoices si WHERE si.id = a.invoice_id)`)
+  const allocTotal = one<{ c: number }>('SELECT COUNT(*) c FROM supplier_bulk_payment_allocations').c
+  if (orphanAllocs.length === 0) ok(`الدفعات العامة: كل ${allocTotal} صف توزيع يشير لفاتورة مورد موجودة`)
+  else fail('توزيعات دفعة عامة يتيمة',
+    `${orphanAllocs.length} توزيع يشير لفاتورة غير موجودة. أمثلة: ${orphanAllocs.slice(0, 5).map(a => `alloc#${a.id}→inv#${a.invoice_id} (bulk#${a.bulk_payment_id})`).join('، ')}`)
+}
+
 console.log('══════════════════════════════════════════════')
 if (failures === 0) { console.log('🎉 نجحت كل الفحوص — لا تعارض بين منطق التطبيق والبيانات الخام.'); process.exit(0) }
 else { console.log(`🔴 ${failures} فحص فشل.`); process.exit(1) }

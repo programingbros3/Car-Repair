@@ -1,7 +1,8 @@
-import { useState, useMemo, useRef, useEffect } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import Fuse from 'fuse.js'
 import { useGarage } from '../store/GarageContext'
 import type { Supplier, SupplierRecord, SupplierItem } from '../store/GarageContext'
+import type { SupplierBulkPaymentRow } from '../db/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import CollapsibleCard from '../components/CollapsibleCard'
 import NameAutocomplete from '../components/NameAutocomplete'
@@ -12,6 +13,7 @@ import { applyDiscount } from '../db/discount'
 import { dbService } from '../services/db'
 import { showError } from '../utils/notify'
 import { useSettlementTotal } from '../utils/useSettlementTotal'
+import { sortFifo, buildFifoAllocations } from '../utils/bulkAllocation'
 
 /* ════════════════════════════════════════
    Local-only types (payment modal state)
@@ -44,6 +46,9 @@ const allowPhoneChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
 }
 
 const PAY_LABELS: Record<Exclude<PayMethod, 'debt'>, string> = { cash: 'كاش', check: 'شيك', visa: 'فيزا' }
+
+// طريقة الدفع كما تُخزَّن في DB (cheque) مع دعم 'check' احتياطاً
+const BULK_METHOD_AR: Record<string, string> = { cash: 'كاش', cheque: 'شيك', check: 'شيك', visa: 'فيزا' }
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 
@@ -183,6 +188,17 @@ export default function Suppliers() {
   const [settleDiscount, setSettleDiscount] = useState('')
   const [paySubmitted, setPaySubmitted] = useState(false)
 
+  /* bulk payment modal (دفعة عامة للمورد — توزيع FIFO أو يدوي على الفواتير غير المسدَّدة) */
+  const [bulkOpen,      setBulkOpen]      = useState(false)
+  const [bulkAmount,    setBulkAmount]    = useState('')
+  const [bulkDate,      setBulkDate]      = useState(today())
+  const [bulkNotes,     setBulkNotes]     = useState('')
+  const [bulkPay,       setBulkPay]       = useState<PaymentRow>(emptyPayRow())
+  const [bulkManual,    setBulkManual]    = useState(false)
+  const [manualAlloc,   setManualAlloc]   = useState<Record<number, string>>({})
+  const [bulkSubmitted, setBulkSubmitted] = useState(false)
+  const [bulkSaving,    setBulkSaving]    = useState(false)
+
   /* ── Fuse.js ── */
   const fuseItems = useMemo(
     () => supplierInvoices.map((sup, i) => ({ _idx: i, supplierName: normalizeAr(sup.supplierName), invoiceNumber: normalizeAr(sup.invoiceNumber ?? '') })),
@@ -212,6 +228,105 @@ export default function Suppliers() {
   const hasFilters   = !!search.trim() || !!phoneSearch || !!filterFrom || !!filterTo || !!amtMin || !!amtMax || debtFilter !== 'all'
   const clearFilters = () => { setSearch(''); setPhoneSearch(''); setFilterFrom(''); setFilterTo(''); setAmtMin(''); setAmtMax(''); setDebtFilter('all') }
 
+  /* ── كشف حساب المورد: يظهر عند فلترة (اسم/هاتف) تحصر النتائج بمورد واحد ── */
+  const selectedSupplierName = useMemo(() => {
+    if (!search.trim() && !phoneSearch) return null
+    if (filteredSuppliers.length === 0) return null
+    const names = new Set(filteredSuppliers.map(s => s.supplierName))
+    return names.size === 1 ? filteredSuppliers[0].supplierName : null
+  }, [filteredSuppliers, search, phoneSearch])
+
+  // الملخص يُحسب من كل فواتير المورد (لا الصفحة/الفلاتر الزمنية) — كشف حساب كامل
+  const supplierAccount = useMemo(() => {
+    if (!selectedSupplierName) return null
+    const invs = supplierInvoices.filter(s => s.supplierName === selectedSupplierName)
+    const totalInvoiced  = invs.reduce((s, r) => s + r.total, 0)
+    const totalPaid      = invs.reduce((s, r) => s + r.amountPaid, 0)
+    const totalRemaining = invs.reduce((s, r) => s + r.amountRemaining, 0)
+    const unpaidCount    = invs.filter(r => r.amountRemaining > 0.001).length
+    return { name: selectedSupplierName, invoiceCount: invs.length, totalInvoiced, totalPaid, totalRemaining, unpaidCount }
+  }, [selectedSupplierName, supplierInvoices])
+
+  /* ── الدفعة العامة: الفواتير غير المسدَّدة بترتيب FIFO (الأقدم أولاً) ── */
+  const bulkUnpaid = useMemo(() => {
+    if (!supplierAccount) return []
+    return sortFifo(
+      supplierInvoices.filter(s => s.supplierName === supplierAccount.name && s.amountRemaining > 0.001),
+    )
+  }, [supplierAccount, supplierInvoices])
+
+  const bulkAmountNum = Math.max(0, Number(bulkAmount || 0))
+  const bulkMaxDebt   = supplierAccount?.totalRemaining ?? 0
+  const bulkExceeds   = bulkAmountNum > bulkMaxDebt + 0.001
+
+  // التوزيع الافتراضي: FIFO تلقائي — الأقدم أولاً حتى ينتهي المبلغ (منطق مشترك في ../utils/bulkAllocation)
+  const fifoAlloc = useMemo(
+    () => buildFifoAllocations(bulkUnpaid, bulkAmountNum),
+    [bulkUnpaid, bulkAmountNum],
+  )
+
+  // التوزيع الفعلي المعتمد: FIFO أو اليدوي المعدَّل
+  const bulkAllocations = useMemo(() => {
+    if (!bulkManual) return fifoAlloc
+    return bulkUnpaid
+      .map(inv => ({ invoice: inv, amount: Math.max(0, Number(manualAlloc[inv.id] || 0)) }))
+      .filter(x => x.amount > 0.001)
+  }, [bulkManual, fifoAlloc, bulkUnpaid, manualAlloc])
+
+  // صفوف جدول المعاينة: في اليدوي تظهر كل الفواتير غير المسدَّدة (قابلة للتعديل)،
+  // وفي التلقائي فقط الفواتير التي سيصلها التوزيع
+  const bulkPreviewRows = useMemo(() => {
+    if (!bulkManual) return fifoAlloc
+    return bulkUnpaid.map(inv => ({ invoice: inv, amount: Math.max(0, Number(manualAlloc[inv.id] || 0)) }))
+  }, [bulkManual, fifoAlloc, bulkUnpaid, manualAlloc])
+
+  const bulkAllocTotal    = bulkAllocations.reduce((s, a) => s + a.amount, 0)
+  const bulkAllocOverInv  = bulkAllocations.filter(a => a.amount > a.invoice.amountRemaining + 0.001)
+  const bulkAllocMismatch = Math.abs(bulkAllocTotal - bulkAmountNum) > 0.001
+  const bulkInvalid = bulkAmountNum <= 0 || bulkExceeds || bulkAllocOverInv.length > 0
+    || bulkAllocMismatch || bulkAllocations.length === 0
+
+  const openBulk = () => {
+    setBulkAmount(''); setBulkDate(today()); setBulkNotes('')
+    setBulkPay(emptyPayRow()); setBulkManual(false); setManualAlloc({})
+    setBulkSubmitted(false); setBulkOpen(true)
+  }
+
+  // تفعيل التعديل اليدوي: نبدأ من توزيع FIFO الحالي كنقطة انطلاق
+  const enableBulkManual = () => {
+    const seed: Record<number, string> = {}
+    for (const a of fifoAlloc) seed[a.invoice.id] = String(Number(a.amount.toFixed(2)))
+    setManualAlloc(seed)
+    setBulkManual(true)
+  }
+  const resetBulkToFifo = () => { setBulkManual(false); setManualAlloc({}) }
+
+  const updateBulkPay = (update: Partial<Omit<PaymentRow, 'id'>>) =>
+    setBulkPay(prev => ({ ...prev, ...update }))
+
+  const handleBulkConfirm = async () => {
+    setBulkSubmitted(true)
+    if (!supplierAccount || bulkInvalid || bulkSaving) return
+    try {
+      setBulkSaving(true)
+      await dbService.supplierInvoice.addBulkPayment(
+        supplierAccount.name,
+        { ...bulkPay, amount: bulkAmountNum },
+        bulkDate,
+        // بلا تقريب — مجموع التوزيع يجب أن يساوي المبلغ تماماً في تحقّق الـ backend
+        bulkAllocations.map(a => ({ invoice_id: a.invoice.id, amount: a.amount })),
+        bulkNotes || undefined,
+      )
+      await reload(['supplierInvoices', 'purchaseInvoices'])   // M10
+      void loadBulkPayments()   // حدِّث سجل الدفعات العامة فوراً بعد التسجيل
+      setBulkOpen(false)
+    } catch (err) {
+      showError('تعذّر تسجيل الدفعة العامة', err)
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
   /* ── Pagination: Supplier Directory ── */
   const [supDirPage, setSupDirPage] = useState(1)
   const [supDirPageSize, setSupDirPageSize] = useState(10)
@@ -233,6 +348,47 @@ export default function Suppliers() {
     const start = (invPage - 1) * invPageSize
     return filteredSuppliers.slice(start, start + invPageSize)
   }, [filteredSuppliers, invPage, invPageSize])
+
+  /* ════════════════════════════════════════
+     سجل الدفعات العامة (supplier_bulk_payments) — نفس فلاتر قسم الفواتير
+  ════════════════════════════════════════ */
+  const [bulkList,  setBulkList]  = useState<SupplierBulkPaymentRow[]>([])
+  const [bpSearch,  setBpSearch]  = useState('')
+  const [bpPhone,   setBpPhone]   = useState('')
+  const [bpFrom,    setBpFrom]    = useState('')
+  const [bpTo,      setBpTo]      = useState('')
+  const [bpAmtMin,  setBpAmtMin]  = useState('')
+  const [bpAmtMax,  setBpAmtMax]  = useState('')
+  const [bpDetail,  setBpDetail]  = useState<SupplierBulkPaymentRow | null>(null)
+  const [bpPage,     setBpPage]     = useState(1)
+  const [bpPageSize, setBpPageSize] = useState(10)
+
+  const bpHasFilters = !!bpSearch.trim() || !!bpPhone || !!bpFrom || !!bpTo || !!bpAmtMin || !!bpAmtMax
+  const clearBpFilters = () => { setBpSearch(''); setBpPhone(''); setBpFrom(''); setBpTo(''); setBpAmtMin(''); setBpAmtMax('') }
+
+  const loadBulkPayments = useCallback(async () => {
+    try {
+      const rows = await dbService.supplierInvoice.getBulkPayments({
+        supplier_name: bpSearch.trim() || undefined,
+        phone:         bpPhone.trim()  || undefined,
+        date_from:     bpFrom || undefined,
+        date_to:       bpTo   || undefined,
+        amount_min:    bpAmtMin !== '' ? Number(bpAmtMin) : undefined,
+        amount_max:    bpAmtMax !== '' ? Number(bpAmtMax) : undefined,
+      })
+      setBulkList(rows)
+    } catch (err) {
+      showError('تعذّر تحميل سجل الدفعات العامة', err)
+    }
+  }, [bpSearch, bpPhone, bpFrom, bpTo, bpAmtMin, bpAmtMax])
+
+  useEffect(() => { void loadBulkPayments() }, [loadBulkPayments])
+  useEffect(() => { setBpPage(1) }, [bpSearch, bpPhone, bpFrom, bpTo, bpAmtMin, bpAmtMax])
+
+  const paginatedBulk = useMemo(() => {
+    const start = (bpPage - 1) * bpPageSize
+    return bulkList.slice(start, start + bpPageSize)
+  }, [bulkList, bpPage, bpPageSize])
 
   /* أسماء دليل الموردين للـ autocomplete (كل الموردين المسجّلين، لا من ظهر بفاتورة فقط) */
   const supplierNames = useMemo(() => suppliers.map(s => s.name), [suppliers])
@@ -381,6 +537,38 @@ export default function Suppliers() {
       <div className="page-header mi-page-header">
         <h1 className="page-title">الموردون</h1>
       </div>
+
+      {/* ════ كشف حساب المورد (يظهر عند فلترة تحصر النتائج بمورد واحد) ════ */}
+      {supplierAccount && (
+        <div className="mi-card" style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <h2 className="mi-section-title" style={{ margin: 0 }}>كشف حساب المورد — {supplierAccount.name}</h2>
+            {supplierAccount.totalRemaining > 0.001 && (
+              <button className="btn btn-sm-green" onClick={openBulk}>دفعة عامة للمورد</button>
+            )}
+          </div>
+          <div className="mi-detail-grid pd-debt-summary" style={{ marginTop: '0.75rem' }}>
+            <div className="mi-detail-item">
+              <span className="mi-detail-label">إجمالي الفواتير ({supplierAccount.invoiceCount})</span>
+              <span className="mi-amount">{fmt(supplierAccount.totalInvoiced)} ₪</span>
+            </div>
+            <div className="mi-detail-item">
+              <span className="mi-detail-label">إجمالي المدفوع</span>
+              <span className="pd-paid">{fmt(supplierAccount.totalPaid)} ₪</span>
+            </div>
+            <div className="mi-detail-item">
+              <span className="mi-detail-label">الرصيد المستحق</span>
+              <span className={supplierAccount.totalRemaining > 0.001 ? 'pd-remaining' : 'mi-amount'}>
+                {fmt(supplierAccount.totalRemaining)} ₪
+              </span>
+            </div>
+            <div className="mi-detail-item">
+              <span className="mi-detail-label">فواتير غير مسدَّدة بالكامل</span>
+              <strong>{supplierAccount.unpaidCount}</strong>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ════ Supplier Add Form (inline) ════ */}
       {showSupForm && !editingSup && (
@@ -604,6 +792,93 @@ export default function Suppliers() {
         />
       </CollapsibleCard>
 
+      {/* ════ سجل الدفعات العامة ════ */}
+      <CollapsibleCard title="سجل الدفعات العامة">
+        <div className="mi-filters pd-filter-bar">
+          <div className="mi-search-wrap">
+            <NameAutocomplete value={bpSearch} onChange={setBpSearch} options={supplierNames}
+              placeholder="🔍  بحث باسم المورد..." />
+          </div>
+          <div className="mi-search-wrap" style={{ minWidth: 160, flex: '0 0 auto' }}>
+            <input type="text" className="mi-search-input" placeholder="📞  بحث برقم الهاتف..."
+              value={bpPhone} onChange={e => setBpPhone(e.target.value)} />
+          </div>
+          <div className="mi-date-range">
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">من تاريخ</span>
+              <input type="date" className="mi-date-input" value={bpFrom} max={today()}
+                onChange={e => setBpFrom(e.target.value > today() ? today() : e.target.value)} />
+            </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">إلى تاريخ</span>
+              <input type="date" className="mi-date-input" value={bpTo} max={today()}
+                onChange={e => setBpTo(e.target.value > today() ? today() : e.target.value)} />
+            </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">من مبلغ ₪</span>
+              <input type="number" min={0} className="mi-amount-input"
+                value={bpAmtMin} onChange={e => setBpAmtMin(e.target.value)} placeholder="0" />
+            </div>
+            <div className="mi-filter-field">
+              <span className="mi-filter-label">إلى مبلغ ₪</span>
+              <input type="number" min={0} className="mi-amount-input"
+                value={bpAmtMax} onChange={e => setBpAmtMax(e.target.value)} placeholder="∞" />
+            </div>
+          </div>
+          {bpHasFilters && (
+            <button className="btn btn-ghost mi-clear-btn" onClick={clearBpFilters}>مسح الفلاتر</button>
+          )}
+        </div>
+
+        <div className="mi-table-wrap">
+          <table className="mi-table">
+            <thead>
+              <tr>
+                <th>اسم المورد</th>
+                <th>رقم الهاتف</th>
+                <th>التاريخ</th>
+                <th>طريقة الدفع</th>
+                <th>المبلغ الإجمالي ₪</th>
+                <th>عدد الفواتير</th>
+                <th>الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedBulk.length === 0 ? (
+                <tr><td colSpan={7} className="mi-empty-row">لا توجد دفعات عامة مطابقة</td></tr>
+              ) : paginatedBulk.map((bp, i) => (
+                <tr key={bp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
+                  onClick={() => setBpDetail(bp)}>
+                  <td>{bp.supplier_name}</td>
+                  <td>
+                    {bp.supplier_phone && bp.supplier_phone !== '0000'
+                      ? <span className="mi-phone-highlight">{bp.supplier_phone}</span>
+                      : <span style={{ color: '#9ca3af' }}>—</span>
+                    }
+                  </td>
+                  <td>{bp.payment_date}</td>
+                  <td>{BULK_METHOD_AR[bp.method] || bp.method}</td>
+                  <td className="mi-amount">{fmt(bp.amount)} ₪</td>
+                  <td className="mi-td-center">{bp.invoice_count}</td>
+                  <td>
+                    <div className="mi-actions" onClick={e => e.stopPropagation()}>
+                      <button className="btn btn-sm-outline" onClick={() => setBpDetail(bp)}>عرض التفاصيل</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          currentPage={bpPage}
+          totalItems={bulkList.length}
+          pageSize={bpPageSize}
+          onPageChange={setBpPage}
+          onPageSizeChange={(size) => { setBpPageSize(size); setBpPage(1) }}
+        />
+      </CollapsibleCard>
+
       {/* ════ Invoice Details Modal ════ */}
       {detailsSup && (
         <div className="mi-modal-overlay" onClick={() => setDetailsSup(null)}>
@@ -695,6 +970,81 @@ export default function Suppliers() {
               <button className="btn btn-secondary"
                 onClick={() => handlePrintSup(detailsSup)}>طباعة</button>
               <button className="btn btn-ghost" onClick={() => setDetailsSup(null)}>إغلاق</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Bulk Payment Details Modal (توزيع الدفعة العامة على الفواتير) ════ */}
+      {bpDetail && (
+        <div className="mi-modal-overlay" onClick={() => setBpDetail(null)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>تفاصيل الدفعة العامة — {bpDetail.supplier_name}</h3>
+              <button className="mi-modal-close" onClick={() => setBpDetail(null)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid">
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">اسم المورد</span>
+                  <strong>{bpDetail.supplier_name}</strong>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">رقم الهاتف</span>
+                  {bpDetail.supplier_phone && bpDetail.supplier_phone !== '0000'
+                    ? <span className="mi-phone-highlight">{bpDetail.supplier_phone}</span>
+                    : <span style={{ color: '#9ca3af' }}>—</span>
+                  }
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">التاريخ</span>
+                  <span>{bpDetail.payment_date}</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">طريقة الدفع</span>
+                  <span>{BULK_METHOD_AR[bpDetail.method] || bpDetail.method}</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">المبلغ الإجمالي</span>
+                  <span className="mi-amount">{fmt(bpDetail.amount)} ₪</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">عدد الفواتير</span>
+                  <strong>{bpDetail.invoice_count}</strong>
+                </div>
+                {bpDetail.notes && (
+                  <div className="mi-detail-item mi-detail-full">
+                    <span className="mi-detail-label">ملاحظات</span>
+                    <span>{bpDetail.notes}</span>
+                  </div>
+                )}
+              </div>
+
+              <h4 className="mi-modal-subtitle">توزيع الدفعة على الفواتير</h4>
+              <div className="mi-parts-table-wrap">
+                <table className="mi-parts-table">
+                  <thead>
+                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>المبلغ المسدَّد منها</th></tr>
+                  </thead>
+                  <tbody>
+                    {bpDetail.allocations.length === 0 ? (
+                      <tr><td colSpan={3} className="mi-empty-row">لا يوجد توزيع</td></tr>
+                    ) : bpDetail.allocations.map((a, idx) => (
+                      <tr key={idx}>
+                        <td>{a.invoice_number || `#${a.invoice_id}`}</td>
+                        <td className="mi-td-center">{a.purchase_date}</td>
+                        <td className="mi-td-center"><strong className="pd-paid">{fmt(a.amount)} ₪</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                إجمالي الدفعة: <strong>{fmt(bpDetail.amount)} ₪</strong>
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-ghost" onClick={() => setBpDetail(null)}>إغلاق</button>
             </div>
           </div>
         </div>
@@ -836,6 +1186,187 @@ export default function Suppliers() {
                 تأكيد الدفعة
               </button>
               <button className="btn btn-ghost" onClick={() => setPaySup(null)}>إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ Bulk Payment Modal (دفعة عامة للمورد) ════ */}
+      {bulkOpen && supplierAccount && (
+        <div className="mi-modal-overlay" onClick={() => setBulkOpen(false)}>
+          <div className="mi-modal" onClick={e => e.stopPropagation()}>
+            <div className="mi-modal-header">
+              <h3>دفعة عامة — {supplierAccount.name}</h3>
+              <button className="mi-modal-close" onClick={() => setBulkOpen(false)}>✕</button>
+            </div>
+            <div className="mi-modal-body">
+              <div className="mi-detail-grid pd-debt-summary">
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">إجمالي الديون المستحقة</span>
+                  <span className="pd-remaining">{fmt(bulkMaxDebt)} ₪</span>
+                </div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">فواتير غير مسدَّدة</span>
+                  <strong>{bulkUnpaid.length}</strong>
+                </div>
+              </div>
+
+              <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1rem' }}>
+                <label className="mi-field">
+                  <span>مبلغ الدفعة ₪ <span className="mi-required">*</span></span>
+                  <input type="number" min={0} placeholder="0" value={bulkAmount}
+                    className={errCls(bulkSubmitted && (bulkAmountNum <= 0 || bulkExceeds))}
+                    onChange={e => { setBulkAmount(e.target.value); resetBulkToFifo() }} />
+                </label>
+                <label className="mi-field">
+                  <span>تاريخ الدفعة</span>
+                  <input type="date" value={bulkDate} max={today()}
+                    onChange={e => setBulkDate(e.target.value > today() ? today() : e.target.value)} />
+                </label>
+                <label className="mi-field">
+                  <span>ملاحظات</span>
+                  <input type="text" value={bulkNotes} placeholder="ملاحظة اختيارية..."
+                    onChange={e => setBulkNotes(e.target.value)} />
+                </label>
+              </div>
+
+              {bulkExceeds && (
+                <p className="pd-pay-error">
+                  المبلغ المدخل ({fmt(bulkAmountNum)} ₪) يتجاوز إجمالي الديون المستحقة لهذا المورد —
+                  الحد الأقصى المسموح به: <strong>{fmt(bulkMaxDebt)} ₪</strong>
+                </p>
+              )}
+              {bulkSubmitted && bulkAmountNum <= 0 && (
+                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
+              )}
+
+              <div className="pay-section-title">طريقة الدفع</div>
+              <div className="pay-row">
+                <div className="pay-row-main">
+                  <select className="pay-select" value={bulkPay.method}
+                    onChange={e => updateBulkPay({ method: e.target.value as PayMethod })}>
+                    {(['cash', 'check', 'visa'] as Exclude<PayMethod, 'debt'>[]).map(val => (
+                      <option key={val} value={val}>{PAY_LABELS[val]}</option>
+                    ))}
+                  </select>
+                </div>
+                {bulkPay.method === 'check' && (
+                  <div className="pay-row-extra">
+                    <label className="mi-field"><span>رقم الشيك</span>
+                      <input type="text" className="mi-td-input" value={bulkPay.checkNumber}
+                        onChange={e => updateBulkPay({ checkNumber: e.target.value })} /></label>
+                    <label className="mi-field"><span>اسم البنك</span>
+                      <input type="text" className="mi-td-input" value={bulkPay.bankName}
+                        onChange={e => updateBulkPay({ bankName: e.target.value })} /></label>
+                    <label className="mi-field"><span>تاريخ الإصدار</span>
+                      <input type="date" className="mi-td-input" value={bulkPay.issueDate} max={today()}
+                        onChange={e => updateBulkPay({ issueDate: e.target.value > today() ? today() : e.target.value })} /></label>
+                    <label className="mi-field"><span>تاريخ الصرف</span>
+                      <input type="date" className="mi-td-input" value={bulkPay.clearDate}
+                        onChange={e => updateBulkPay({ clearDate: e.target.value })} /></label>
+                  </div>
+                )}
+                {bulkPay.method === 'visa' && (
+                  <div className="pay-row-extra">
+                    <label className="mi-field"><span>اسم البنك</span>
+                      <input type="text" className="mi-td-input" value={bulkPay.bankName}
+                        onChange={e => updateBulkPay({ bankName: e.target.value })} /></label>
+                    <label className="mi-field"><span>رقم الحركة</span>
+                      <input type="text" className="mi-td-input" value={bulkPay.transactionNum}
+                        onChange={e => updateBulkPay({ transactionNum: e.target.value })} /></label>
+                  </div>
+                )}
+              </div>
+
+              {/* ── معاينة التوزيع (FIFO تلقائي أو يدوي) ── */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', marginBottom: '0.5rem' }}>
+                <div className="pay-section-title" style={{ margin: 0 }}>
+                  توزيع الدفعة على الفواتير {bulkManual ? '(يدوي)' : '(تلقائي — الأقدم أولاً)'}
+                </div>
+                {!bulkManual ? (
+                  <button className="btn btn-sm-outline" disabled={bulkAmountNum <= 0 || bulkExceeds}
+                    onClick={enableBulkManual}>تعديل التوزيع يدوياً</button>
+                ) : (
+                  <button className="btn btn-sm-outline" onClick={resetBulkToFifo}>رجوع للتوزيع التلقائي</button>
+                )}
+              </div>
+
+              <div className="mi-parts-table-wrap">
+                <table className="mi-parts-table">
+                  <thead>
+                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>المتبقي عليها</th><th>سيُسدَّد منها</th><th>المتبقي بعد الدفعة</th></tr>
+                  </thead>
+                  <tbody>
+                    {bulkPreviewRows.length === 0 ? (
+                      <tr><td colSpan={5} className="mi-empty-row">
+                        {bulkAmountNum > 0 ? 'لا فواتير سيشملها التوزيع' : 'أدخل مبلغ الدفعة لعرض التوزيع'}
+                      </td></tr>
+                    ) : bulkPreviewRows.map(({ invoice: inv, amount }) => {
+                      const over = amount > inv.amountRemaining + 0.001
+                      return (
+                        <tr key={inv.id}>
+                          <td>{inv.invoiceNumber || `#${inv.id}`}</td>
+                          <td className="mi-td-center">{inv.purchaseDate}</td>
+                          <td className="mi-td-center pd-remaining">{fmt(inv.amountRemaining)} ₪</td>
+                          <td className="mi-td-center">
+                            {bulkManual ? (
+                              <input type="number" min={0} className={`mi-td-input pay-amount${over ? ' mi-input-err' : ''}`}
+                                value={manualAlloc[inv.id] ?? ''}
+                                placeholder="0"
+                                onChange={e => setManualAlloc(prev => ({ ...prev, [inv.id]: e.target.value }))} />
+                            ) : (
+                              <strong className="pd-paid">{fmt(amount)} ₪</strong>
+                            )}
+                          </td>
+                          <td className="mi-td-center">
+                            {over
+                              ? <span className="pay-over">يتجاوز المتبقي!</span>
+                              : <span className={inv.amountRemaining - amount <= 0.001 ? 'pay-ok' : 'pay-due'}>
+                                  {fmt(Math.max(0, inv.amountRemaining - amount))} ₪
+                                </span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {bulkAllocOverInv.length > 0 && (
+                <p className="pd-pay-error">
+                  التوزيع على الفاتورة {bulkAllocOverInv[0].invoice.invoiceNumber || `#${bulkAllocOverInv[0].invoice.id}`} يتجاوز المتبقي عليها ({fmt(bulkAllocOverInv[0].invoice.amountRemaining)} ₪)
+                </p>
+              )}
+              {bulkManual && !bulkAllocOverInv.length && bulkAllocMismatch && bulkAmountNum > 0 && !bulkExceeds && (
+                <p className="pd-pay-error">
+                  مجموع التوزيع ({fmt(bulkAllocTotal)} ₪) يجب أن يساوي مبلغ الدفعة ({fmt(bulkAmountNum)} ₪)
+                  {bulkAllocTotal < bulkAmountNum && <> — تبقّى <strong>{fmt(bulkAmountNum - bulkAllocTotal)} ₪</strong> غير موزَّعة</>}
+                </p>
+              )}
+
+              <div className="pay-summary">
+                <div className="pay-summary-row">
+                  <span>مبلغ الدفعة</span>
+                  <strong className="pay-paid">{fmt(bulkAmountNum)} ₪</strong>
+                </div>
+                <div className="pay-summary-row">
+                  <span>الموزَّع على الفواتير ({bulkAllocations.length})</span>
+                  <strong className={bulkAllocMismatch ? 'pay-over' : 'pay-ok'}>{fmt(bulkAllocTotal)} ₪</strong>
+                </div>
+                <div className="pay-summary-row pay-summary-last">
+                  <span>الرصيد المستحق بعد الدفعة</span>
+                  <strong className={bulkMaxDebt - bulkAllocTotal <= 0.001 ? 'pay-ok' : 'pay-due'}>
+                    {fmt(Math.max(0, bulkMaxDebt - bulkAllocTotal))} ₪
+                  </strong>
+                </div>
+              </div>
+            </div>
+            <div className="mi-modal-footer">
+              <button className="btn btn-primary" onClick={handleBulkConfirm}
+                disabled={bulkSaving || (bulkSubmitted && bulkInvalid) || bulkExceeds || bulkAllocOverInv.length > 0}>
+                {bulkSaving ? 'جارٍ الحفظ...' : 'تأكيد الدفعة'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setBulkOpen(false)}>إلغاء</button>
             </div>
           </div>
         </div>

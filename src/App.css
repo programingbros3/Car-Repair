@@ -35,11 +35,72 @@
   to { transform: rotate(360deg); }
 }
 
+/* عمود المحتوى الرئيسي: المحتوى القابل للتمرير + الفوتر الثابت أسفله */
+.app-main {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 .main-content {
   flex: 1;
   overflow-y: auto;
   background-color: #F5F5F5;
   padding: 2rem;
+}
+
+/* ── Footer (شريط HMA رفيع أسفل كل الصفحات) ── */
+.app-footer {
+  flex-shrink: 0;
+  direction: rtl;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 1.25rem;
+  background-color: #1E2A38;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  line-height: 1;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app-footer-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.app-footer-team {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #ffffff;
+}
+
+.app-footer-copy {
+  color: #94a3b8;
+}
+
+.app-footer-wa {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem;
+  border: none;
+  background: transparent;
+  color: #25D366;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.app-footer-wa:hover {
+  background-color: rgba(37, 211, 102, 0.15);
+  transform: scale(1.05);
 }
 
 /* ── Sidebar ── */
