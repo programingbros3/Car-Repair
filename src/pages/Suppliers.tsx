@@ -447,12 +447,19 @@ export default function Suppliers() {
     setWarnSup(sup)
   }
 
-  const confirmEditSup = () => {
+  const confirmEditSup = async () => {
     if (!warnSup) return
-    clearSupplierDraft()
-    setEditing(warnSup)
-    setShowInvForm(false)
-    setWarnSup(null)
+    try {
+      // جلب الفاتورة مع بنودها (getAll لا يجلب supplier_items)
+      const full = await dbService.supplierInvoice.getOne(warnSup.id)
+      if (!full) { showError('تعذّر تحميل بيانات الفاتورة'); return }
+      clearSupplierDraft()
+      setEditing(full)
+      setShowInvForm(false)
+      setWarnSup(null)
+    } catch (err) {
+      showError('تعذّر تحميل بيانات الفاتورة', err)
+    }
   }
 
   const openInvForm  = () => { setEditing(null); setShowInvForm(true) }
