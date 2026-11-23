@@ -43,7 +43,7 @@ import type {
   SaleInvoiceRow, PurchaseInvoiceRow,
   CashAuditRow, CashAuditInput, CashAuditLockedEditInput, CashSystemBreakdown,
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
-  PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
+  PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings, GarageIdentitySettings,
   UpcomingChequeRow, ChequeRow, ChequeFilters, ChequeStatus, ChequeTableKind,
   DebtAgingRow,
 } from '../db/types'
@@ -397,6 +397,14 @@ export const dbService = {
     getSettings: () => invoke<VatSettings>('vat:getSettings'),
     updateSettings: (updates: Partial<VatSettings>) =>
       invoke<VatSettings>('vat:updateSettings', updates),
+  },
+
+  /* ┐┐┐┐┐┐┐┐┐┐┐┐┐┐┐ هوية الكراج (اسم + شعار) ₐₐₐₐₐₐₐₐₐₐₐₐₐₐₐ */
+  garageIdentity: {
+    get: () => invoke<GarageIdentitySettings>('garageIdentity:get'),
+    update: (updates: Partial<GarageIdentitySettings>) =>
+      invoke<GarageIdentitySettings>('garageIdentity:update', updates),
+    pickLogo: () => invoke<string | null>('garageIdentity:pickLogo'),
   },
 }
 

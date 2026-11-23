@@ -51,7 +51,7 @@
   padding: 2rem;
 }
 
-/* ── Footer (شريط HMA رفيع أسفل كل الصفحات) ── */
+/* ── Footer (شريط الفوتر أسفل كل الصفحات) ── */
 .app-footer {
   flex-shrink: 0;
   direction: rtl;

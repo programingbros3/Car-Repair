@@ -29,7 +29,14 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 let win: BrowserWindow | null
 
 function createWindow() {
+  let appTitle = 'نظام إدارة الكراج'
+  try {
+    const row = getDB().prepare("SELECT value FROM app_settings WHERE key = 'garage_name'").get() as { value: string } | undefined
+    if (row?.value?.trim()) appTitle = row.value.trim()
+  } catch { /* ignore */ }
+
   win = new BrowserWindow({
+    title: appTitle,
     icon: path.join(process.env.VITE_PUBLIC, 'icon.png'),
     // M12: أبعاد افتراضية تتّسع للجداول (680–860px) + السايدبار (220px) بلا تمرير
     // أفقي، وحدّ أدنى يمنع تكدّس الواجهة. تُفتح مكبّرة على الشاشات الأصغر.

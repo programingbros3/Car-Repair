@@ -1,3 +1,4 @@
+import { useGarageIdentity } from '../context/GarageIdentityContext'
 import { useEffect, useState } from 'react'
 import { dbService } from '../services/db'
 import PasswordInput from './PasswordInput'
@@ -11,6 +12,7 @@ import PasswordInput from './PasswordInput'
 type PasswordGateProps = { onUnlock: () => void }
 
 export default function PasswordGate({ onUnlock }: PasswordGateProps) {
+  const { garageName, displayLogo } = useGarageIdentity()
   const [password, setPassword]     = useState('')
   const [error, setError]           = useState('')
   const [checking, setChecking]     = useState(false)
@@ -93,7 +95,10 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
     return (
       <div style={overlay}>
         <form style={card} onSubmit={handleSetup}>
-          <div style={logo}>كراج الخط الأخضر</div>
+          <div style={{ textAlign: 'center', marginBottom: '0.25rem' }}>
+          <img src={displayLogo} alt={garageName} style={{ width: 64, height: 64, objectFit: 'contain', margin: '0 auto 0.5rem' }} />
+          <div style={logo}>{garageName}</div>
+        </div>
           <p style={subtitle}>مرحباً بك — عيّن كلمة سر للدخول (أول تشغيل)</p>
           <PasswordInput
             value={password}
@@ -120,7 +125,10 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   return (
     <div style={overlay}>
       <form style={card} onSubmit={handleSubmit}>
-        <div style={logo}>كراج الخط الأخضر</div>
+        <div style={{ textAlign: 'center', marginBottom: '0.25rem' }}>
+          <img src={displayLogo} alt={garageName} style={{ width: 64, height: 64, objectFit: 'contain', margin: '0 auto 0.5rem' }} />
+          <div style={logo}>{garageName}</div>
+        </div>
         <p style={subtitle}>الرجاء إدخال كلمة السر للدخول</p>
         <PasswordInput
           value={password}

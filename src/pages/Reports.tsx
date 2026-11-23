@@ -1,3 +1,4 @@
+import { useGarageIdentity } from '../context/GarageIdentityContext'
 import { useEffect, useMemo, useState } from 'react'
 import { printPdf, escapeHtml as esc } from '../utils/printPdf'
 import { exportToCsv } from '../utils/exportCsv'
@@ -146,6 +147,7 @@ const AGING_KIND_CLS: Record<DebtAgingRow['kind'], string> = {
    Component
 ════════════════════════════════════════ */
 export default function Reports() {
+  const { garageName } = useGarageIdentity()
   const [tab, setTab] = useState<Tab>('daily')
 
   /* period filters */
@@ -291,7 +293,7 @@ export default function Reports() {
   }, [filteredSupDebts, supDebtPage, reportPageSize])
 
   /* ── Print report ── */
-  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج الخط الأخضر · الفترة: ${PERIOD_LABELS[tab]}</div>`
+  const periodFooter = `<div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: ${garageName} · الفترة: ${PERIOD_LABELS[tab]}</div>`
 
   const handlePrint = () => {
     if (tab === 'top_customers') {
@@ -309,7 +311,7 @@ export default function Reports() {
           <thead><tr><th>#</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>عدد الفواتير</th><th>إجمالي الإنفاق</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-        <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: كراج الخط الأخضر · أفضل ${topCustomers.length} زبون</div>`
+        <div style="margin-top:8px;font-size:11px;color:#888;">التطبيق: ${garageName} · أفضل ${topCustomers.length} زبون</div>`
       printPdf('تقرير أفضل الزبائن', body)
       return
     }

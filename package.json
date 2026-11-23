@@ -1,8 +1,8 @@
 {
-  "name": "car-repair-shop",
+  "name": "garage-management-system",
   "private": true,
   "version": "1.0.0",
-  "description": "Comprehensive garage management system for Green Line Garage (كراج الخط الأخضر), featuring maintenance management, direct sales, customer records, warranties, invoicing, and financial reporting.",
+  "description": "Comprehensive garage management system: maintenance management, direct sales, customer records, warranties, invoicing, and financial reporting.",
   "author": "Anas Jaidi, Hashem Khader, Muhammad Mansour",
   "type": "module",
   "scripts": {

@@ -10,7 +10,7 @@
    • منطق الأعمال الأساسي يعيش في src/db/* (Layer A)؛ هذا الملف يربطه بالقنوات
      فقط، مع SQL مضمّن للفجوات (الحذف/التعديل/الدليل/الكفالات/العروض المجمّعة).
 ════════════════════════════════════════════════════════════════════════ */
-import { ipcMain, dialog, app, shell } from 'electron'
+import { ipcMain, dialog, app, shell, BrowserWindow } from 'electron'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -885,4 +885,56 @@ export function registerIpcHandlers(db: DB): void {
   on('vat:getSettings', () => getVatSettings(db))
   on('vat:updateSettings', (updates: Partial<{ enabled: boolean; rate: number }>) =>
     updateVatSettings(db, updates))
+
+  /* ─────────────── هوية الكراج (اسم + شعار) ─────────────── */
+  on('garageIdentity:get', () => {
+    const nameRow = db.prepare(`SELECT value FROM app_settings WHERE key='garage_name'`).get() as { value: string } | undefined
+    const logoRow = db.prepare(`SELECT value FROM app_settings WHERE key='garage_logo'`).get() as { value: string } | undefined
+    return {
+      name: nameRow?.value ?? '',
+      logo: logoRow?.value ?? '',
+    }
+  })
+
+  on('garageIdentity:update', (updates: { name?: string; logo?: string }) => {
+    if (updates.name !== undefined) {
+      db.prepare(`
+        INSERT INTO app_settings (key, value) VALUES ('garage_name', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(updates.name.trim())
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win) win.setTitle(updates.name.trim() || 'نظام إدارة الكراج')
+    }
+    if (updates.logo !== undefined) {
+      db.prepare(`
+        INSERT INTO app_settings (key, value) VALUES ('garage_logo', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(updates.logo)
+    }
+    const nameRow = db.prepare(`SELECT value FROM app_settings WHERE key='garage_name'`).get() as { value: string } | undefined
+    const logoRow = db.prepare(`SELECT value FROM app_settings WHERE key='garage_logo'`).get() as { value: string } | undefined
+    return {
+      name: nameRow?.value ?? '',
+      logo: logoRow?.value ?? '',
+    }
+  })
+
+  on('garageIdentity:pickLogo', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'اختيار شعار الكراج',
+      filters: [{ name: 'صور', extensions: ['png', 'jpg', 'jpeg', 'svg', 'webp'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const filePath = result.filePaths[0]
+    const ext = path.extname(filePath).replace('.', '').toLowerCase() || 'png'
+    const mime = ext === 'svg' ? 'image/svg+xml' : (ext === 'jpg' ? 'image/jpeg' : `image/${ext}`)
+    const base64 = fs.readFileSync(filePath).toString('base64')
+    const dataUrl = `data:${mime};base64,${base64}`
+    db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES ('garage_logo', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(dataUrl)
+    return dataUrl
+  })
 }

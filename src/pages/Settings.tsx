@@ -1,3 +1,4 @@
+import { useGarageIdentity } from '../context/GarageIdentityContext'
 import { useEffect, useState } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PasswordInput from '../components/PasswordInput'
@@ -10,6 +11,49 @@ import type { AutoBackupSettings, AutoBackupStatus, AutoLockSettings, ActivityLo
    + الأمان: تغيير كلمة السر / القفل التلقائي عند الخمول / سجل النشاط
 ════════════════════════════════════════ */
 export default function Settings() {
+  /* ── هوية الكراج ── */
+  const { garageName, garageLogo, displayLogo, updateIdentity, pickLogo } = useGarageIdentity()
+  const [editingName, setEditingName] = useState(garageName)
+  const [nameSaving, setNameSaving] = useState(false)
+  const [identityMsg, setIdentityMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    setEditingName(garageName)
+  }, [garageName])
+
+  const handleSaveName = async () => {
+    setNameSaving(true)
+    setIdentityMsg(null)
+    try {
+      await updateIdentity({ name: editingName })
+      setIdentityMsg('تم حفظ اسم الكراج بنجاح')
+    } catch (err) {
+      showError('فشل حفظ اسم الكراج', err)
+    } finally {
+      setNameSaving(false)
+    }
+  }
+
+  const handlePickLogo = async () => {
+    setIdentityMsg(null)
+    try {
+      const res = await pickLogo()
+      if (res) setIdentityMsg('تم تحديث شعار الكراج بنجاح')
+    } catch (err) {
+      showError('فشل اختيار الشعار', err)
+    }
+  }
+
+  const handleRemoveLogo = async () => {
+    setIdentityMsg(null)
+    try {
+      await updateIdentity({ logo: '' })
+      setIdentityMsg('تمت استعادة الشعار الافتراضي')
+    } catch (err) {
+      showError('فشل حذف الشعار', err)
+    }
+  }
+
   const [exporting, setExporting]       = useState(false)
   const [exportMsg, setExportMsg]       = useState<string | null>(null)
   const [showImportDlg, setShowImportDlg] = useState(false)
@@ -292,6 +336,103 @@ export default function Settings() {
       <div className="page-header">
         <h1 className="page-title">الإعدادات</h1>
       </div>
+
+      {/* ── هوية الكراج ── */}
+      <div className="mi-card">
+        <h2 className="mi-section-title">هوية الكراج</h2>
+        <div style={{ ...rowDesc, marginBottom: '1.25rem' }}>
+          تخصيص اسم الكراج والشعار ليظهرا في شاشات التطبيق والفوتر وفي جميع الفواتير والإيصالات والتقارير المطبوعة.
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 560 }}>
+          {/* اسم الكراج */}
+          <div style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <div style={rowTitle}>اسم الكراج</div>
+              <div style={rowDesc}>يظهر في أعلى السايدبار وشاشة الدخول وفي رأس المطبوعات</div>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <input
+                  type="text"
+                  style={{ ...textInputStyle, marginTop: 0 }}
+                  placeholder="مثال: كراج الهدى لصيانة السيارات"
+                  value={editingName}
+                  onChange={e => setEditingName(e.target.value)}
+                />
+                <button
+                  className="btn btn-primary"
+                  style={{ flexShrink: 0 }}
+                  onClick={handleSaveName}
+                  disabled={nameSaving || editingName === garageName}
+                >
+                  {nameSaving ? 'جارٍ الحفظ…' : 'حفظ'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
+
+          {/* شعار الكراج */}
+          <div style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <div style={rowTitle}>شعار الكراج</div>
+              <div style={rowDesc}>
+                {garageLogo
+                  ? 'تم تعيين شعار مخصص للكراج. يظهر في الفوتر والتقارير والمطبوعات.'
+                  : 'يتم حالياً استخدام الشعار الافتراضي المحايد للنظام.'}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginTop: '0.75rem' }}>
+                <div style={{
+                  width: 72,
+                  height: 72,
+                  borderRadius: 10,
+                  border: '1px solid #e2e8f0',
+                  background: '#f8fafc',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 6,
+                  overflow: 'hidden'
+                }}>
+                  <img
+                    src={displayLogo}
+                    alt={garageName}
+                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.85rem' }}
+                      onClick={handlePickLogo}
+                    >
+                      {garageLogo ? 'تغيير الشعار…' : 'اختيار شعار…'}
+                    </button>
+                    {garageLogo && (
+                      <button
+                        className="btn btn-danger"
+                        style={{ fontSize: '0.85rem' }}
+                        onClick={handleRemoveLogo}
+                      >
+                        استعادة الافتراضي
+                      </button>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                    يدعم صور PNG, JPG, SVG, WebP
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {identityMsg && <div style={successMsg}>{identityMsg}</div>}
+        </div>
+      </div>
+
 
       <div className="mi-card">
         <h2 className="mi-section-title">النسخ الاحتياطي</h2>

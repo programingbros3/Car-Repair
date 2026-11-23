@@ -710,3 +710,8 @@ export interface ActivityLogRow {
   details: string | null
   created_at: string
 }
+
+export interface GarageIdentitySettings {
+  name: string
+  logo: string
+}

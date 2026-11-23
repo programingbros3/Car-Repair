@@ -341,6 +341,10 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value TEXT
 );
 
+-- إعدادات هوية الكراج الافتراضية
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('garage_name', '');
+INSERT OR IGNORE INTO app_settings (key, value) VALUES ('garage_logo', '');
+
 -- سجل النشاط (توثيق خفيف للعمليات الحساسة — تعديل/حذف — لغرض المراجعة)
 CREATE TABLE IF NOT EXISTS activity_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
