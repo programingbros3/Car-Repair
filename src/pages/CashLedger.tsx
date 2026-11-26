@@ -33,13 +33,13 @@ type DisplayRow = {
 /* ════════════════════════════════════════
    Labels
 ════════════════════════════════════════ */
-const TYPE_LABELS: Record<TxType, string> = { incoming: 'وارد', outgoing: 'صادر' }
+const TYPE_LABELS: Record<TxType, string> = { incoming: 'داخل', outgoing: 'طالع' }
 
 const REF_LABELS: Record<string, string> = {
   maintenance_payment: 'صيانة',
   maintenance_release: 'صيانة',
   direct_sale_payment: 'بيع مباشر',
-  debt_customer:       'تحصيل دين',
+  debt_customer:       'سداد دين',
   supplier_payment:    'مورد',
   supplier_debt:       'مورد',
   daily_expense:       'مصروف',
@@ -220,7 +220,7 @@ export default function CashLedger() {
     setAuditsLoading(true)
     dbService.cashAudit.getAll()
       .then(setAuditRecords)
-      .catch(err => showError('تعذّر تحميل سجل الإحصاءات', err))
+      .catch(err => showError('ما قدرنا نحمّل سجل حسابات آخر اليوم', err))
       .finally(() => setAuditsLoading(false))
   }, [])
 
@@ -244,7 +244,7 @@ export default function CashLedger() {
         })
         setSysBreakdown(breakdown)
       })
-      .catch(err => showError('تعذّر تحميل بيانات اليوم', err))
+      .catch(err => showError('ما قدرنا نحمّل بيانات اليوم', err))
       .finally(() => setLoading(false))
   }, [])
 
@@ -314,7 +314,7 @@ export default function CashLedger() {
       setMatchOk(false)
       setDiffModal(null)
     } catch (err) {
-      showError('تعذّر تثبيت الإحصاء', err)
+      showError('ما قدرنا نثبّت الحساب', err)
     } finally {
       setSaving(false)
     }
@@ -366,7 +366,7 @@ export default function CashLedger() {
       await loadAudits()
       cancelFieldEdit()
     } catch (err) {
-      showError('تعذّر حفظ التعديل', err)
+      showError('ما قدرنا نحفظ التعديل', err)
     } finally {
       setSaving(false)
     }
@@ -379,7 +379,7 @@ export default function CashLedger() {
       await loadAudits()
       setDeleteAudit(null)
     } catch (err) {
-      showError('تعذّر حذف السجل', err)
+      showError('ما قدرنا نحذف السجل', err)
     }
   }
 
@@ -391,12 +391,12 @@ export default function CashLedger() {
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>التاريخ</label><span>${esc(rec.audit_date)}</span></div>
-        <div class="detail-item"><label>إجمالي النظام</label><span class="mi-amount">${fmtSigned(rec.system_total)} ₪</span></div>
-        <div class="detail-item"><label>المبلغ الفعلي</label><span class="mi-amount">${fmt(rec.actual_amount)} ₪</span></div>
+        <div class="detail-item"><label>المسجّل بالبرنامج</label><span class="mi-amount">${fmtSigned(rec.system_total)} ₪</span></div>
+        <div class="detail-item"><label>الموجود فعلاً</label><span class="mi-amount">${fmt(rec.actual_amount)} ₪</span></div>
         <div class="detail-item"><label>الفرق</label><span class="${diffCls}">${diffSign}${fmt(rec.difference)} ₪</span></div>
         <div class="detail-item"><label>الحالة</label><span>${statusTxt}</span></div>
       </div>`
-    printPdf('إحصاء يومي', body)
+    printPdf('حساب آخر اليوم', body)
   }
 
   /* ─── Print receipt ─── */
@@ -405,22 +405,22 @@ export default function CashLedger() {
     const amountCls = tx.type === 'incoming' ? 'amount-in' : 'amount-out'
     const bulkRows = tx.isBulk
       ? `
-        <div class="detail-item"><label>نوع العملية</label><span>دفعة عامة لمورد (${tx.allocations.length} فواتير)</span></div>
+        <div class="detail-item"><label>نوع الحركة</label><span>دفعة على الحساب للمورد (${tx.allocations.length} فواتير)</span></div>
         ${tx.method ? `<div class="detail-item"><label>طريقة الدفع</label><span>${esc(METHOD_LABELS[tx.method] ?? tx.method)}</span></div>` : ''}
-        ${tx.allocations.length ? `<div class="detail-item"><label>توزيع الدفعة على الفواتير</label><span>${tx.allocations.map(a => `${esc(a.invoiceLabel || '—')} (${fmt(a.amount)} ₪)`).join('، ')}</span></div>` : ''}`
+        ${tx.allocations.length ? `<div class="detail-item"><label>توزيع المبلغ على الفواتير</label><span>${tx.allocations.map(a => `${esc(a.invoiceLabel || '—')} (${fmt(a.amount)} ₪)`).join('، ')}</span></div>` : ''}`
       : ''
     const body = `
       <div class="detail-grid">
-        <div class="detail-item"><label>رقم العملية</label><span>${tx.id}</span></div>
+        <div class="detail-item"><label>رقم الحركة</label><span>${tx.id}</span></div>
         <div class="detail-item"><label>التاريخ</label><span>${esc(tx.date)}</span></div>
         <div class="detail-item"><label>النوع</label><span class="${amountCls}">${TYPE_LABELS[tx.type]}</span></div>
-        <div class="detail-item"><label>المصدر</label><span>${esc(tx.sourceLabel)}</span></div>
+        <div class="detail-item"><label>نوع الحركة</label><span>${esc(tx.sourceLabel)}</span></div>
         <div class="detail-item"><label>المبلغ</label><span class="${amountCls}">${sign}${fmt(tx.amount)} ₪</span></div>
-        <div class="detail-item"><label>الرصيد بعد العملية</label><span>${fmt(tx.balanceAfter)} ₪</span></div>
+        <div class="detail-item"><label>رصيد الصندوق بعد الحركة</label><span>${fmt(tx.balanceAfter)} ₪</span></div>
         ${bulkRows}
         ${tx.notes ? `<div class="detail-item"><label>الملاحظات</label><span>${esc(tx.notes)}</span></div>` : ''}
       </div>`
-    printPdf('إيصال عملية صندوق', body)
+    printPdf('إيصال حركة صندوق', body)
   }
 
   /* ─── Audit status badge ─── */
@@ -499,33 +499,38 @@ export default function CashLedger() {
     <div>
       <div className="page-header">
         <h1 className="page-title">الصندوق الرئيسي</h1>
+        <p style={{ fontSize: '0.86rem', color: '#888', margin: '0.25rem 0 0' }}>فلوسك الداخلة والطالعة</p>
       </div>
 
       {/* ── بطاقات ملخّص اليوم (إيرادات/مصاريف/موردين/رواتب) — مرتبطة بـ selectedDate وتتحدّث حياً ── */}
       <div className="stats-grid">
         <div className="stat-card">
-          <span className="stat-label">إيرادات اليوم (صيانة + بيع مباشر) ₪</span>
+          <span className="stat-label">الفلوس الداخلة اليوم (صيانة + بيع) ₪</span>
           <span className="stat-value" style={{ color: '#2ECC71' }}>
             {fmt(dayTotals.salesIncome)} ₪
           </span>
+          <span className="mi-field-hint">الفلوس اللي قبضتها اليوم من شغل الصيانة والبيع</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">مصاريف اليوم ₪</span>
           <span className="stat-value" style={{ color: '#E74C3C' }}>
             {fmt(dayTotals.expenses)} ₪
           </span>
+          <span className="mi-field-hint">المصاريف اليومية اللي دفعتها اليوم</span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">مدفوعات الموردين اليوم ₪</span>
+          <span className="stat-label">المدفوع للموردين اليوم ₪</span>
           <span className="stat-value" style={{ color: '#E74C3C' }}>
             {fmt(dayTotals.supplierPayments)} ₪
           </span>
+          <span className="mi-field-hint">الفلوس اللي دفعتها للموردين اليوم</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">رواتب اليوم ₪</span>
           <span className="stat-value" style={{ color: '#E74C3C' }}>
             {fmt(dayTotals.salaries)} ₪
           </span>
+          <span className="mi-field-hint">الرواتب اللي اندفعت للموظفين اليوم</span>
         </div>
       </div>
 
@@ -565,12 +570,13 @@ export default function CashLedger() {
 
         return (
           <div className="stats-grid">
-            {/* إجمالي النظام */}
+            {/* المسجّل بالبرنامج */}
             <div className="stat-card">
-              <span className="stat-label">إجمالي النظام ₪</span>
+              <span className="stat-label">المسجّل بالبرنامج ₪</span>
               <span className="stat-value" style={{ color: sysTotal >= 0 ? '#2ECC71' : '#E74C3C' }}>
                 {fmtSigned(sysTotal)} ₪
               </span>
+              <span className="mi-field-hint">المبلغ المفروض يكون موجود حسب فواتير اليوم</span>
               {breakdown([
                 { label: 'كاش',  color: '#2ECC71', value: sysCash  },
                 { label: 'فيزا', color: '#3498DB', value: sysVisa  },
@@ -578,12 +584,13 @@ export default function CashLedger() {
               ])}
             </div>
 
-            {/* المبلغ الفعلي */}
+            {/* الموجود فعلاً */}
             <div className="stat-card">
-              <span className="stat-label">المبلغ الفعلي ₪</span>
+              <span className="stat-label">الموجود فعلاً ₪</span>
               <span className="stat-value balance">
                 {actTotal !== null ? `${fmt(actTotal)} ₪` : '—'}
               </span>
+              <span className="mi-field-hint">المبلغ اللي عدّيته بإيدك آخر اليوم</span>
               {breakdown([
                 { label: 'كاش',  color: '#2ECC71', value: actCash  },
                 { label: 'فيزا', color: '#3498DB', value: actVisa  },
@@ -597,6 +604,7 @@ export default function CashLedger() {
               <span className="stat-value" style={{ color: diffTotal !== null ? diffColor(diffTotal) : '#999' }}>
                 {diffTotal === null ? '—' : `${diffTotal > 0 ? '+' : diffTotal < 0 ? '−' : ''}${fmt(diffTotal)} ₪`}
               </span>
+              <span className="mi-field-hint">الفرق بين الموجود فعلاً والمسجّل بالبرنامج</span>
               {breakdown([
                 { label: 'كاش',  color: diffCash  !== null ? diffColor(diffCash)  : '#aaa', value: diffCash,  signed: true },
                 { label: 'فيزا', color: diffVisa  !== null ? diffColor(diffVisa)  : '#aaa', value: diffVisa,  signed: true },
@@ -607,14 +615,15 @@ export default function CashLedger() {
         )
       })()}
 
-      {/* ════ إحصاء نهاية اليوم ════ */}
+      {/* ════ حساب آخر اليوم ════ */}
       <div className="mi-card" style={{ marginTop: '1.5rem' }}>
-        <h2 className="mi-section-title">إحصاء نهاية اليوم</h2>
+        <h2 className="mi-section-title" style={{ marginBottom: '0.25rem' }}>حساب آخر اليوم</h2>
+        <p className="mi-field-hint" style={{ marginBottom: '1rem' }}>عدّ الفلوس اللي عندك وقارنها بالمسجّل بالبرنامج</p>
 
         {/* Date picker */}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
           <div className="mi-filter-field">
-            <span className="mi-filter-label">تاريخ الحساب</span>
+            <span className="mi-filter-label">تاريخ اليوم</span>
             <input
               type="date"
               className="mi-date-input"
@@ -637,7 +646,7 @@ export default function CashLedger() {
             padding: '0.7rem 1rem', background: '#eef2f7', borderRadius: '8px',
             border: '1px solid #d8e0ea', color: '#334155', fontWeight: 600, fontSize: '0.9rem',
           }}>
-            🔒 هذا الإحصاء مُثبَّت ومقفل. لتعديل أي رقم اضغط «تعديل» بجانبه وأدخل كلمة السر.
+            🔒 حساب هذا اليوم مقفل. لو بدك تعدّل أي رقم اضغط «تعديل» واكتب كلمة السر.
           </div>
         )}
 
@@ -646,9 +655,9 @@ export default function CashLedger() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.93rem' }}>
             <thead>
               <tr style={{ background: '#f1f5f9' }}>
-                <th style={thStyle}>وسيلة الدفع</th>
-                <th style={thStyle}>النظام ₪</th>
-                <th style={thStyle}>{isLocked ? 'الفعلي' : 'الفعلي (أدخل)'}</th>
+                <th style={thStyle}>طريقة الدفع</th>
+                <th style={thStyle}>المسجّل بالبرنامج ₪</th>
+                <th style={thStyle}>{isLocked ? 'الموجود فعلاً' : 'الموجود فعلاً (اكتب)'}</th>
               </tr>
             </thead>
             <tbody>
@@ -703,7 +712,7 @@ export default function CashLedger() {
               disabled={!hasActualInput || saving}
               onClick={() => setLockConfirm(true)}
             >
-              🔒 تثبيت وقفل الإحصاء
+              🔒 تثبيت وقفل الحساب
             </button>
           </div>
         )}
@@ -715,18 +724,18 @@ export default function CashLedger() {
             padding: '0.75rem 1rem', background: '#d4f5e3', borderRadius: '8px',
             border: '1px solid #a8e6c0',
           }}>
-            <span style={{ color: '#1a7a45', fontWeight: 700, flex: 1 }}>✓ الصندوق مطابق تماماً</span>
+            <span style={{ color: '#1a7a45', fontWeight: 700, flex: 1 }}>✓ الصندوق مطابق — ما في فرق</span>
             <button className="btn btn-sm-green" onClick={() => setLockConfirm(true)} disabled={saving}>
-              🔒 تثبيت وقفل الإحصاء
+              🔒 تثبيت وقفل الحساب
             </button>
           </div>
         )}
       </div>
 
-      {/* ════ سجل العمليات ════ */}
+      {/* ════ سجل الحركات ════ */}
       <CollapsibleCard title={
         <>
-          سجل العمليات
+          سجل الحركات
           <span style={{ fontSize: '0.85rem', fontWeight: 400, color: '#888', marginRight: '0.5rem' }}>
             {selectedDate}
           </span>
@@ -738,17 +747,17 @@ export default function CashLedger() {
               <tr>
                 <th>التاريخ</th>
                 <th>النوع</th>
-                <th>المصدر</th>
+                <th>نوع الحركة</th>
                 <th>المبلغ</th>
-                <th>الرصيد بعد العملية</th>
+                <th>رصيد الصندوق بعد الحركة</th>
                 <th>ملاحظات</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="mi-empty-row">جارٍ تحميل الحركات...</td></tr>
+                <tr><td colSpan={6} className="mi-empty-row">جاري تحميل الحركات...</td></tr>
               ) : paginatedRows.length === 0 ? (
-                <tr><td colSpan={6} className="mi-empty-row">لا توجد عمليات في هذا اليوم</td></tr>
+                <tr><td colSpan={6} className="mi-empty-row">ما في حركات في هذا اليوم</td></tr>
               ) : paginatedRows.map((tx, i) => (
                 <tr
                   key={tx.id}
@@ -768,7 +777,7 @@ export default function CashLedger() {
                     </div>
                     {tx.isBulk ? (
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.3rem', alignItems: 'center' }}>
-                        <span style={bulkBadgeStyle}>دفعة عامة · {tx.allocations.length} فواتير</span>
+                        <span style={bulkBadgeStyle}>دفعة على الحساب · {tx.allocations.length} فواتير</span>
                         <span style={{
                           fontSize: '0.75rem', padding: '1px 7px', borderRadius: '10px',
                           background: (METHOD_COLORS[tx.method] ?? '#999') + '22',
@@ -810,18 +819,18 @@ export default function CashLedger() {
         <p className="mi-row-hint">اضغط على أي صف لعرض التفاصيل</p>
       </CollapsibleCard>
 
-      {/* ════ سجل الإحصاءات اليومية ════ */}
-      <CollapsibleCard title="سجل الإحصاءات اليومية">
+      {/* ════ سجل حسابات آخر اليوم ════ */}
+      <CollapsibleCard title="سجل حسابات آخر اليوم">
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
               <tr>
                 <th>التاريخ</th>
-                <th>إجمالي النظام ₪</th>
+                <th>المسجّل بالبرنامج ₪</th>
                 <th>كاش ₪</th>
                 <th>فيزا ₪</th>
                 <th>شيك ₪</th>
-                <th>الإجمالي الفعلي ₪</th>
+                <th>الموجود فعلاً ₪</th>
                 <th>الفرق ₪</th>
                 <th>الحالة</th>
                 <th>الإجراءات</th>
@@ -829,9 +838,9 @@ export default function CashLedger() {
             </thead>
             <tbody>
               {auditsLoading ? (
-                <tr><td colSpan={9} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">جاري التحميل...</td></tr>
               ) : paginatedAudits.length === 0 ? (
-                <tr><td colSpan={9} className="mi-empty-row">لا توجد إحصاءات مسجّلة بعد</td></tr>
+                <tr><td colSpan={9} className="mi-empty-row">ما في حسابات محفوظة بعد</td></tr>
               ) : paginatedAudits.map((rec, i) => (
                 <tr key={rec.id}
                   className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
@@ -868,7 +877,7 @@ export default function CashLedger() {
           onPageChange={setAuditPage}
           onPageSizeChange={(size) => { setAuditPageSize(size); setAuditPage(1) }}
         />
-        <p className="mi-row-hint">اضغط على أي صف لعرض إحصاء ذلك اليوم في البطاقات أعلاه</p>
+        <p className="mi-row-hint">اضغط على أي سطر لعرض حساب ذلك اليوم فوق</p>
       </CollapsibleCard>
 
       {/* ════ Details Modal ════ */}
@@ -877,8 +886,8 @@ export default function CashLedger() {
           <div className="mi-modal mi-modal-sm" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
               <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                تفاصيل العملية
-                {detailsTx.isBulk && <span style={bulkBadgeStyle}>دفعة عامة</span>}
+                تفاصيل الحركة
+                {detailsTx.isBulk && <span style={bulkBadgeStyle}>دفعة على الحساب</span>}
               </h3>
               <button className="mi-modal-close" onClick={() => setDetailsTx(null)}>✕</button>
             </div>
@@ -895,7 +904,7 @@ export default function CashLedger() {
                   </span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المصدر</span>
+                  <span className="mi-detail-label">نوع الحركة</span>
                   <span>{detailsTx.sourceLabel}</span>
                 </div>
                 <div className="mi-detail-item">
@@ -905,7 +914,7 @@ export default function CashLedger() {
                   </span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">الرصيد بعد العملية</span>
+                  <span className="mi-detail-label">رصيد الصندوق بعد الحركة</span>
                   <span className="mi-amount">{fmt(detailsTx.balanceAfter)} ₪</span>
                 </div>
 
@@ -943,7 +952,7 @@ export default function CashLedger() {
                   )
                 ) : detailsTx.breakdown.length > 0 && (
                   <div className="mi-detail-item mi-detail-full">
-                    <span className="mi-detail-label">تفصيل وسائل الدفع</span>
+                    <span className="mi-detail-label">تفصيل طرق الدفع</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.2rem' }}>
                       {detailsTx.breakdown.map((b, i) => (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -979,8 +988,8 @@ export default function CashLedger() {
       {/* ════ تأكيد التثبيت والقفل ════ */}
       {lockConfirm && (
         <ConfirmDialog
-          title="تثبيت وقفل الإحصاء"
-          message={`سيُثبَّت إحصاء يوم ${selectedDate} ويُقفَل.\nبعد القفل لا يمكن تعديل أي رقم إلا بإدخال كلمة السر. هل تريد المتابعة؟`}
+          title="تثبيت وقفل الحساب"
+          message={`رح يتثبّت حساب يوم ${selectedDate} وينقفل.\nبعد القفل ما بتقدر تعدّل أي رقم إلا بكلمة السر. بدك تكمل؟`}
           requirePassword={false}
           onConfirm={handleLock}
           onCancel={() => setLockConfirm(false)}
@@ -990,8 +999,8 @@ export default function CashLedger() {
       {/* ════ كلمة السر لفتح تعديل حقل مقفل ════ */}
       {pwdField && savedAudit && (
         <ConfirmDialog
-          title="تعديل رقم مُثبَّت"
-          message={`أنت على وشك تعديل «${pwdField === 'cash' ? 'الكاش' : pwdField === 'visa' ? 'الفيزا' : 'الشيك'}» في إحصاء مُدقَّق ومقفل ليوم ${selectedDate}.\nأدخل كلمة السر للمتابعة.`}
+          title="تعديل رقم مقفل"
+          message={`رح تعدّل «${pwdField === 'cash' ? 'الكاش' : pwdField === 'visa' ? 'الفيزا' : 'الشيك'}» في حساب مقفل ليوم ${selectedDate}.\nاكتب كلمة السر عشان تكمل.`}
           onConfirm={(password) => beginFieldEdit(pwdField, password ?? '', savedAudit)}
           onCancel={() => setPwdField(null)}
         />
@@ -1001,7 +1010,7 @@ export default function CashLedger() {
       {deleteAudit && (
         <ConfirmDialog
           title="تأكيد الحذف"
-          message={`هل أنت متأكد من حذف سجل إحصاء يوم ${deleteAudit.audit_date}؟`}
+          message={`هل أنت متأكد بدك تحذف سجل حساب يوم ${deleteAudit.audit_date}؟`}
           onConfirm={() => handleDeleteAudit(deleteAudit)}
           onCancel={() => setDeleteAudit(null)}
         />
@@ -1019,9 +1028,9 @@ export default function CashLedger() {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.92rem', marginBottom: '1rem' }}>
                 <thead>
                   <tr style={{ background: '#f1f5f9' }}>
-                    <th style={thStyle}>وسيلة الدفع</th>
-                    <th style={thStyle}>النظام ₪</th>
-                    <th style={thStyle}>الفعلي ₪</th>
+                    <th style={thStyle}>طريقة الدفع</th>
+                    <th style={thStyle}>المسجّل بالبرنامج ₪</th>
+                    <th style={thStyle}>الموجود فعلاً ₪</th>
                     <th style={thStyle}>الفرق ₪</th>
                   </tr>
                 </thead>
@@ -1063,7 +1072,7 @@ export default function CashLedger() {
                   ] as const)
                     .filter(p => Math.abs(p.diff) >= 0.001)
                     .map(p => `${p.label} بمقدار ${fmt(p.diff)} ₪ (${p.diff > 0 ? 'زيادة' : 'نقص'})`)
-                  return `⚠ يوجد فرق في ${parts.join('، و')} — يرجى مراجعة عمليات اليوم قبل التثبيت`
+                  return `⚠ في فرق في ${parts.join('، و')} — راجع حركات اليوم قبل ما تقفل الحساب`
                 })()}
               </div>
             </div>
@@ -1073,10 +1082,10 @@ export default function CashLedger() {
                 disabled={saving}
                 onClick={() => { setDiffModal(null); setLockConfirm(true) }}
               >
-                🔒 تثبيت وقفل الإحصاء
+                🔒 تثبيت وقفل الحساب
               </button>
               <button className="btn btn-ghost" onClick={() => setDiffModal(null)}>
-                مراجعة العمليات
+                مراجعة الحركات
               </button>
             </div>
           </div>

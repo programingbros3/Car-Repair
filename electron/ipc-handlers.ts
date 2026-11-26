@@ -170,24 +170,47 @@ function syncWarrantiesForDirectSale(db: DB, invoiceId: number): void {
   })()
 }
 
-/* M13: يترجم أخطاء SQLite الخام إلى رسائل عربية واضحة للمستخدم. رسائل التحقّق
-   العربية التي نرميها نحن (من validate.ts وطبقة db) تمرّ كما هي؛ فقط أخطاء
-   المحرّك التقنية تُترجَم. */
+/* M13: يترجم أخطاء SQLite الخام وأي خطأ تقني إلى رسائل عربية بسيطة لصاحب الكراج.
+   الأخطاء التقنية تُطبع في console فقط ولا يظهر منها أي مصطلح تقني للمستخدم. */
 function toArabicError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err)
+  console.error('[IPC Error]', err)
+  const raw = err instanceof Error ? err.message : String(err ?? '')
   if (/FOREIGN KEY constraint failed/i.test(raw)) {
-    return 'لا يمكن إتمام العملية لوجود سجلات مرتبطة بهذا العنصر. احذف السجلات المرتبطة أولاً.'
+    return 'ما قدرنا نحذف أو نعدّل هذا لأنه مرتبط بفاتورة أو سجل ثاني'
   }
   if (/UNIQUE constraint failed/i.test(raw)) {
-    return 'قيمة مكرّرة غير مسموح بها (مثل رقم فاتورة مستخدَم مسبقاً).'
+    return 'هذا الرقم أو الاسم مسجّل من قبل، جرّب غيره'
   }
   if (/NOT NULL constraint failed/i.test(raw)) {
-    return 'حقل مطلوب غير معبّأ.'
+    return 'في خانة مطلوبة لسا فاضية، عبّيها وجرّب مرة ثانية'
+  }
+  if (/CHECK constraint failed/i.test(raw)) {
+    return 'القيمة اللي دخلتها مش مسموحة، تأكد من الأرقام وجرّب مرة ثانية'
+  }
+  if (/SQLITE_BUSY|database is locked|database table is locked/i.test(raw)) {
+    return 'البرنامج مشغول شوي حالياً، استنى لحظة وجرّب مرة ثانية'
+  }
+  if (/SQLITE_FULL|ENOSPC|no space left/i.test(raw)) {
+    return 'ما في مساحة فاضية على الجهاز لحفظ البيانات'
+  }
+  if (/SQLITE_READONLY|EACCES|EPERM/i.test(raw)) {
+    return 'ما في صلاحية للحفظ في هذا المكان، جرّب مكان ثاني'
+  }
+  if (/ENOENT|no such file|ENOTDIR/i.test(raw)) {
+    return 'الملف أو المجلد المطلوب مش موجود'
+  }
+  if (/SQLITE_CORRUPT|SQLITE_NOTADB|file is not a database/i.test(raw)) {
+    return 'الملف تالف أو مش نسخة صالحة للبرنامج'
   }
   if (/no such table|no such column/i.test(raw)) {
-    return 'خطأ في بنية قاعدة البيانات — قد تحتاج النسخة إلى تحديث. تواصل مع المطوّر.'
+    return 'في مشكلة في ملف البيانات، ممكن تحتاج تحديث البرنامج'
   }
-  return raw
+  const hasArabic = /[\u0600-\u06FF]/.test(raw)
+  const looksTechnical = /TypeError|ReferenceError|SyntaxError|RangeError|SqliteError|SQLITE_|Error:|at\s+\w+\s*\(|Cannot read|undefined|is not a function/i.test(raw)
+  if (hasArabic && !looksTechnical) {
+    return raw
+  }
+  return 'صار خطأ غير متوقع، جرّب مرة ثانية'
 }
 
 /** يسجّل معالجاً ملفوفاً بـ try/catch موحّد */
@@ -472,7 +495,7 @@ export function registerIpcHandlers(db: DB): void {
       `SELECT COUNT(*) AS c FROM salary_payments WHERE employee_id=?`,
     ).get(id) as { c: number }).c
     if (salaryCount > 0) {
-      throw new Error(`لا يمكن حذف موظف له ${salaryCount} دفعة راتب مسجّلة — احذف دفعاته من صفحة الرواتب أولاً`)
+      throw new Error(`ما قدرنا نحذف هذا الموظف لأنه مرتبط بدفعات رواتب (${salaryCount}) — احذف دفعاته من صفحة الرواتب أولاً`)
     }
     db.prepare(`DELETE FROM employees WHERE id=?`).run(id)
     logActivity(db, 'delete', 'employee', id, `حذف موظف #${id}`)
@@ -597,7 +620,7 @@ export function registerIpcHandlers(db: DB): void {
       `SELECT is_locked FROM daily_cash_audits WHERE audit_date = ?`,
     ).get(input.audit_date) as { is_locked: number } | undefined
     if (existing && existing.is_locked === 1) {
-      throw new Error('هذا الإحصاء مُثبَّت ومقفل — لا يمكن تعديله إلا عبر زر «تعديل» بعد إدخال كلمة السر')
+      throw new Error('حساب هذا اليوم مقفل — لو بدك تعدّل أي رقم اضغط «تعديل» واكتب كلمة السر')
     }
 
     const locked = input.is_locking ? 1 : 0
@@ -648,7 +671,7 @@ export function registerIpcHandlers(db: DB): void {
     const existing = db.prepare(
       `SELECT is_locked FROM daily_cash_audits WHERE audit_date = ?`,
     ).get(input.audit_date) as { is_locked: number } | undefined
-    if (!existing) throw new Error('لا يوجد إحصاء مُثبَّت لهذا اليوم')
+    if (!existing) throw new Error('ما في حساب محفوظ ومقفل لهذا اليوم')
 
     db.prepare(`
       UPDATE daily_cash_audits SET
@@ -802,7 +825,7 @@ export function registerIpcHandlers(db: DB): void {
       ).get()
       db.prepare('DETACH DATABASE _imported_validate').run()
       if (!validTable) {
-        return { success: false, error: 'الملف المختار ليس نسخة احتياطية صالحة لتطبيق الكراج' }
+        return { success: false, error: 'الملف اللي اخترته مش نسخة احتياطية صالحة للبرنامج' }
       }
 
       // كلمة السر تخصّ الجهاز لا الملف: نلتقط حالة مصادقة الجهاز الحالية قبل
@@ -831,7 +854,8 @@ export function registerIpcHandlers(db: DB): void {
         }
       } catch (err) {
         cleanupTemp()
-        return { success: false, error: `تعذّر تجهيز النسخة الاحتياطية للاستيراد (قد تكون تالفة أو من إصدار غير متوافق): ${toArabicError(err)}` }
+        console.error('[backup:import prepare error]', err)
+        return { success: false, error: 'ما قدرنا نجهّز النسخة الاحتياطية للاستيراد، ممكن الملف تالف أو من إصدار قديم' }
       }
 
       // التجهيز نجح → الآن فقط نبدّل قاعدة الإنتاج (مع نسخة احتياطية أمان منها)

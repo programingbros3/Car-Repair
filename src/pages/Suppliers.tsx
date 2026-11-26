@@ -84,7 +84,7 @@ function printSupplierInvoice(
     </tr>`).join('')
     + (settlementTotal > 0 ? `
     <tr>
-      <td>خصم تسوية</td>
+      <td>إسقاط من الدين</td>
       <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
     </tr>` : '')
   const body = `
@@ -102,7 +102,7 @@ function printSupplierInvoice(
     <div class="detail-grid" style="margin-top:16px;">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(sup.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(sup.amountPaid)} ₪</span></div>
-      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(sup.amountRemaining)} ₪</span></div>
+      <div class="detail-item"><label>الباقي للمورد</label><span class="amount-out">${fmt(sup.amountRemaining)} ₪</span></div>
     </div>
     ${payRows ? `
     <table style="margin-top:12px;">
@@ -321,7 +321,7 @@ export default function Suppliers() {
       void loadBulkPayments()   // حدِّث سجل الدفعات العامة فوراً بعد التسجيل
       setBulkOpen(false)
     } catch (err) {
-      showError('تعذّر تسجيل الدفعة العامة', err)
+      showError('ما قدرنا نسجّل الدفعة على الحساب', err)
     } finally {
       setBulkSaving(false)
     }
@@ -378,7 +378,7 @@ export default function Suppliers() {
       })
       setBulkList(rows)
     } catch (err) {
-      showError('تعذّر تحميل سجل الدفعات العامة', err)
+      showError('ما قدرنا نحمّل سجل الدفعات على الحساب', err)
     }
   }, [bpSearch, bpPhone, bpFrom, bpTo, bpAmtMin, bpAmtMax])
 
@@ -429,7 +429,7 @@ export default function Suppliers() {
       await reload(['suppliers'])   // M10: دليل الموردين فقط
       clearSupForm()
     } catch (err) {
-      showError('تعذّر حفظ المورد', err)
+      showError('ما قدرنا نحفظ المورد', err)
     }
   }
 
@@ -452,13 +452,13 @@ export default function Suppliers() {
     try {
       // جلب الفاتورة مع بنودها (getAll لا يجلب supplier_items)
       const full = await dbService.supplierInvoice.getOne(warnSup.id)
-      if (!full) { showError('تعذّر تحميل بيانات الفاتورة'); return }
+      if (!full) { showError('ما قدرنا نحمّل بيانات الفاتورة'); return }
       clearSupplierDraft()
       setEditing(full)
       setShowInvForm(false)
       setWarnSup(null)
     } catch (err) {
-      showError('تعذّر تحميل بيانات الفاتورة', err)
+      showError('ما قدرنا نحمّل بيانات الفاتورة', err)
     }
   }
 
@@ -494,7 +494,7 @@ export default function Suppliers() {
       await reload(['supplierInvoices', 'purchaseInvoices'])   // M10
       setPaySup(null)
     } catch (err) {
-      showError('تعذّر تسجيل دفعة المورد', err)
+      showError('ما قدرنا نسجّل دفعة المورد', err)
     }
   }
 
@@ -506,7 +506,7 @@ export default function Suppliers() {
       ])
       printSupplierInvoice(detail || sup, payments)
     } catch (err) {
-      showError('تعذّر طباعة الفاتورة', err)
+      showError('ما قدرنا نطبع الفاتورة', err)
     }
   }
 
@@ -551,7 +551,7 @@ export default function Suppliers() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
             <h2 className="mi-section-title" style={{ margin: 0 }}>كشف حساب المورد — {supplierAccount.name}</h2>
             {supplierAccount.totalRemaining > 0.001 && (
-              <button className="btn btn-sm-green" onClick={openBulk}>دفعة عامة للمورد</button>
+              <button className="btn btn-sm-green" onClick={openBulk}>دفعة على الحساب للمورد</button>
             )}
           </div>
           <div className="mi-detail-grid pd-debt-summary" style={{ marginTop: '0.75rem' }}>
@@ -564,13 +564,14 @@ export default function Suppliers() {
               <span className="pd-paid">{fmt(supplierAccount.totalPaid)} ₪</span>
             </div>
             <div className="mi-detail-item">
-              <span className="mi-detail-label">الرصيد المستحق</span>
+              <span className="mi-detail-label">الباقي للمورد</span>
               <span className={supplierAccount.totalRemaining > 0.001 ? 'pd-remaining' : 'mi-amount'}>
                 {fmt(supplierAccount.totalRemaining)} ₪
               </span>
+              <span className="mi-field-hint">المبلغ اللي لسا ما دفعته للمورد</span>
             </div>
             <div className="mi-detail-item">
-              <span className="mi-detail-label">فواتير غير مسدَّدة بالكامل</span>
+              <span className="mi-detail-label">فواتير لسا ما انسكرت</span>
               <strong>{supplierAccount.unpaidCount}</strong>
             </div>
           </div>
@@ -748,10 +749,10 @@ export default function Suppliers() {
                 <th>اسم المورد</th>
                 <th>رقم الهاتف</th>
                 <th>تاريخ الشراء</th>
-                <th>عدد البنود</th>
+                <th>عدد القطع</th>
                 <th>الإجمالي ₪</th>
                 <th>المدفوع ₪</th>
-                <th>المتبقي ₪</th>
+                <th>الباقي للمورد ₪</th>
                 <th>الإجراءات</th>
               </tr>
             </thead>
@@ -799,8 +800,8 @@ export default function Suppliers() {
         />
       </CollapsibleCard>
 
-      {/* ════ سجل الدفعات العامة ════ */}
-      <CollapsibleCard title="سجل الدفعات العامة">
+      {/* ════ سجل الدفعات على الحساب ════ */}
+      <CollapsibleCard title="سجل الدفعات على الحساب">
         <div className="mi-filters pd-filter-bar">
           <div className="mi-search-wrap">
             <NameAutocomplete value={bpSearch} onChange={setBpSearch} options={supplierNames}
@@ -852,7 +853,7 @@ export default function Suppliers() {
             </thead>
             <tbody>
               {paginatedBulk.length === 0 ? (
-                <tr><td colSpan={7} className="mi-empty-row">لا توجد دفعات عامة مطابقة</td></tr>
+                <tr><td colSpan={7} className="mi-empty-row">ما في دفعات على الحساب مطابقة</td></tr>
               ) : paginatedBulk.map((bp, i) => (
                 <tr key={bp.id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                   onClick={() => setBpDetail(bp)}>
@@ -926,10 +927,11 @@ export default function Suppliers() {
                   <span className="pd-paid">{fmt(detailsSup.amountPaid)} ₪</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المتبقي</span>
+                  <span className="mi-detail-label">الباقي للمورد</span>
                   <span className={detailsSup.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>
                     {fmt(detailsSup.amountRemaining)} ₪
                   </span>
+                  <span className="mi-field-hint">المبلغ اللي لسا ما دفعته للمورد</span>
                 </div>
                 {detailsSup.notes && (
                   <div className="mi-detail-item mi-detail-full">
@@ -939,7 +941,7 @@ export default function Suppliers() {
                 )}
               </div>
 
-              <h4 className="mi-modal-subtitle">بنود الشراء</h4>
+              <h4 className="mi-modal-subtitle">القطع المشتراة</h4>
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead>
@@ -961,11 +963,11 @@ export default function Suppliers() {
                 </table>
               </div>
               <div className="mi-total-row" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
-                الإجمالي الكلي: <strong>{fmt(detailsSup.total)} ₪</strong>
+                المجموع: <strong>{fmt(detailsSup.total)} ₪</strong>
               </div>
               {detailsSettlement > 0 && (
                 <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
-                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                  إسقاط من الدين (ما طلع من الصندوق): <strong>−{fmt(detailsSettlement)} ₪</strong>
                 </div>
               )}
 
@@ -987,7 +989,7 @@ export default function Suppliers() {
         <div className="mi-modal-overlay" onClick={() => setBpDetail(null)}>
           <div className="mi-modal" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>تفاصيل الدفعة العامة — {bpDetail.supplier_name}</h3>
+              <h3>تفاصيل الدفعة على الحساب — {bpDetail.supplier_name}</h3>
               <button className="mi-modal-close" onClick={() => setBpDetail(null)}>✕</button>
             </div>
             <div className="mi-modal-body">
@@ -1031,7 +1033,7 @@ export default function Suppliers() {
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead>
-                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>المبلغ المسدَّد منها</th></tr>
+                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>المبلغ المدفوع منها</th></tr>
                   </thead>
                   <tbody>
                     {bpDetail.allocations.length === 0 ? (
@@ -1090,8 +1092,9 @@ export default function Suppliers() {
                   <span className="pd-paid">{fmt(paySup.amountPaid)} ₪</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المتبقي</span>
+                  <span className="mi-detail-label">الباقي للمورد</span>
                   <span className="pd-remaining">{fmt(paySup.amountRemaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا ما دفعته للمورد</span>
                 </div>
               </div>
 
@@ -1155,18 +1158,18 @@ export default function Suppliers() {
               <button className="btn btn-secondary pay-add-btn" onClick={addPayRow}>+ إضافة طريقة دفع</button>
 
               <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
-                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <span>إسقاط من الدين ₪</span>
                 <input type="number" min={0} placeholder="0" value={settleDiscount}
                   className="mi-td-input"
                   onChange={e => setSettleDiscount(e.target.value)} />
-                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>مبلغ بسامحك فيه المورد من الدين، وما بطلع من الصندوق</span>
               </label>
 
               {paySubmitted && thisPaymentTotal <= 0 && settleNum <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة أو خصم التسوية</p>
+                <p className="pd-pay-error">اكتب مبلغ الدفعة أو مبلغ الإسقاط من الدين</p>
               )}
               {payExceedsDebt && (
-                <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPaymentTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(paySup.amountRemaining)} ₪)</p>
+                <p className="pd-pay-error">مجموع الدفعة والإسقاط ({fmt(thisPaymentTotal + settleNum)} ₪) أكبر من الباقي للمورد ({fmt(paySup.amountRemaining)} ₪)</p>
               )}
 
               <div className="pay-summary">
@@ -1176,12 +1179,12 @@ export default function Suppliers() {
                 </div>
                 {settleNum > 0 && (
                   <div className="pay-summary-row">
-                    <span>خصم تسوية</span>
+                    <span>إسقاط من الدين</span>
                     <strong className="pay-over">−{fmt(settleNum)} ₪</strong>
                   </div>
                 )}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <span>الباقي للمورد بعد الدفعة والإسقاط</span>
                   <strong className={remainingAfter <= 0.001 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
                     {fmt(Math.max(0, remainingAfter))} ₪
                   </strong>
@@ -1203,17 +1206,18 @@ export default function Suppliers() {
         <div className="mi-modal-overlay" onClick={() => setBulkOpen(false)}>
           <div className="mi-modal" onClick={e => e.stopPropagation()}>
             <div className="mi-modal-header">
-              <h3>دفعة عامة — {supplierAccount.name}</h3>
+              <h3>دفعة على الحساب — {supplierAccount.name}</h3>
               <button className="mi-modal-close" onClick={() => setBulkOpen(false)}>✕</button>
             </div>
             <div className="mi-modal-body">
               <div className="mi-detail-grid pd-debt-summary">
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">إجمالي الديون المستحقة</span>
+                  <span className="mi-detail-label">كل الباقي للمورد</span>
                   <span className="pd-remaining">{fmt(bulkMaxDebt)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا ما دفعته للمورد</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">فواتير غير مسدَّدة</span>
+                  <span className="mi-detail-label">فواتير مفتوحة</span>
                   <strong>{bulkUnpaid.length}</strong>
                 </div>
               </div>
@@ -1239,12 +1243,12 @@ export default function Suppliers() {
 
               {bulkExceeds && (
                 <p className="pd-pay-error">
-                  المبلغ المدخل ({fmt(bulkAmountNum)} ₪) يتجاوز إجمالي الديون المستحقة لهذا المورد —
-                  الحد الأقصى المسموح به: <strong>{fmt(bulkMaxDebt)} ₪</strong>
+                  المبلغ اللي كتبته ({fmt(bulkAmountNum)} ₪) أكبر من كل الباقي للمورد —
+                  الحد الأقصى: <strong>{fmt(bulkMaxDebt)} ₪</strong>
                 </p>
               )}
               {bulkSubmitted && bulkAmountNum <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
+                <p className="pd-pay-error">اكتب مبلغ الدفعة</p>
               )}
 
               <div className="pay-section-title">طريقة الدفع</div>
@@ -1301,7 +1305,7 @@ export default function Suppliers() {
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead>
-                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>المتبقي عليها</th><th>سيُسدَّد منها</th><th>المتبقي بعد الدفعة</th></tr>
+                    <tr><th>رقم الفاتورة</th><th>تاريخ الشراء</th><th>الباقي للمورد</th><th>رح يندفع منها</th><th>الباقي بعد الدفعة</th></tr>
                   </thead>
                   <tbody>
                     {bulkPreviewRows.length === 0 ? (
@@ -1327,7 +1331,7 @@ export default function Suppliers() {
                           </td>
                           <td className="mi-td-center">
                             {over
-                              ? <span className="pay-over">يتجاوز المتبقي!</span>
+                              ? <span className="pay-over">أكبر من الباقي!</span>
                               : <span className={inv.amountRemaining - amount <= 0.001 ? 'pay-ok' : 'pay-due'}>
                                   {fmt(Math.max(0, inv.amountRemaining - amount))} ₪
                                 </span>}
@@ -1341,13 +1345,13 @@ export default function Suppliers() {
 
               {bulkAllocOverInv.length > 0 && (
                 <p className="pd-pay-error">
-                  التوزيع على الفاتورة {bulkAllocOverInv[0].invoice.invoiceNumber || `#${bulkAllocOverInv[0].invoice.id}`} يتجاوز المتبقي عليها ({fmt(bulkAllocOverInv[0].invoice.amountRemaining)} ₪)
+                  المبلغ على الفاتورة {bulkAllocOverInv[0].invoice.invoiceNumber || `#${bulkAllocOverInv[0].invoice.id}`} أكبر من الباقي للمورد عليها ({fmt(bulkAllocOverInv[0].invoice.amountRemaining)} ₪)
                 </p>
               )}
               {bulkManual && !bulkAllocOverInv.length && bulkAllocMismatch && bulkAmountNum > 0 && !bulkExceeds && (
                 <p className="pd-pay-error">
-                  مجموع التوزيع ({fmt(bulkAllocTotal)} ₪) يجب أن يساوي مبلغ الدفعة ({fmt(bulkAmountNum)} ₪)
-                  {bulkAllocTotal < bulkAmountNum && <> — تبقّى <strong>{fmt(bulkAmountNum - bulkAllocTotal)} ₪</strong> غير موزَّعة</>}
+                  مجموع التوزيع ({fmt(bulkAllocTotal)} ₪) لازم يساوي مبلغ الدفعة ({fmt(bulkAmountNum)} ₪)
+                  {bulkAllocTotal < bulkAmountNum && <> — ضل <strong>{fmt(bulkAmountNum - bulkAllocTotal)} ₪</strong> مش موزّع</>}
                 </p>
               )}
 
@@ -1361,7 +1365,7 @@ export default function Suppliers() {
                   <strong className={bulkAllocMismatch ? 'pay-over' : 'pay-ok'}>{fmt(bulkAllocTotal)} ₪</strong>
                 </div>
                 <div className="pay-summary-row pay-summary-last">
-                  <span>الرصيد المستحق بعد الدفعة</span>
+                  <span>الباقي للمورد بعد الدفعة</span>
                   <strong className={bulkMaxDebt - bulkAllocTotal <= 0.001 ? 'pay-ok' : 'pay-due'}>
                     {fmt(Math.max(0, bulkMaxDebt - bulkAllocTotal))} ₪
                   </strong>
@@ -1386,7 +1390,7 @@ export default function Suppliers() {
           message={`هل أنت متأكد من حذف المورد "${deleteSupplier.name}"؟`}
           onConfirm={async () => {
             try { await dbService.suppliers.delete(deleteSupplier.id); await reload(['suppliers']); setDeleteSupplier(null) }
-            catch (err) { showError('تعذّر حذف المورد', err) }
+            catch (err) { showError('ما قدرنا نحذف المورد', err) }
           }}
           onCancel={() => setDeleteSupplier(null)}
         />
@@ -1399,7 +1403,7 @@ export default function Suppliers() {
           message={`هل أنت متأكد من حذف فاتورة المورد "${deleteSup.supplierName}"؟`}
           onConfirm={async () => {
             try { await dbService.supplierInvoice.delete(deleteSup.id); await reload(['supplierInvoices', 'purchaseInvoices']); setDeleteSup(null) }
-            catch (err) { showError('تعذّر حذف فاتورة المورد', err) }
+            catch (err) { showError('ما قدرنا نحذف فاتورة المورد', err) }
           }}
           onCancel={() => setDeleteSup(null)}
         />

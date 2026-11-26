@@ -184,7 +184,7 @@ export default function DirectSales() {
       const full = await dbService.directSale.getOne(inv.id)
       setEditingInvoice(full ?? inv)
     } catch (err) {
-      showError('تعذّر تحميل بيانات الفاتورة', err)
+      showError('ما قدرنا نحمّل بيانات الفاتورة', err)
     }
   }
 
@@ -217,7 +217,7 @@ export default function DirectSales() {
       await reload(['directSale', 'salesInvoices', 'debts'])   // M10
       setPayInvoice(null)
     } catch (err) {
-      showError('تعذّر تسجيل الدفعة', err)
+      showError('ما قدرنا نسجّل الدفعة', err)
     }
   }
 
@@ -248,7 +248,7 @@ export default function DirectSales() {
         </tr>`).join('')
         + (settlementTotal > 0 ? `
         <tr>
-          <td>خصم تسوية</td>
+          <td>إسقاط من الدين</td>
           <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
         </tr>` : '')
       const body = `
@@ -285,7 +285,7 @@ export default function DirectSales() {
           <div class="detail-item"><label>الإجمالي شامل الضريبة</label><span class="amount-in">${fmt(vb.grand)} ₪</span></div>` : ''
           })()}
           <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(full.amountPaid)} ₪</span></div>
-          <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(full.amountRemaining)} ₪</span></div>
+          <div class="detail-item"><label>الباقي عليه</label><span class="amount-out">${fmt(full.amountRemaining)} ₪</span></div>
           <div class="detail-item"><label>الحالة</label><span>${STATUS_LABELS[full.status]}</span></div>
         </div>
         ${payRows ? `
@@ -295,7 +295,7 @@ export default function DirectSales() {
         </table>` : ''}`
       printPdf(`فاتورة بيع مباشر ${full.invoiceNumber || ''}`.trim(), body)
     } catch (err) {
-      showError('تعذّر طباعة الفاتورة', err)
+      showError('ما قدرنا نطبع الفاتورة', err)
     }
   }
 
@@ -366,7 +366,7 @@ export default function DirectSales() {
         <div className="mi-table-wrap">
           <table className="mi-table">
             <thead>
-              <tr><th>رقم الفاتورة</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الإجراءات</th></tr>
+              <tr><th>رقم الفاتورة</th><th>اسم الزبون</th><th>رقم الهاتف</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي عليه</th><th>الحالة</th><th>الإجراءات</th></tr>
             </thead>
             <tbody>
               {paginatedInvoices.length === 0 ? (
@@ -432,10 +432,14 @@ export default function DirectSales() {
                 <div className="mi-detail-item"><span className="mi-detail-label">الحالة</span><span className={STATUS_CLS[detailsInvoice.status]}>{STATUS_LABELS[detailsInvoice.status]}</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsInvoice.total)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsInvoice.amountPaid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className={detailsInvoice.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(Math.max(0, detailsInvoice.amountRemaining))} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي عليه</span>
+                  <span className={detailsInvoice.amountRemaining > 0 ? 'pd-remaining' : 'mi-amount'}>{fmt(Math.max(0, detailsInvoice.amountRemaining))} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
+                </div>
                 {detailsInvoice.notes && <div className="mi-detail-item mi-detail-full"><span className="mi-detail-label">ملاحظات</span><span>{detailsInvoice.notes}</span></div>}
               </div>
-              <h4 className="mi-modal-subtitle">البنود</h4>
+              <h4 className="mi-modal-subtitle">الأصناف</h4>
               <div className="mi-parts-table-wrap">
                 <table className="mi-parts-table">
                   <thead><tr><th>الصنف</th><th>العدد</th><th>سعر الوحدة</th><th>الإجمالي</th><th>ملاحظات</th></tr></thead>
@@ -491,7 +495,7 @@ export default function DirectSales() {
               })()}
               {detailsSettlement > 0 && (
                 <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
-                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                  إسقاط من الدين (ما دخل الصندوق): <strong>−{fmt(detailsSettlement)} ₪</strong>
                 </div>
               )}
               <LinkedOpsSection phone={detailsInvoice.phone} id={detailsInvoice.id} />
@@ -517,7 +521,11 @@ export default function DirectSales() {
                 <div className="mi-detail-item"><span className="mi-detail-label">الزبون</span><strong>{payInvoice.customerName}</strong></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">إجمالي الفاتورة</span><span className="mi-amount">{fmt(invTotal)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع حتى الآن</span><span className="pd-paid">{fmt(invPaid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(invRemaining)} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي عليه</span>
+                  <span className="pd-remaining">{fmt(invRemaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
+                </div>
               </div>
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
                 <label className="mi-field">
@@ -562,18 +570,18 @@ export default function DirectSales() {
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
               <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
-                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <span>إسقاط من الدين ₪</span>
                 <input type="number" min={0} placeholder="0" value={settleDiscount}
                   className="mi-td-input"
                   onChange={e => setSettleDiscount(e.target.value)} />
-                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>مبلغ بتسامح فيه الزبون من الدين، وما بدخل الصندوق</span>
               </label>
-              {payExceeds && <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPayTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(invRemaining)} ₪)</p>}
+              {payExceeds && <p className="pd-pay-error">مجموع الدفعة والإسقاط ({fmt(thisPayTotal + settleNum)} ₪) أكبر من الباقي عليه ({fmt(invRemaining)} ₪)</p>}
               <div className="pay-summary">
                 <div className="pay-summary-row"><span>إجمالي هذه الدفعة</span><strong className="pay-paid">{fmt(thisPayTotal)} ₪</strong></div>
-                {settleNum > 0 && <div className="pay-summary-row"><span>خصم تسوية</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
+                {settleNum > 0 && <div className="pay-summary-row"><span>إسقاط من الدين</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <span>الباقي عليه بعد الدفعة والإسقاط</span>
                   <strong className={afterRemaining <= 0.001 ? 'pay-ok' : payExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, afterRemaining))} ₪</strong>
                 </div>
               </div>
@@ -593,7 +601,7 @@ export default function DirectSales() {
           message={`هل أنت متأكد من حذف فاتورة الزبون "${deleteInvoice.customerName}"؟`}
           onConfirm={async () => {
             try { await dbService.directSale.delete(deleteInvoice.id); await reload(['directSale', 'salesInvoices', 'debts', 'warranties']); setDeleteInvoice(null) }
-            catch (err) { showError('تعذّر حذف الفاتورة', err) }
+            catch (err) { showError('ما قدرنا نحذف الفاتورة', err) }
           }}
           onCancel={() => setDeleteInvoice(null)}
         />

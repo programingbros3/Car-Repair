@@ -114,12 +114,18 @@ function applyRotation(folder: string, keepCount: number): void {
   }
 }
 
-/** يحوّل أخطاء نظام الملفات الشائعة لرسالة عربية واضحة لصاحب المحل */
+/** يحوّل أخطاء نظام الملفات الشائعة لرسالة عربية بسيطة لصاحب الكراج */
 function describeFsError(err: unknown): string {
+  console.error('[auto-backup]', err)
   const code = (err as NodeJS.ErrnoException)?.code
-  if (code === 'ENOENT') return 'المجلد غير موجود'
-  if (code === 'EACCES' || code === 'EPERM') return 'لا توجد صلاحية كتابة على المجلد'
-  return err instanceof Error ? err.message : String(err)
+  if (code === 'ENOENT') return 'المجلد مش موجود'
+  if (code === 'EACCES' || code === 'EPERM') return 'ما في صلاحية للكتابة في هذا المجلد'
+  if (code === 'ENOSPC') return 'ما في مساحة فاضية على الجهاز'
+  const raw = err instanceof Error ? err.message : ''
+  if (/[\u0600-\u06FF]/.test(raw) && !/Error:|ENOENT|EACCES|EPERM|ENOSPC/i.test(raw)) {
+    return raw
+  }
+  return 'صار خطأ غير متوقع، جرّب مرة ثانية'
 }
 
 /**
@@ -194,7 +200,7 @@ export function runAutoBackup(db: DB): AutoBackupRunResult {
     const secondary = copyToSecondary(db, destPath, fileName, settings.keepCount)
     return { success: true, filePath: destPath, ...secondary }
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
+    const error = describeFsError(err)
     setSetting(db, KEYS.lastStatus, 'failed')
     setSetting(db, KEYS.lastError, error)
     return { success: false, error }

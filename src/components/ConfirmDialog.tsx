@@ -60,7 +60,7 @@ export default function ConfirmDialog({
         setError('كلمة السر غير صحيحة')
       }
     } catch {
-      setError('تعذّر التحقق من كلمة السر')
+      setError('ما قدرنا نتأكد من كلمة السر')
     } finally {
       setChecking(false)
     }
@@ -77,7 +77,7 @@ export default function ConfirmDialog({
           <p style={{ fontSize: '0.95rem', color: '#444', margin: askPassword ? '0 0 1rem' : 0, whiteSpace: 'pre-line' }}>{message}</p>
           {askPassword && (
             <label className="mi-field">
-              <span>أدخل كلمة السر للتأكيد</span>
+              <span>اكتب كلمة السر للتأكيد</span>
               <PasswordInput
                 value={password}
                 onChange={v => { setPassword(v); setError('') }}
@@ -88,14 +88,14 @@ export default function ConfirmDialog({
               />
               {error && <span className="mi-err">{error}</span>}
               {lockedUntil && (
-                <span className="mi-err">تم تجاوز عدد المحاولات المسموح — حاول مرة أخرى بعد {remainingSec} ثانية</span>
+                <span className="mi-err">غلطت أكثر من مرة — استنى {remainingSec} ثانية وجرّب مرة ثانية</span>
               )}
             </label>
           )}
         </div>
         <div className="mi-modal-footer">
           <button className="btn btn-danger" onClick={handleConfirm} disabled={checking || !!lockedUntil}>
-            {checking ? 'جارٍ التحقق…' : 'تأكيد'}
+            {checking ? 'جاري التأكد…' : 'تأكيد'}
           </button>
           <button className="btn btn-ghost" onClick={onCancel}>إلغاء</button>
         </div>

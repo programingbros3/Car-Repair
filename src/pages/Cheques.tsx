@@ -31,9 +31,9 @@ const STATUS_CLS: Record<ChequeStatusUi, string> = {
 
 /* حالة الاستحقاق حسب مقارنة تاريخ الصرف (cash_date) باليوم الحالي */
 function dueStatus(days: number): { label: string; cls: string } {
-  if (days < 0)  return { label: 'منتهي', cls: 'mi-badge-gray' }
+  if (days < 0)  return { label: 'فات موعده', cls: 'mi-badge-gray' }
   if (days === 0) return { label: 'اليوم', cls: 'mi-badge-yellow' }
-  return { label: 'قادم', cls: 'mi-badge-green' }
+  return { label: 'جاي', cls: 'mi-badge-green' }
 }
 
 /* تفاصيل الشيك + العملية المصدر — تُبنى مرة واحدة وتُعرض في المودال والطباعة بلا تكرار.
@@ -70,7 +70,7 @@ function chequeDetailRows(c: ChequeRecord): { label: string; value: string }[] {
   rows.push({ label: 'تاريخ الصرف', value: c.cashDate })
   rows.push({ label: 'مبلغ الشيك', value: `${fmt(c.amount)} ₪` })
   rows.push({ label: 'حالة الشيك', value: STATUS_LABELS[c.status] })
-  rows.push({ label: 'حالة الاستحقاق', value: dueStatus(c.daysRemaining).label })
+  rows.push({ label: 'موعد الصرف', value: dueStatus(c.daysRemaining).label })
   return rows
 }
 
@@ -111,7 +111,7 @@ export default function Cheques() {
     let cancelled = false
     loadCheques()
       .then(res => { if (!cancelled) setRows(res) })
-      .catch(err => showError(err instanceof Error ? err.message : 'تعذّر تحميل الشيكات'))
+      .catch(err => showError('ما قدرنا نحمّل الشيكات', err))
     return () => { cancelled = true }
   }, [loadCheques])
 
@@ -127,7 +127,7 @@ export default function Cheques() {
         ? (fresh.find(x => x.paymentId === c.paymentId && x.chequeKind === c.chequeKind) ?? null)
         : prev)
     } catch (err) {
-      showError('تعذّر تغيير حالة الشيك', err)
+      showError('ما قدرنا نغيّر حالة الشيك', err)
     } finally {
       setUpdatingStatus(false)
     }
@@ -166,7 +166,8 @@ export default function Cheques() {
       </div>
 
       <div className="mi-card">
-        <h2 className="mi-section-title">جميع الشيكات ({rows.length}) — الإجمالي {fmt(total)} ₪</h2>
+        <h2 className="mi-section-title" style={{ marginBottom: '0.2rem' }}>جميع الشيكات ({rows.length}) — المجموع {fmt(total)} ₪</h2>
+        <p className="mi-field-hint" style={{ marginBottom: '1rem' }}>مجموع مبالغ الشيكات الظاهرة في القائمة</p>
 
         {/* ── Filter bar ── */}
         <div className="mi-filters pd-filter-bar">
@@ -220,10 +221,10 @@ export default function Cheques() {
                 <th>تاريخ الإصدار</th>
                 <th>تاريخ الصرف</th>
                 <th>المبلغ ₪</th>
-                <th>الطرف</th>
+                <th>الزبون / المورد</th>
                 <th>نوع العملية</th>
                 <th>الحالة</th>
-                <th>حالة الاستحقاق</th>
+                <th>موعد الصرف</th>
                 <th>الإجراءات</th>
               </tr>
             </thead>
@@ -264,7 +265,7 @@ export default function Cheques() {
           onPageChange={setChequePage}
           onPageSizeChange={(size) => { setChequePageSize(size); setChequePage(1) }}
         />
-        <p className="mi-row-hint">اضغط على أي صف لعرض تفاصيل الشيك والعملية المصدر</p>
+        <p className="mi-row-hint">اضغط على أي صف لعرض تفاصيل الشيك والفاتورة</p>
       </div>
 
       {/* ════ Details Modal ════ */}
@@ -298,12 +299,12 @@ export default function Cheques() {
                     disabled={updatingStatus || detailsCheque.status === st}
                     onClick={() => changeStatus(detailsCheque, st)}
                   >
-                    {st === 'pending' ? 'تعليق' : st === 'cashed' ? 'تسجيل كمصروف' : 'تسجيل كمرتدّ'}
+                    {st === 'pending' ? 'تعليق' : st === 'cashed' ? 'تم الصرف' : 'رجع الشيك (مرتدّ)'}
                   </button>
                 ))}
               </div>
               <div className="mi-field-hint" style={{ marginTop: '0.4rem' }}>
-                الشيك المعلّق لا يُسجَّل في الصندوق حتى صرفه. المرتدّ يعيد المبلغ ديناً على الفاتورة.
+                الشيك المعلّق ما بدخل الصندوق لحد ما ينصرف. والمرتدّ برجع المبلغ دين على الفاتورة.
               </div>
             </div>
             <div className="mi-modal-footer">

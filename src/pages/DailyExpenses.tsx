@@ -162,7 +162,10 @@ export default function DailyExpenses() {
           paddingBottom: '1.25rem', marginBottom: '1.25rem',
           borderBottom: '1px solid #e8edf2',
         }}>
-          <span className="stat-label">إجمالي المصاريف</span>
+          <div>
+            <span className="stat-label" style={{ display: 'block' }}>مجموع المصاريف</span>
+            <span className="mi-field-hint">مجموع المصاريف المعروضة حسب البحث</span>
+          </div>
           <span className="stat-value outgoing">{totalExpenses.toLocaleString('en-US')} ₪</span>
         </div>
         <h2 className="mi-section-title">المصاريف المسجلة</h2>
@@ -289,7 +292,7 @@ export default function DailyExpenses() {
           message={`هل أنت متأكد من حذف المصروف "${deleteExp.description}"؟`}
           onConfirm={async () => {
             try { await dbService.expense.delete(deleteExp.id); await reload(['expenses', 'purchaseInvoices']); setDeleteExp(null) }
-            catch (err) { showError('تعذّر حذف المصروف', err) }
+            catch (err) { showError('ما قدرنا نحذف المصروف', err) }
           }}
           onCancel={() => setDeleteExp(null)}
         />

@@ -36,13 +36,11 @@ export default class ErrorBoundary extends Component<Props, State> {
       <div style={overlay}>
         <div style={card}>
           <div style={{ fontSize: '2.6rem' }}>⚠️</div>
-          <h1 style={title}>حدث خطأ غير متوقع</h1>
+          <h1 style={title}>صار خطأ غير متوقع</h1>
           <p style={subtitle}>
-            تعذّر عرض هذه الشاشة. بياناتك محفوظة وسليمة — أعد تشغيل الواجهة للمتابعة.
-            إذا تكرّر الخطأ تواصل مع المطوّر وأرفق الرسالة التالية.
+            ما قدرنا نعرض هذه الشاشة الآن. بياناتك محفوظة وسليمة — أعد تشغيل الشاشة عشان تكمل.
           </p>
-          <pre style={errorBox}>{error.message}</pre>
-          <button style={button} onClick={this.handleReload}>إعادة تشغيل الواجهة</button>
+          <button style={button} onClick={this.handleReload}>إعادة تشغيل الشاشة</button>
         </div>
       </div>
     )
@@ -69,13 +67,6 @@ const title: React.CSSProperties = {
 
 const subtitle: React.CSSProperties = {
   fontSize: '0.95rem', color: '#555', margin: 0, lineHeight: 1.7,
-}
-
-const errorBox: React.CSSProperties = {
-  width: '100%', maxHeight: 140, overflow: 'auto', margin: 0,
-  background: '#fdf0ef', border: '1px solid #f3c9c4', borderRadius: 8,
-  padding: '0.7rem 0.9rem', color: '#c0392b', fontSize: '0.8rem',
-  direction: 'ltr', textAlign: 'left', whiteSpace: 'pre-wrap',
 }
 
 const button: React.CSSProperties = {

@@ -54,7 +54,7 @@ const ExpenseForm = forwardRef<ExpenseFormHandle, Props>(function ExpenseForm(
   const setField = (field: string, value: string) => setForm(prev => ({ ...prev, [field]: value }))
 
   const descriptionErr = form.description.trim() ? '' : 'الوصف مطلوب'
-  const amountErr      = Number(form.amount) > 0 ? '' : 'المبلغ يجب أن يكون أكبر من صفر'
+  const amountErr      = Number(form.amount) > 0 ? '' : 'المبلغ لازم يكون أكبر من صفر'
   const hasErrors      = !!descriptionErr || !!amountErr
 
   const handleSave = async () => {
@@ -71,7 +71,7 @@ const ExpenseForm = forwardRef<ExpenseFormHandle, Props>(function ExpenseForm(
       if (useDraft && !editingExpense) localStorage.removeItem(EXPENSE_DRAFT_KEY)
       onSaved()
     } catch (err) {
-      showError('تعذّر حفظ المصروف', err)
+      showError('ما قدرنا نحفظ المصروف', err)
     }
   }
 

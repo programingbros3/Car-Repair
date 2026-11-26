@@ -223,7 +223,7 @@ export function updateMaintenanceInvoice(
         )`).get(invoiceId, invoiceId) as { v: number }).v
       // حماية: لا يجوز أن يهبط الإجمالي تحت (المدفوع + خصم التسوية) وإلا صار المتبقّي سالباً
       if (total_amount < paid + settle - 0.001) {
-        throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total_amount.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+        throw new Error(`ما قدرنا نعدّل الفاتورة: المجموع الجديد (${total_amount.toFixed(2)} ₪) أقل من المدفوع + الإسقاط من الدين (${(paid + settle).toFixed(2)} ₪)`)
       }
       const amount_remaining = total_amount - paid - settle
 
@@ -253,7 +253,7 @@ export function releaseMaintenanceCar(input: ReleaseCarInput): void {
     // التحقق من عدم تجاوز المبلغ المدفوع (+ خصم التسوية) للمتبقي
     const totalNew = input.payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
     if (totalNew > invoice.amount_remaining + 0.001) {
-      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) أكبر من الباقي عليه (${invoice.amount_remaining.toFixed(2)} ₪)`)
     }
 
     db.prepare(`

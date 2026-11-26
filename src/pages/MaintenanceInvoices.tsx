@@ -254,7 +254,7 @@ export default function MaintenanceInvoices() {
       const full = await dbService.maintenance.getOne(car.id)
       setEditCar(full ?? car)
     } catch (err) {
-      showError('تعذّر تحميل بيانات الفاتورة', err)
+      showError('ما قدرنا نحمّل بيانات الفاتورة', err)
     }
   }
 
@@ -296,7 +296,7 @@ export default function MaintenanceInvoices() {
   const handleDeliverySave = () => {
     if (!deliveryCar) return
     if (deliveryExceeds) {
-      showError(`مجموع الدفعة والخصم (${fmt(totalPaid + settleNum)} ₪) يتجاوز المتبقي (${fmt(invoiceRemaining)} ₪)`, null)
+      showError(`مجموع الدفعة والإسقاط (${fmt(totalPaid + settleNum)} ₪) أكبر من الباقي عليه (${fmt(invoiceRemaining)} ₪)`, null)
       return
     }
     if (remaining > 0.009) {
@@ -315,7 +315,7 @@ export default function MaintenanceInvoices() {
       setConfirmDeliveryDebt(false)
       setDeliveryCar(null)
     } catch (err) {
-      showError('تعذّر تسليم السيارة', err)
+      showError('ما قدرنا نسجّل تسليم السيارة', err)
     }
   }
 
@@ -348,7 +348,7 @@ export default function MaintenanceInvoices() {
         </tr>`).join('')
         + (settlementTotal > 0 ? `
         <tr>
-          <td>خصم تسوية</td>
+          <td>إسقاط من الدين</td>
           <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
         </tr>` : '')
       const body = `
@@ -388,7 +388,7 @@ export default function MaintenanceInvoices() {
           <div class="detail-item"><label>الإجمالي شامل الضريبة</label><span class="amount-in">${fmt(vb.grand)} ₪</span></div>` : ''
           })()}
           <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(full.amountPaid ?? 0)} ₪</span></div>
-          <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(full.amountRemaining ?? 0)} ₪</span></div>
+          <div class="detail-item"><label>الباقي عليه</label><span class="amount-out">${fmt(full.amountRemaining ?? 0)} ₪</span></div>
         </div>
         ${payRows ? `
         <table style="margin-top:12px;">
@@ -397,7 +397,7 @@ export default function MaintenanceInvoices() {
         </table>` : ''}`
       printPdf(`فاتورة صيانة ${full.invoiceNumber || ''}`.trim(), body)
     } catch (err) {
-      showError('تعذّر طباعة الفاتورة', err)
+      showError('ما قدرنا نطبع الفاتورة', err)
     }
   }
 
@@ -682,7 +682,7 @@ export default function MaintenanceInvoices() {
 
               {detailsSettlement > 0 && (
                 <div className="mi-total-row" style={{ marginBottom: 0, color: '#E67E22' }}>
-                  خصم تسوية (إسقاط — ليس نقداً): <strong>−{fmt(detailsSettlement)} ₪</strong>
+                  إسقاط من الدين (ما دخل الصندوق): <strong>−{fmt(detailsSettlement)} ₪</strong>
                 </div>
               )}
 
@@ -766,22 +766,25 @@ export default function MaintenanceInvoices() {
               ))}
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
               <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
-                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <span>إسقاط من الدين ₪</span>
                 <input type="number" min={0} placeholder="0" value={settleDiscount}
                   className="mi-td-input"
                   onChange={e => setSettleDiscount(e.target.value)} />
-                <span style={{ fontSize: '0.72rem', color: '#888' }}>يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق</span>
+                <span style={{ fontSize: '0.72rem', color: '#888' }}>مبلغ بتسامح فيه الزبون من الدين، وما بدخل الصندوق</span>
               </label>
-              {deliveryExceeds && <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(totalPaid + settleNum)} ₪) يتجاوز المتبقي ({fmt(invoiceRemaining)} ₪)</p>}
+              {deliveryExceeds && <p className="pd-pay-error">مجموع الدفعة والإسقاط ({fmt(totalPaid + settleNum)} ₪) أكبر من الباقي عليه ({fmt(invoiceRemaining)} ₪)</p>}
               <div className="pay-summary">
                 <div className="pay-summary-row"><span>إجمالي الفاتورة</span><strong>{fmt(invoiceTotal)} ₪</strong></div>
                 {alreadyPaid > 0 && <div className="pay-summary-row"><span>المدفوع سابقاً</span><strong className="pay-paid">{fmt(alreadyPaid)} ₪</strong></div>}
-                <div className="pay-summary-row"><span>المتبقي قبل هذه الدفعة</span><strong className="pay-due">{fmt(invoiceRemaining)} ₪</strong></div>
+                <div className="pay-summary-row"><span>الباقي عليه قبل الدفعة</span><strong className="pay-due">{fmt(invoiceRemaining)} ₪</strong></div>
                 <div className="pay-summary-row"><span>إجمالي هذه الدفعة</span><strong className="pay-paid">{fmt(totalPaid)} ₪</strong></div>
-                {settleNum > 0 && <div className="pay-summary-row"><span>خصم تسوية</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
-                <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعد الدفعة والخصم</span>
+                {settleNum > 0 && <div className="pay-summary-row"><span>إسقاط من الدين</span><strong className="pay-over">−{fmt(settleNum)} ₪</strong></div>}
+                <div className="pay-summary-row pay-summary-last" style={{ flexWrap: 'wrap' }}>
+                  <span>الباقي عليه بعد الدفعة والإسقاط</span>
                   <strong className={remaining <= 0.001 ? 'pay-ok' : deliveryExceeds ? 'pay-over' : 'pay-due'}>{fmt(Math.max(0, remaining))} ₪</strong>
+                  <div style={{ width: '100%', fontSize: '0.72rem', color: '#888', marginTop: '0.2rem' }}>
+                    المبلغ اللي لسا الزبون مديونك فيه
+                  </div>
                 </div>
               </div>
             </div>
@@ -811,7 +814,7 @@ export default function MaintenanceInvoices() {
           message={`هل أنت متأكد من حذف سيارة "${deleteCar.customerName}" — ${deleteCar.carPlate}؟`}
           onConfirm={async () => {
             try { await dbService.maintenance.delete(deleteCar.id); await reload(['maintenance', 'salesInvoices', 'debts', 'warranties']); setDeleteCar(null) }
-            catch (err) { showError('تعذّر حذف السيارة', err) }
+            catch (err) { showError('ما قدرنا نحذف السيارة', err) }
           }}
           onCancel={() => setDeleteCar(null)}
         />

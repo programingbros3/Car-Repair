@@ -76,7 +76,7 @@ async function printInvoice(inv: SaleInvoice): Promise<void> {
   try {
     items = await fetchSaleItems(inv)
   } catch (err) {
-    showError('تعذّر جلب بنود الفاتورة للطباعة', err)
+    showError('ما قدرنا نجيب أصناف الفاتورة للطباعة', err)
     return
   }
   const isMaint = inv.type === 'maintenance'
@@ -116,7 +116,7 @@ async function printInvoice(inv: SaleInvoice): Promise<void> {
     <div class="detail-grid" style="margin-top:16px;">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(inv.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(inv.paid)} ₪</span></div>
-      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
+      <div class="detail-item"><label>الباقي عليه</label><span class="amount-out">${fmt(inv.remaining)} ₪</span></div>
     </div>`
   printPdf('فاتورة بيع', body)
 }
@@ -256,7 +256,7 @@ export default function SalesInvoices() {
         const items = await fetchSaleItems(detailsInv)
         if (!cancelled) setDetailItems(items)
       } catch (err) {
-        if (!cancelled) { setDetailItems([]); showError('تعذّر جلب بنود الفاتورة', err) }
+        if (!cancelled) { setDetailItems([]); showError('ما قدرنا نجيب أصناف الفاتورة', err) }
       }
     })()
     return () => { cancelled = true }
@@ -308,7 +308,7 @@ export default function SalesInvoices() {
       await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])
       closeEdit()
     } catch (err) {
-      showError('تعذّر حفظ تعديلات الفاتورة', err)
+      showError('ما قدرنا نحفظ تعديلات الفاتورة', err)
     }
   }
 
@@ -342,7 +342,7 @@ export default function SalesInvoices() {
       await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setPayInvoice(null)
     } catch (err) {
-      showError('تعذّر تسجيل الدفعة', err)
+      showError('ما قدرنا نسجّل الدفعة', err)
     }
   }
 
@@ -431,7 +431,7 @@ export default function SalesInvoices() {
                 <th>رقم الهاتف</th>
                 <th>الإجمالي ₪</th>
                 <th>المدفوع ₪</th>
-                <th>المتبقي ₪</th>
+                <th>الباقي عليه ₪</th>
                 <th>الحالة</th>
                 <th>الإجراءات</th>
               </tr>
@@ -560,10 +560,11 @@ export default function SalesInvoices() {
                   <span className="pd-paid">{fmt(detailsInv.paid)} ₪</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المتبقي</span>
+                  <span className="mi-detail-label">الباقي عليه</span>
                   <span className={detailsInv.remaining > 0 ? 'pd-remaining' : 'mi-amount'}>
                     {fmt(detailsInv.remaining)} ₪
                   </span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
                 </div>
                 {detailsInv.details && (
                   <div className="mi-detail-item mi-detail-full">
@@ -575,12 +576,12 @@ export default function SalesInvoices() {
 
               {/* بنود الفاتورة — تُجلب عند الطلب حسب النوع (صيانة: نوع البند + الكفالة) */}
               <h4 className="mi-modal-subtitle">
-                {detailsInv.type === 'maintenance' ? 'القطع والخدمات' : 'البنود'}
+                {detailsInv.type === 'maintenance' ? 'القطع والخدمات' : 'الأصناف'}
               </h4>
               {detailItems === null ? (
-                <p className="mi-empty-row">جارٍ تحميل البنود…</p>
+                <p className="mi-empty-row">جاري تحميل الأصناف…</p>
               ) : detailItems.length === 0 ? (
-                <p className="mi-empty-row">لا توجد بنود لهذه الفاتورة</p>
+                <p className="mi-empty-row">ما في أصناف لهذه الفاتورة</p>
               ) : (
                 <div className="mi-parts-table-wrap">
                   <table className="mi-parts-table">
@@ -720,7 +721,11 @@ export default function SalesInvoices() {
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{payInvoice.customerName}</strong></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">إجمالي الفاتورة</span><span className="mi-amount">{fmt(payInvoice.total)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع حتى الآن</span><span className="pd-paid">{fmt(payInvoice.paid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(payInvoice.remaining)} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي عليه</span>
+                  <span className="pd-remaining">{fmt(payInvoice.remaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
+                </div>
               </div>
 
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
@@ -784,10 +789,10 @@ export default function SalesInvoices() {
               <button className="btn btn-secondary pay-add-btn" onClick={addPayRow}>+ إضافة طريقة دفع</button>
 
               {paySubmitted && totalBeingPaid <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة</p>
+                <p className="pd-pay-error">اكتب مبلغ الدفعة</p>
               )}
               {payExceedsDebt && (
-                <p className="pd-pay-error">مجموع الدفعة ({fmt(totalBeingPaid)} ₪) يتجاوز المتبقي ({fmt(payInvoice.remaining)} ₪)</p>
+                <p className="pd-pay-error">مجموع الدفعة ({fmt(totalBeingPaid)} ₪) أكبر من الباقي عليه ({fmt(payInvoice.remaining)} ₪)</p>
               )}
 
               <div className="pay-summary">
@@ -796,7 +801,7 @@ export default function SalesInvoices() {
                   <strong className="pay-paid">{fmt(totalBeingPaid)} ₪</strong>
                 </div>
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعدها</span>
+                  <span>الباقي عليه بعدها</span>
                   <strong className={remainingAfter <= 0 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
                     {fmt(Math.max(0, remainingAfter))} ₪
                   </strong>
@@ -824,7 +829,7 @@ export default function SalesInvoices() {
               else                                  await dbService.directSale.delete(deleteInv.id)
               await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])   // M10
               setDeleteInv(null)
-            } catch (err) { showError('تعذّر حذف الفاتورة', err) }
+            } catch (err) { showError('ما قدرنا نحذف الفاتورة', err) }
           }}
           onCancel={() => setDeleteInv(null)}
         />

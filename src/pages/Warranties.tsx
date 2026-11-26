@@ -184,7 +184,7 @@ export default function Warranties() {
       await reload(['warranties'])   // M10
       clearForm()
     } catch (err) {
-      showError('تعذّر حفظ الكفالة', err)
+      showError('ما قدرنا نحفظ الكفالة', err)
     }
   }
 
@@ -199,8 +199,8 @@ export default function Warranties() {
   const handlePrint = (w: WithCalc) => {
     const expired = w.remaining <= 0
     const remainingHtml = expired
-      ? `<div class="detail-item"><label>انتهت منذ</label><span class="amount-out">${fmt(Math.abs(w.remaining))} يوم</span></div>`
-      : `<div class="detail-item"><label>الأيام المتبقية</label><span style="color:${remainingColor(w.remaining)};font-weight:700">${fmt(w.remaining)} يوم</span></div>`
+      ? `<div class="detail-item"><label>منتهية من</label><span class="amount-out">${fmt(Math.abs(w.remaining))} يوم</span></div>`
+      : `<div class="detail-item"><label>الأيام الباقية</label><span style="color:${remainingColor(w.remaining)};font-weight:700">${fmt(w.remaining)} يوم</span></div>`
     const body = `
       <div class="detail-grid">
         <div class="detail-item"><label>اسم الزبون</label><span>${esc(w.customerName)}</span></div>
@@ -346,7 +346,7 @@ export default function Warranties() {
               <thead>
                 <tr>
                   <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>نوع العملية</th><th>القطعة / الخدمة</th>
-                  <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>الأيام المتبقية</th><th>الإجراءات</th>
+                  <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>الأيام الباقية</th><th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
@@ -396,7 +396,7 @@ export default function Warranties() {
               <thead>
                 <tr>
                   <th>اسم الزبون</th><th>رقم الهاتف</th><th>نمرة السيارة</th><th>نوع العملية</th><th>القطعة / الخدمة</th>
-                  <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>انتهت منذ</th><th>الإجراءات</th>
+                  <th>تاريخ البداية</th><th>المدة</th><th>تاريخ الانتهاء</th><th>منتهية من</th><th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
@@ -473,7 +473,7 @@ export default function Warranties() {
                   <div className="mi-detail-item"><span className="mi-detail-label">المدة</span><span>{periodLabel(detailsWarranty.periodValue, detailsWarranty.periodUnit)}</span></div>
                   <div className="mi-detail-item"><span className="mi-detail-label">تاريخ الانتهاء</span><span>{endDate}</span></div>
                   <div className="mi-detail-item">
-                    <span className="mi-detail-label">{expired ? 'انتهت منذ' : 'الأيام المتبقية'}</span>
+                    <span className="mi-detail-label">{expired ? 'منتهية من' : 'الأيام الباقية'}</span>
                     {expired
                       ? <span className="pd-remaining">{fmt(Math.abs(remaining))} يوم</span>
                       : <span style={{ color: remainingColor(remaining), fontWeight: 700 }}>{fmt(remaining)} يوم</span>}
@@ -499,7 +499,7 @@ export default function Warranties() {
           message={`هل أنت متأكد من حذف كفالة "${deleteWarranty.itemName}" للزبون "${deleteWarranty.customerName}"؟`}
           onConfirm={async () => {
             try { await dbService.warranty.delete(deleteWarranty.id); await reload(['warranties']); setDeleteWarranty(null) }
-            catch (err) { showError('تعذّر حذف الكفالة', err) }
+            catch (err) { showError('ما قدرنا نحذف الكفالة', err) }
           }}
           onCancel={() => setDeleteWarranty(null)}
         />

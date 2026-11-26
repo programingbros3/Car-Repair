@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { dbService } from '../services/db'
+import { toSimpleError } from '../utils/notify'
 import PasswordInput from './PasswordInput'
 
 /* ════════════════════════════════════════
@@ -65,7 +66,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
         setError('كلمة السر غير صحيحة')
       }
     } catch {
-      setError('تعذّر التحقق من كلمة السر')
+      setError('ما قدرنا نتأكد من كلمة السر')
     } finally {
       setChecking(false)
     }
@@ -75,15 +76,16 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault()
     if (checking) return
-    if (password.length < 6) { setError('كلمة السر يجب أن تكون 6 أحرف على الأقل'); return }
-    if (password !== confirmPassword) { setError('كلمة السر غير متطابقة مع التأكيد'); return }
+    if (password.length < 6) { setError('كلمة السر لازم تكون 6 أحرف على الأقل'); return }
+    if (password !== confirmPassword) { setError('كلمتين السر مش متطابقتين'); return }
     setChecking(true)
     try {
       await dbService.auth.setInitialPassword(password)
       setError('')
       onUnlock()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذّر تعيين كلمة السر')
+      console.error('تعذّر تعيين كلمة السر:', err)
+      setError(toSimpleError(err, 'ما قدرنا نحفظ كلمة السر'))
     } finally {
       setChecking(false)
     }
@@ -92,7 +94,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   if (mode === 'loading') {
     return (
       <div style={overlay}>
-        <div style={{ color: '#1E2A38', fontSize: '1rem' }}>جارٍ التحميل…</div>
+        <div style={{ color: '#1E2A38', fontSize: '1rem' }}>جاري التحميل…</div>
       </div>
     )
   }
@@ -115,7 +117,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
       <div style={overlay}>
         <form style={card} onSubmit={handleSetup}>
           {brandHeader}
-          <p style={subtitle}>مرحباً بك — عيّن كلمة سر للدخول (أول تشغيل)</p>
+          <p style={subtitle}>أهلاً بك — حط كلمة سر للبرنامج (أول مرة)</p>
           <PasswordInput
             value={password}
             onChange={v => { setPassword(v); setError('') }}
@@ -126,12 +128,12 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
           <PasswordInput
             value={confirmPassword}
             onChange={v => { setConfirmPassword(v); setError('') }}
-            placeholder="تأكيد كلمة السر"
+            placeholder="أعد كتابة كلمة السر"
             inputStyle={{ ...inputBase, ...(error ? inputErr : undefined) }}
           />
           {error && <span style={errorText}>{error}</span>}
           <button type="submit" style={button} disabled={checking || !password || !confirmPassword}>
-            {checking ? 'جارٍ الحفظ…' : 'تعيين كلمة السر والدخول'}
+            {checking ? 'جاري الحفظ…' : 'حفظ كلمة السر والدخول'}
           </button>
         </form>
       </div>
@@ -142,7 +144,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
     <div style={overlay}>
       <form style={card} onSubmit={handleSubmit}>
         {brandHeader}
-        <p style={subtitle}>الرجاء إدخال كلمة السر للدخول</p>
+        <p style={subtitle}>اكتب كلمة السر للدخول</p>
         <PasswordInput
           value={password}
           onChange={v => { setPassword(v); setError('') }}
@@ -152,10 +154,10 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
         />
         {error && <span style={errorText}>{error}</span>}
         {lockedUntil && (
-          <span style={errorText}>تم تجاوز عدد المحاولات المسموح — حاول مرة أخرى بعد {remainingSec} ثانية</span>
+          <span style={errorText}>غلطت أكثر من مرة — استنى {remainingSec} ثانية وجرّب مرة ثانية</span>
         )}
         <button type="submit" style={button} disabled={checking || !!lockedUntil}>
-          {checking ? 'جارٍ التحقق…' : 'دخول'}
+          {checking ? 'جاري التأكد…' : 'دخول'}
         </button>
       </form>
     </div>

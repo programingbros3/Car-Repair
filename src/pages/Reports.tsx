@@ -41,37 +41,37 @@ type YearlyReport = PeriodDetail & {
 }
 
 type DetailKind = 'in' | 'out' | 'neutral' | 'count'
-type DetailDef = { key: keyof PeriodDetail; label: string; kind: DetailKind }
+type DetailDef = { key: keyof PeriodDetail; label: string; kind: DetailKind; hint?: string }
 
 // مجموعات منطقية للعرض (بطاقات + طباعة + تصدير)
 const DETAIL_GROUPS: { title: string; items: DetailDef[] }[] = [
   {
-    title: 'الإيرادات', items: [
-      { key: 'maintenance_income', label: 'دخل الصيانة', kind: 'in' },
-      { key: 'direct_sale_income', label: 'دخل البيع المباشر', kind: 'in' },
-      { key: 'debt_collected', label: 'الديون المُحصَّلة', kind: 'in' },
+    title: 'الفلوس الداخلة', items: [
+      { key: 'maintenance_income', label: 'دخل الصيانة', kind: 'in', hint: 'الفلوس اللي قبضتها من شغل الصيانة' },
+      { key: 'direct_sale_income', label: 'دخل البيع المباشر', kind: 'in', hint: 'الفلوس اللي قبضتها من بيع القطع مباشرة' },
+      { key: 'debt_collected', label: 'ديون مقبوضة', kind: 'in', hint: 'ديون قديمة قبضتها من الزبائن' },
     ]
   },
   {
-    title: 'المصروفات', items: [
-      { key: 'daily_expenses', label: 'المصاريف اليومية', kind: 'out' },
-      { key: 'salaries', label: 'الرواتب المدفوعة (الصافي)', kind: 'out' },
-      { key: 'supplier_payments', label: 'مدفوعات الموردين', kind: 'out' },
+    title: 'الفلوس الطالعة', items: [
+      { key: 'daily_expenses', label: 'المصاريف اليومية', kind: 'out', hint: 'مصاريف الكراج اليومية' },
+      { key: 'salaries', label: 'الرواتب المدفوعة', kind: 'out', hint: 'الرواتب الصافية اللي اندفعت للموظفين' },
+      { key: 'supplier_payments', label: 'المدفوع للموردين', kind: 'out', hint: 'الفلوس اللي دفعتها للموردين' },
     ]
   },
   {
     title: 'الديون والخصومات', items: [
-      { key: 'new_debts', label: 'ديون جديدة متراكمة (متبقّي)', kind: 'out' },
-      { key: 'invoice_discounts', label: 'خصومات الفواتير الممنوحة', kind: 'neutral' },
-      { key: 'settlement_discounts', label: 'خصومات التسوية الممنوحة', kind: 'neutral' },
+      { key: 'new_debts', label: 'ديون جديدة (الباقي)', kind: 'out', hint: 'مبالغ لسا ما اندفعت من فواتير هذه الفترة' },
+      { key: 'invoice_discounts', label: 'خصومات على الفواتير', kind: 'neutral', hint: 'خصومات أعطيتها للزبائن على الفواتير' },
+      { key: 'settlement_discounts', label: 'إسقاط من الدين', kind: 'neutral', hint: 'مبالغ سامحت فيها من الدين وما دخلت الصندوق' },
     ]
   },
   {
-    title: 'الأعداد', items: [
-      { key: 'maintenance_count', label: 'عدد فواتير الصيانة', kind: 'count' },
-      { key: 'direct_sale_count', label: 'عدد فواتير البيع المباشر', kind: 'count' },
-      { key: 'purchase_count', label: 'عدد فواتير المشتريات', kind: 'count' },
-      { key: 'warranties_count', label: 'كفالات جديدة مُصدَرة', kind: 'count' },
+    title: 'عدد الفواتير والكفالات', items: [
+      { key: 'maintenance_count', label: 'فواتير الصيانة', kind: 'count' },
+      { key: 'direct_sale_count', label: 'فواتير البيع المباشر', kind: 'count' },
+      { key: 'purchase_count', label: 'فواتير المشتريات', kind: 'count' },
+      { key: 'warranties_count', label: 'كفالات جديدة', kind: 'count' },
     ]
   },
 ]
@@ -85,7 +85,7 @@ const REF_LABELS: Record<string, string> = {
   maintenance_payment: 'صيانة',
   maintenance_release: 'صيانة',
   direct_sale_payment: 'بيع مباشر',
-  debt_customer: 'تحصيل دين',
+  debt_customer: 'سداد دين',
   supplier_payment: 'مورد',
   supplier_debt: 'مورد',
   daily_expense: 'مصروف',
@@ -111,15 +111,15 @@ const PERIOD_LABELS: Record<Tab, string> = {
   yearly: 'سنوي',
   debts: 'تقرير الديون',
   top_customers: 'أفضل الزبائن',
-  debts_aging: 'أعمار الديون',
+  debts_aging: 'الديون القديمة',
 }
 
 const AGING_BUCKETS: DebtAgingBucket[] = ['0-30', '31-60', '61-90', '90+']
 
 const AGING_BUCKET_LABELS: Record<DebtAgingBucket, string> = {
-  '0-30': '0-30 يوم',
-  '31-60': '31-60 يوم',
-  '61-90': '61-90 يوم',
+  '0-30': 'من 0 إلى 30 يوم',
+  '31-60': 'من 31 إلى 60 يوم',
+  '61-90': 'من 61 إلى 90 يوم',
   '90+': 'أكثر من 90 يوم',
 }
 
@@ -225,7 +225,7 @@ export default function Reports() {
       }
     }
     run()
-      .catch(err => { if (active) showError('تعذّر تحميل التقرير', err) })
+      .catch(err => { if (active) showError('ما قدرنا نحمّل التقرير', err) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [tab, day, month, year])
@@ -342,13 +342,13 @@ export default function Reports() {
       }).join('')
       const body = `
         <div class="detail-grid">${totalsRow}</div>
-        <h3 style="margin:16px 0 4px;color:#1E2A38;">تفصيل الديون</h3>
+        <h3 style="margin:16px 0 4px;color:#1E2A38;">تفصيل الديون القديمة</h3>
         <table>
-          <thead><tr><th>الشريحة العمرية</th><th>الطرف</th><th>النوع</th><th>التاريخ</th><th>الإجمالي</th><th>المتبقي</th><th>الأيام</th></tr></thead>
+          <thead><tr><th>عمر الدين</th><th>الزبون / المورد</th><th>النوع</th><th>التاريخ</th><th>الإجمالي</th><th>الباقي</th><th>الأيام</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         ${periodFooter}`
-      printPdf('تقرير أعمار الديون', body)
+      printPdf('تقرير الديون القديمة', body)
       return
     }
 
@@ -373,13 +373,13 @@ export default function Reports() {
       const body = `
         <h3 style="margin:16px 0 4px;color:#1E2A38;">ديون الزبائن</h3>
         <table>
-          <thead><tr><th>اسم الزبون</th><th>المصدر</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+          <thead><tr><th>اسم الزبون</th><th>النوع</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي عليه</th></tr></thead>
           <tbody>${custRows}</tbody>
         </table>
         <div style="margin-top:8px;font-weight:700;">إجمالي ديون الزبائن: ${fmt(debts.total_customer_debt)} ₪</div>
         <h3 style="margin:24px 0 4px;color:#1E2A38;">ديون الموردين</h3>
         <table>
-          <thead><tr><th>اسم المورد</th><th>رقم الهاتف</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th></tr></thead>
+          <thead><tr><th>اسم المورد</th><th>رقم الهاتف</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي للمورد</th></tr></thead>
           <tbody>${supRows}</tbody>
         </table>
         <div style="margin-top:8px;font-weight:700;">إجمالي ديون الموردين: ${fmt(debts.total_supplier_debt)} ₪</div>
@@ -399,9 +399,9 @@ export default function Reports() {
       breakdown = `
         <div class="detail-item"><label>دخل الصيانة</label><span class="amount-in">${fmt(daily.maintenance_income)} ₪</span></div>
         <div class="detail-item"><label>دخل البيع المباشر</label><span class="amount-in">${fmt(daily.direct_sale_income)} ₪</span></div>
-        <div class="detail-item"><label>تحصيل الديون</label><span class="amount-in">${fmt(daily.debt_collected)} ₪</span></div>
-        <div class="detail-item"><label>مشتريات الموردين</label><span class="amount-out">${fmt(daily.supplier_expenses)} ₪</span></div>
-        <div class="detail-item"><label>المصاريف</label><span class="amount-out">${fmt(daily.daily_expenses)} ₪</span></div>
+        <div class="detail-item"><label>ديون مقبوضة</label><span class="amount-in">${fmt(daily.debt_collected)} ₪</span></div>
+        <div class="detail-item"><label>المدفوع للموردين</label><span class="amount-out">${fmt(daily.supplier_expenses)} ₪</span></div>
+        <div class="detail-item"><label>المصاريف اليومية</label><span class="amount-out">${fmt(daily.daily_expenses)} ₪</span></div>
         <div class="detail-item"><label>الرواتب</label><span class="amount-out">${fmt(daily.salaries)} ₪</span></div>`
     } else if (periodDetail) {
       breakdown = DETAIL_ITEMS.map(def => {
@@ -415,7 +415,7 @@ export default function Reports() {
       rowsHtml = daily.entries.map(e => `
         <tr>
           <td>${esc(e.transaction_date)}</td>
-          <td>${e.amount_in > 0 ? 'وارد' : 'صادر'}</td>
+          <td>${e.amount_in > 0 ? 'داخل' : 'طالع'}</td>
           <td>${esc(refLabel(e.reference_type))}</td>
           <td class="${e.amount_in > 0 ? 'amount-in' : 'amount-out'}">${e.amount_in > 0 ? '+' : '−'}${fmt(e.amount_in > 0 ? e.amount_in : e.amount_out)} ₪</td>
           <td>${e.notes ? esc(e.notes) : '—'}</td>
@@ -429,17 +429,17 @@ export default function Reports() {
     }
 
     const tableHead = tab === 'daily'
-      ? '<tr><th>التاريخ</th><th>النوع</th><th>المصدر</th><th>المبلغ</th><th>ملاحظات</th></tr>'
-      : '<tr><th>الفترة</th><th>الوارد</th><th>الصادر</th><th>الصافي</th></tr>'
+      ? '<tr><th>التاريخ</th><th>النوع</th><th>نوع الحركة</th><th>المبلغ</th><th>ملاحظات</th></tr>'
+      : '<tr><th>الفترة</th><th>الداخل</th><th>الطالع</th><th>الصافي</th></tr>'
 
     const body = `
       <div class="detail-grid">
-        <div class="detail-item"><label>إجمالي الوارد</label><span class="amount-in">${fmt(totalIn)} ₪</span></div>
-        <div class="detail-item"><label>إجمالي الصادر</label><span class="amount-out">${fmt(totalOut)} ₪</span></div>
-        <div class="detail-item"><label>صافي الربح</label><span style="color:${profitColor};font-weight:700">${fmt(net)} ₪</span></div>
+        <div class="detail-item"><label>كل الفلوس الداخلة</label><span class="amount-in">${fmt(totalIn)} ₪</span></div>
+        <div class="detail-item"><label>كل الفلوس الطالعة</label><span class="amount-out">${fmt(totalOut)} ₪</span></div>
+        <div class="detail-item"><label>الصافي</label><span style="color:${profitColor};font-weight:700">${fmt(net)} ₪</span></div>
         ${breakdown}
       </div>
-      <h3 style="margin:16px 0 4px;color:#1E2A38;">ملخص العمليات في الفترة</h3>
+      <h3 style="margin:16px 0 4px;color:#1E2A38;">ملخص الحركات في الفترة</h3>
       <table>
         <thead>${tableHead}</thead>
         <tbody>${rowsHtml}</tbody>
@@ -454,10 +454,10 @@ export default function Reports() {
       if (!daily || daily.entries.length === 0) return
       exportToCsv(
         `تقرير-يومي-${day}.csv`,
-        ['التاريخ', 'النوع', 'المصدر', 'المبلغ', 'ملاحظات'],
+        ['التاريخ', 'النوع', 'نوع الحركة', 'المبلغ', 'ملاحظات'],
         daily.entries.map(e => [
           e.transaction_date,
-          e.amount_in > 0 ? 'وارد' : 'صادر',
+          e.amount_in > 0 ? 'داخل' : 'طالع',
           refLabel(e.reference_type),
           e.amount_in > 0 ? e.amount_in : e.amount_out,
           e.notes ?? '',
@@ -467,7 +467,7 @@ export default function Reports() {
       if (!monthly || monthly.days.length === 0) return
       exportToCsv(
         `تقرير-شهري-${month}.csv`,
-        ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
+        ['التاريخ', 'الداخل', 'الطالع', 'الصافي'],
         [
           ...monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net] as (string | number)[]),
           ['', '', '', ''],
@@ -479,7 +479,7 @@ export default function Reports() {
       if (!yearly) return
       exportToCsv(
         `تقرير-سنوي-${year}.csv`,
-        ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
+        ['الشهر', 'الداخل', 'الطالع', 'الصافي'],
         [
           ...yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net] as (string | number)[]),
           ['', '', '', ''],
@@ -490,8 +490,8 @@ export default function Reports() {
     } else if (tab === 'debts_aging') {
       if (!sortedAging.length) return
       exportToCsv(
-        `أعمار-الديون-${today()}.csv`,
-        ['الطرف', 'النوع', 'التاريخ', 'الإجمالي', 'المتبقي', 'عدد الأيام', 'الشريحة العمرية'],
+        `الديون-القديمة-${today()}.csv`,
+        ['الزبون / المورد', 'النوع', 'التاريخ', 'الإجمالي', 'الباقي', 'عدد الأيام', 'عمر الدين'],
         sortedAging.map(d => [
           d.party_name,
           AGING_KIND_LABELS[d.kind],
@@ -506,7 +506,7 @@ export default function Reports() {
       if (!debts) return
       exportToCsv(
         `ديون-الزبائن-${today()}.csv`,
-        ['اسم الزبون', 'المصدر', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        ['اسم الزبون', 'النوع', 'الإجمالي', 'المدفوع', 'الباقي عليه'],
         debts.customer_debts.map(d => [
           d.customer_name,
           d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر',
@@ -517,7 +517,7 @@ export default function Reports() {
       )
       exportToCsv(
         `ديون-الموردين-${today()}.csv`,
-        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'الباقي للمورد'],
         debts.supplier_debts.map(d => [
           d.supplier_name,
           d.supplier_phone ?? '',
@@ -535,10 +535,10 @@ export default function Reports() {
       if (!daily || daily.entries.length === 0) return
       exportToXlsx(
         `تقرير-يومي-${day}.xlsx`,
-        ['التاريخ', 'النوع', 'المصدر', 'المبلغ', 'ملاحظات'],
+        ['التاريخ', 'النوع', 'نوع الحركة', 'المبلغ', 'ملاحظات'],
         daily.entries.map(e => [
           e.transaction_date,
-          e.amount_in > 0 ? 'وارد' : 'صادر',
+          e.amount_in > 0 ? 'داخل' : 'طالع',
           refLabel(e.reference_type),
           e.amount_in > 0 ? e.amount_in : e.amount_out,
           e.notes ?? '',
@@ -549,7 +549,7 @@ export default function Reports() {
       if (!monthly || monthly.days.length === 0) return
       exportToXlsx(
         `تقرير-شهري-${month}.xlsx`,
-        ['التاريخ', 'الوارد', 'الصادر', 'الصافي'],
+        ['التاريخ', 'الداخل', 'الطالع', 'الصافي'],
         [
           ...monthly.days.map(d => [d.date, d.total_in, d.total_out, d.net] as (string | number)[]),
           ['', '', '', ''],
@@ -562,7 +562,7 @@ export default function Reports() {
       if (!yearly) return
       exportToXlsx(
         `تقرير-سنوي-${year}.xlsx`,
-        ['الشهر', 'الوارد', 'الصادر', 'الصافي'],
+        ['الشهر', 'الداخل', 'الطالع', 'الصافي'],
         [
           ...yearly.months.map(m => [MONTH_NAMES[m.month - 1], m.total_in, m.total_out, m.net] as (string | number)[]),
           ['', '', '', ''],
@@ -574,8 +574,8 @@ export default function Reports() {
     } else if (tab === 'debts_aging') {
       if (!sortedAging.length) return
       exportToXlsx(
-        `أعمار-الديون-${today()}.xlsx`,
-        ['الطرف', 'النوع', 'التاريخ', 'الإجمالي', 'المتبقي', 'عدد الأيام', 'الشريحة العمرية'],
+        `الديون-القديمة-${today()}.xlsx`,
+        ['الزبون / المورد', 'النوع', 'التاريخ', 'الإجمالي', 'الباقي', 'عدد الأيام', 'عمر الدين'],
         sortedAging.map(d => [
           d.party_name,
           AGING_KIND_LABELS[d.kind],
@@ -585,13 +585,13 @@ export default function Reports() {
           d.days_old,
           AGING_BUCKET_LABELS[d.bucket],
         ]),
-        'أعمار الديون',
+        'الديون القديمة',
       )
     } else if (tab === 'debts') {
       if (!debts) return
       exportToXlsx(
         `ديون-الزبائن-${today()}.xlsx`,
-        ['اسم الزبون', 'المصدر', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        ['اسم الزبون', 'النوع', 'الإجمالي', 'المدفوع', 'الباقي عليه'],
         debts.customer_debts.map(d => [
           d.customer_name,
           d.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر',
@@ -603,7 +603,7 @@ export default function Reports() {
       )
       exportToXlsx(
         `ديون-الموردين-${today()}.xlsx`,
-        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'المتبقي'],
+        ['اسم المورد', 'رقم الهاتف', 'الإجمالي', 'المدفوع', 'الباقي للمورد'],
         debts.supplier_debts.map(d => [
           d.supplier_name,
           d.supplier_phone ?? '',
@@ -647,7 +647,7 @@ export default function Reports() {
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {tab !== 'top_customers' && (
             <>
-              <button className="btn btn-secondary" onClick={handleExportCsv}>⬇ تصدير CSV</button>
+              <button className="btn btn-secondary" onClick={handleExportCsv}>⬇ تصدير ملف جدول</button>
               <button className="btn btn-secondary" onClick={handleExportXlsx}>⬇ تصدير Excel</button>
             </>
           )}
@@ -662,7 +662,7 @@ export default function Reports() {
           ['monthly', 'شهري'],
           ['yearly', 'سنوي'],
           ['debts', 'تقرير الديون'],
-          ['debts_aging', 'أعمار الديون'],
+          ['debts_aging', 'الديون القديمة'],
           ['top_customers', 'أفضل الزبائن'],
         ] as [Tab, string][]).map(([val, label]) => (
           <button
@@ -725,18 +725,21 @@ export default function Reports() {
           {/* ── Stat cards ── */}
           <div className="stats-grid">
             <div className="stat-card">
-              <span className="stat-label">إجمالي الوارد</span>
+              <span className="stat-label">كل الفلوس الداخلة</span>
               <span className="stat-value incoming">{fmt(periodTotals?.in ?? 0)} ₪</span>
+              <span className="mi-field-hint">مجموع الفلوس اللي دخلت الكراج في هذه الفترة</span>
             </div>
             <div className="stat-card">
-              <span className="stat-label">إجمالي الصادر</span>
+              <span className="stat-label">كل الفلوس الطالعة</span>
               <span className="stat-value outgoing">{fmt(periodTotals?.out ?? 0)} ₪</span>
+              <span className="mi-field-hint">مجموع الفلوس اللي طلعت من الكراج في هذه الفترة</span>
             </div>
             <div className="stat-card">
-              <span className="stat-label">صافي الربح</span>
+              <span className="stat-label">الصافي</span>
               <span className={`stat-value ${(periodTotals?.net ?? 0) >= 0 ? 'balance' : 'outgoing'}`}>
                 {fmt(periodTotals?.net ?? 0)} ₪
               </span>
+              <span className="mi-field-hint">الفلوس الداخلة ناقص الفلوس الطالعة</span>
             </div>
 
             {tab === 'daily' && daily && (
@@ -744,26 +747,32 @@ export default function Reports() {
                 <div className="stat-card">
                   <span className="stat-label">دخل الصيانة</span>
                   <span className="stat-value incoming">{fmt(daily.maintenance_income)} ₪</span>
+                  <span className="mi-field-hint">الفلوس اللي قبضتها من شغل الصيانة</span>
                 </div>
                 <div className="stat-card">
                   <span className="stat-label">دخل البيع المباشر</span>
                   <span className="stat-value incoming">{fmt(daily.direct_sale_income)} ₪</span>
+                  <span className="mi-field-hint">الفلوس اللي قبضتها من بيع القطع مباشرة</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">تحصيل الديون</span>
+                  <span className="stat-label">ديون مقبوضة</span>
                   <span className="stat-value incoming">{fmt(daily.debt_collected)} ₪</span>
+                  <span className="mi-field-hint">ديون قديمة قبضتها من الزبائن</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">إجمالي مشتريات الموردين</span>
+                  <span className="stat-label">المدفوع للموردين</span>
                   <span className="stat-value outgoing">{fmt(daily.supplier_expenses)} ₪</span>
+                  <span className="mi-field-hint">الفلوس اللي دفعتها للموردين</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">إجمالي المصاريف</span>
+                  <span className="stat-label">المصاريف اليومية</span>
                   <span className="stat-value outgoing">{fmt(daily.daily_expenses)} ₪</span>
+                  <span className="mi-field-hint">مصاريف الكراج اليومية</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-label">إجمالي الرواتب</span>
+                  <span className="stat-label">الرواتب</span>
                   <span className="stat-value outgoing">{fmt(daily.salaries)} ₪</span>
+                  <span className="mi-field-hint">الرواتب اللي اندفعت للموظفين</span>
                 </div>
               </>
             )}
@@ -780,6 +789,7 @@ export default function Reports() {
                     <span className={`stat-value ${detailCls(def.kind)}`}>
                       {detailStr(periodDetail, def)}
                     </span>
+                    {def.hint && <span className="mi-field-hint">{def.hint}</span>}
                   </div>
                 ))}
               </div>
@@ -789,27 +799,27 @@ export default function Reports() {
           {/* ── Operations / breakdown table ── */}
           <div className="mi-card" style={{ marginTop: '1.5rem' }}>
             <h2 className="mi-section-title">
-              {tab === 'daily' ? 'ملخص العمليات في الفترة' : 'تفصيل الفترة'}
+              {tab === 'daily' ? 'ملخص الحركات في اليوم' : 'تفصيل الفترة'}
             </h2>
             <div className="mi-table-wrap">
               {tab === 'daily' ? (
                 <table className="mi-table">
                   <thead>
                     <tr>
-                      <th>التاريخ</th><th>النوع</th><th>المصدر</th><th>المبلغ</th><th>ملاحظات</th>
+                      <th>التاريخ</th><th>النوع</th><th>نوع الحركة</th><th>المبلغ</th><th>ملاحظات</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                      <tr><td colSpan={5} className="mi-empty-row">جاري التحميل...</td></tr>
                     ) : !daily || daily.entries.length === 0 ? (
-                      <tr><td colSpan={5} className="mi-empty-row">لا توجد عمليات في هذه الفترة</td></tr>
+                      <tr><td colSpan={5} className="mi-empty-row">ما في حركات في هذا اليوم</td></tr>
                     ) : daily.entries.map((e: LedgerRow, i) => (
                       <tr key={e.id} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                         <td>{e.transaction_date}</td>
                         <td>
                           <span className={e.amount_in > 0 ? 'cl-badge-in' : 'cl-badge-out'}>
-                            {e.amount_in > 0 ? 'وارد' : 'صادر'}
+                            {e.amount_in > 0 ? 'داخل' : 'طالع'}
                           </span>
                         </td>
                         <td>{refLabel(e.reference_type)}</td>
@@ -824,7 +834,7 @@ export default function Reports() {
               ) : (
                 <table className="mi-table">
                   <thead>
-                    <tr><th>الفترة</th><th>الوارد ₪</th><th>الصادر ₪</th><th>الصافي ₪</th></tr>
+                    <tr><th>الفترة</th><th>الداخل ₪</th><th>الطالع ₪</th><th>الصافي ₪</th></tr>
                   </thead>
                   <tbody>
                     {loading ? (
@@ -929,17 +939,18 @@ export default function Reports() {
 
           {/* ── All aging debts table ── */}
           <div className="mi-card" style={{ marginTop: '1.5rem' }}>
-            <h2 className="mi-section-title">تفصيل الديون حسب العمر</h2>
+            <h2 className="mi-section-title" style={{ marginBottom: '0.25rem' }}>الديون القديمة (من 0 إلى 30 يوم، من 31 إلى 60 يوم...)</h2>
+            <p className="mi-field-hint" style={{ marginBottom: '1rem' }}>الديون مرتبة من الأقدم للأحدث حسب عدد الأيام</p>
             <div className="mi-table-wrap">
               <table className="mi-table">
                 <thead>
                   <tr>
-                    <th>الشريحة العمرية</th>
-                    <th>الطرف</th>
+                    <th>عمر الدين</th>
+                    <th>الزبون / المورد</th>
                     <th>النوع</th>
                     <th>التاريخ</th>
                     <th>الإجمالي</th>
-                    <th>المتبقي</th>
+                    <th>الباقي</th>
                     <th
                       style={{ cursor: 'pointer', userSelect: 'none' }}
                       onClick={() => setAgingSort(s => s === 'desc' ? 'asc' : 'desc')}
@@ -951,9 +962,9 @@ export default function Reports() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={7} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                    <tr><td colSpan={7} className="mi-empty-row">جاري التحميل...</td></tr>
                   ) : paginatedAging.length === 0 ? (
-                    <tr><td colSpan={7} className="mi-empty-row">لا توجد ديون معلقة</td></tr>
+                    <tr><td colSpan={7} className="mi-empty-row">ما في ديون معلقة</td></tr>
                   ) : paginatedAging.map((d, i) => (
                     <tr key={`${d.kind}-${d.invoice_id}`} className={i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'}>
                       <td><span className={AGING_BUCKET_CLS[d.bucket]}>{AGING_BUCKET_LABELS[d.bucket]}</span></td>
@@ -986,10 +997,12 @@ export default function Reports() {
             <div className="stat-card">
               <span className="stat-label">إجمالي ديون الزبائن</span>
               <span className="stat-value outgoing">{fmt(debts?.total_customer_debt ?? 0)} ₪</span>
+              <span className="mi-field-hint">كل المبالغ اللي لسا الزبائن مديونينك فيها</span>
             </div>
             <div className="stat-card">
               <span className="stat-label">إجمالي ديون الموردين</span>
               <span className="stat-value outgoing">{fmt(debts?.total_supplier_debt ?? 0)} ₪</span>
+              <span className="mi-field-hint">كل المبالغ اللي لسا ما دفعتها للموردين</span>
             </div>
           </div>
 
@@ -1003,17 +1016,17 @@ export default function Reports() {
                     <th>اسم الزبون</th>
                     <th>التاريخ</th>
                     <th>السيارة</th>
-                    <th>المصدر</th>
+                    <th>النوع</th>
                     <th>الإجمالي</th>
                     <th>المدفوع</th>
-                    <th>المتبقي</th>
+                    <th>الباقي عليه</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                    <tr><td colSpan={7} className="mi-empty-row">جاري التحميل...</td></tr>
                   ) : !debts || paginatedCustDebts.length === 0 ? (
-                    <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون على الزبائن</td></tr>
+                    <tr><td colSpan={7} className="mi-empty-row">ما في ديون على الزبائن</td></tr>
                   ) : paginatedCustDebts.map((d, i) => (
                     <tr key={`${d.invoice_type}-${d.invoice_id}`} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                       onClick={async () => {
@@ -1027,7 +1040,7 @@ export default function Reports() {
                             const inv = await dbService.directSale.getOne(d.invoice_id)
                             setDebtItems(inv?.items ?? [])
                           }
-                        } catch (err) { showError('تعذر جلب التفاصيل', err) }
+                        } catch (err) { showError('ما قدرنا نجيب التفاصيل', err) }
                       }}>
                       <td>{d.customer_name}</td>
                       <td>{d.invoice_date}</td>
@@ -1069,14 +1082,14 @@ export default function Reports() {
                     <th>رقم الهاتف</th>
                     <th>الإجمالي</th>
                     <th>المدفوع</th>
-                    <th>المتبقي</th>
+                    <th>الباقي للمورد</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={5} className="mi-empty-row">جارٍ التحميل...</td></tr>
+                    <tr><td colSpan={6} className="mi-empty-row">جاري التحميل...</td></tr>
                   ) : !debts || paginatedSupDebts.length === 0 ? (
-                    <tr><td colSpan={5} className="mi-empty-row">لا توجد ديون للموردين</td></tr>
+                    <tr><td colSpan={6} className="mi-empty-row">ما في ديون للموردين</td></tr>
                   ) : paginatedSupDebts.map((d, i) => (
                     <tr key={d.invoice_id} className={`${i % 2 === 0 ? 'mi-row-even' : 'mi-row-odd'} mi-clickable-row`}
                       onClick={async () => {
@@ -1085,7 +1098,7 @@ export default function Reports() {
                         try {
                           const inv = await dbService.supplierInvoice.getOne(d.invoice_id)
                           setSupDebtItems(inv?.items ?? [])
-                        } catch (err) { showError('تعذر جلب التفاصيل', err) }
+                        } catch (err) { showError('ما قدرنا نجيب التفاصيل', err) }
                       }}>
                       <td>{d.supplier_name}</td>
                       <td>{d.purchase_date}</td>
@@ -1123,15 +1136,19 @@ export default function Reports() {
             <div className="mi-modal-body">
               <div className="mi-detail-grid">
                 <div className="mi-detail-item"><span className="mi-detail-label">التاريخ</span><span>{detailsDebt.invoice_date}</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المصدر</span><span className={detailsDebt.invoice_type === 'maintenance' ? 'mi-badge-orange' : 'mi-badge-blue'}>{detailsDebt.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}</span></div>
+                <div className="mi-detail-item"><span className="mi-detail-label">النوع</span><span className={detailsDebt.invoice_type === 'maintenance' ? 'mi-badge-orange' : 'mi-badge-blue'}>{detailsDebt.invoice_type === 'maintenance' ? 'صيانة' : 'بيع مباشر'}</span></div>
                 {detailsDebt.car_plate && <div className="mi-detail-item"><span className="mi-detail-label">نمرة السيارة</span><span className="mi-plate">{detailsDebt.car_plate}</span></div>}
                 {detailsDebt.car_type && <div className="mi-detail-item"><span className="mi-detail-label">نوع السيارة</span><span>{detailsDebt.car_type}</span></div>}
                 {detailsDebt.car_color && <div className="mi-detail-item"><span className="mi-detail-label">لون السيارة</span><span>{detailsDebt.car_color}</span></div>}
                 <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsDebt.total_amount)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsDebt.amount_paid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(detailsDebt.amount_remaining)} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي عليه</span>
+                  <span className="pd-remaining">{fmt(detailsDebt.amount_remaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
+                </div>
               </div>
-              <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: '#1E2A38' }}>العناصر المسجلة بالفاتورة</h4>
+              <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: '#1E2A38' }}>القطع والأصناف بالفاتورة</h4>
               {debtItems === null ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: '#888' }}>جارٍ التحميل...</div>
               ) : debtItems.length === 0 ? (
@@ -1179,7 +1196,11 @@ export default function Reports() {
                 <div className="mi-detail-item"><span className="mi-detail-label">التاريخ</span><span>{detailsSupDebt.purchase_date}</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">الإجمالي</span><span className="mi-amount">{fmt(detailsSupDebt.total_amount)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع</span><span className="pd-paid">{fmt(detailsSupDebt.amount_paid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(detailsSupDebt.amount_remaining)} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي للمورد</span>
+                  <span className="pd-remaining">{fmt(detailsSupDebt.amount_remaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا ما دفعته للمورد</span>
+                </div>
               </div>
               <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: '#1E2A38' }}>البضاعة المشتراة</h4>
               {supDebtItems === null ? (

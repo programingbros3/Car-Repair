@@ -116,13 +116,13 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
   const plateErr  = validatePlate(form.carPlate)
   const phoneErr  = validatePhone(form.phone)
   const partsErrMap: Record<number, FormPartErr> = {}
-  for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: Number(p.qty) >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
+  for (const p of parts) partsErrMap[p.id] = { nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب', qtyErr: Number(p.qty) >= 1 ? '' : 'العدد لازم يكون 1 على الأقل' }
 
   const discountValueNum = Number(form.discountValue || 0)
   const discountErr = !form.discountType ? ''
-    : discountValueNum < 0 ? 'قيمة الخصم لا يمكن أن تكون سالبة'
-    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم يجب أن تكون بين 0 و 100'
-    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم لا يمكن أن تتجاوز مجموع البنود'
+    : discountValueNum < 0 ? 'قيمة الخصم ما يصير تكون بالسالب'
+    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم لازم تكون بين 0 و 100'
+    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم أكبر من مجموع القطع والخدمات'
     : ''
   const discountAmount = form.discountType && !discountErr
     ? (form.discountType === 'percentage' ? formTotal * discountValueNum / 100 : discountValueNum)
@@ -158,7 +158,7 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
       if (useDraft && !editingCar) localStorage.removeItem(MAINTENANCE_DRAFT_KEY)
       onSaved()
     } catch (err) {
-      showError('تعذّر حفظ فاتورة الصيانة', err)
+      showError('ما قدرنا نحفظ فاتورة الصيانة', err)
     }
   }
 
@@ -311,6 +311,7 @@ const MaintenanceForm = forwardRef<MaintenanceFormHandle, Props>(function Mainte
               </span>
             )}
           </div>
+          <span className="mi-field-hint">المبلغ النهائي المطلوب من الزبون</span>
         </div>
       </div>
     </>

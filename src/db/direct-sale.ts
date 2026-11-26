@@ -173,7 +173,7 @@ export function recalcDirectSaleTotals(invoiceId: number): void {
     )`).get(invoiceId, invoiceId) as { v: number }).v
   // حماية: لا يجوز أن يهبط الإجمالي تحت (المدفوع + خصم التسوية) وإلا صار المتبقّي سالباً
   if (total < paid + settle - 0.001) {
-    throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+    throw new Error(`ما قدرنا نعدّل الفاتورة: المجموع الجديد (${total.toFixed(2)} ₪) أقل من المدفوع + الإسقاط من الدين (${(paid + settle).toFixed(2)} ₪)`)
   }
   db.prepare(
     `UPDATE direct_sale_invoices SET total_amount = ?, amount_remaining = ? WHERE id = ?`,

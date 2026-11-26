@@ -48,7 +48,7 @@ async function printDebt(debt: DebtRecord): Promise<void> {
   try {
     payments = await dbService.invoicePayments.get(debt.id, debt.type)
   } catch (err) {
-    showError('تعذّر جلب دفعات الدين للطباعة', err)
+    showError('ما قدرنا نجيب دفعات الدين للطباعة', err)
     return
   }
   const settlementTotal = payments.reduce((s, p) => s + Number(p.settlement_discount || 0), 0)
@@ -59,7 +59,7 @@ async function printDebt(debt: DebtRecord): Promise<void> {
     </tr>`).join('')
     + (settlementTotal > 0 ? `
     <tr>
-      <td>خصم تسوية</td>
+      <td>إسقاط من الدين</td>
       <td class="amount-out">−${fmt(settlementTotal)} ₪</td>
     </tr>` : '')
   const body = `
@@ -75,7 +75,7 @@ async function printDebt(debt: DebtRecord): Promise<void> {
     <div class="detail-grid">
       <div class="detail-item"><label>الإجمالي</label><span>${fmt(debt.total)} ₪</span></div>
       <div class="detail-item"><label>المدفوع</label><span class="amount-in">${fmt(debt.amountPaid)} ₪</span></div>
-      <div class="detail-item"><label>المتبقي</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
+      <div class="detail-item"><label>الباقي عليه</label><span class="amount-out">${fmt(debt.amountRemaining)} ₪</span></div>
       ${debt.notes ? `<div class="detail-item"><label>ملاحظات</label><span>${esc(debt.notes)}</span></div>` : ''}
     </div>
     ${payRows ? `
@@ -260,7 +260,7 @@ export default function PendingDebts() {
       await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setEditDebt(null); setEditForm(null); setEditSubmitted(false)
     } catch (err) {
-      showError('تعذّر تعديل الدين', err)
+      showError('ما قدرنا نعدّل الدين', err)
     }
   }
 
@@ -273,7 +273,7 @@ export default function PendingDebts() {
       await reload(['maintenance', 'directSale', 'salesInvoices', 'debts'])   // M10
       setPayDebt(null)
     } catch (err) {
-      showError('تعذّر تسجيل دفعة الدين', err)
+      showError('ما قدرنا نسجّل الدفعة', err)
     }
   }
 
@@ -292,10 +292,12 @@ export default function PendingDebts() {
         <div className="stat-card">
           <span className="stat-label">إجمالي الديون</span>
           <span className="stat-value outgoing">{fmt(totalRemaining)} ₪</span>
+          <span className="mi-field-hint">كل المبالغ اللي لسا الزبائن مديونينك فيها</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">عدد الديون المعلقة</span>
           <span className="stat-value cars">{debtCount}</span>
+          <span className="mi-field-hint">عدد الفواتير اللي لسا ما اندفع حسابها كامل</span>
         </div>
       </div>
 
@@ -344,7 +346,7 @@ export default function PendingDebts() {
             <thead>
               <tr>
                 <th>اسم الزبون</th><th>رقم الهاتف</th><th>النوع</th><th>التاريخ</th>
-                <th>نمرة السيارة</th><th>الإجمالي ₪</th><th>المدفوع ₪</th><th>المتبقي ₪</th><th>الإجراءات</th>
+                <th>نمرة السيارة</th><th>الإجمالي ₪</th><th>المدفوع ₪</th><th>الباقي عليه ₪</th><th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -452,12 +454,13 @@ export default function PendingDebts() {
                   <span className="pd-paid">{fmt(detailsDebt.amountPaid)} ₪</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">المتبقي</span>
+                  <span className="mi-detail-label">الباقي عليه</span>
                   <span className="pd-remaining">{fmt(detailsDebt.amountRemaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
                 </div>
                 {detailsSettlement > 0 && (
                   <div className="mi-detail-item">
-                    <span className="mi-detail-label">خصم تسوية (ليس نقداً)</span>
+                    <span className="mi-detail-label">إسقاط من الدين (ما دخل الصندوق)</span>
                     <span className="mi-badge-orange">−{fmt(detailsSettlement)} ₪</span>
                   </div>
                 )}
@@ -492,7 +495,11 @@ export default function PendingDebts() {
                 <div className="mi-detail-item"><span className="mi-detail-label">اسم الزبون</span><strong>{payDebt.customerName}</strong></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">إجمالي الفاتورة</span><span className="mi-amount">{fmt(payDebt.total)} ₪</span></div>
                 <div className="mi-detail-item"><span className="mi-detail-label">المدفوع حتى الآن</span><span className="pd-paid">{fmt(payDebt.amountPaid)} ₪</span></div>
-                <div className="mi-detail-item"><span className="mi-detail-label">المتبقي</span><span className="pd-remaining">{fmt(payDebt.amountRemaining)} ₪</span></div>
+                <div className="mi-detail-item">
+                  <span className="mi-detail-label">الباقي عليه</span>
+                  <span className="pd-remaining">{fmt(payDebt.amountRemaining)} ₪</span>
+                  <span className="mi-field-hint">المبلغ اللي لسا الزبون مديونك فيه</span>
+                </div>
               </div>
 
               <div className="mi-form-grid mi-delivery-grid" style={{ marginBottom: '1.25rem' }}>
@@ -555,20 +562,20 @@ export default function PendingDebts() {
               <button className="btn btn-secondary pay-add-btn" onClick={addPaymentRow}>+ إضافة طريقة دفع</button>
 
               <label className="mi-field" style={{ marginTop: '1rem', maxWidth: 260 }}>
-                <span>خصم / إسقاط مبلغ (تسوية) ₪</span>
+                <span>إسقاط من الدين ₪</span>
                 <input type="number" min={0} placeholder="0" value={settleDiscount}
                   className="mi-td-input"
                   onChange={e => setSettleDiscount(e.target.value)} />
                 <span className="mi-field-hint" style={{ fontSize: '0.72rem', color: '#888' }}>
-                  يُسقَط من المتبقي دون تسجيله كنقدية في الصندوق
+                  مبلغ بتسامح فيه الزبون من الدين، وما بدخل الصندوق
                 </span>
               </label>
 
               {paySubmitted && thisPaymentTotal <= 0 && settleNum <= 0 && (
-                <p className="pd-pay-error">يجب إدخال مبلغ الدفعة أو خصم التسوية</p>
+                <p className="pd-pay-error">اكتب مبلغ الدفعة أو مبلغ الإسقاط من الدين</p>
               )}
               {payExceedsDebt && (
-                <p className="pd-pay-error">مجموع الدفعة والخصم ({fmt(thisPaymentTotal + settleNum)} ₪) يتجاوز المتبقي ({fmt(payDebt.amountRemaining)} ₪)</p>
+                <p className="pd-pay-error">مجموع الدفعة والإسقاط ({fmt(thisPaymentTotal + settleNum)} ₪) أكبر من الباقي عليه ({fmt(payDebt.amountRemaining)} ₪)</p>
               )}
 
               <div className="pay-summary">
@@ -578,12 +585,12 @@ export default function PendingDebts() {
                 </div>
                 {settleNum > 0 && (
                   <div className="pay-summary-row">
-                    <span>خصم تسوية</span>
+                    <span>إسقاط من الدين</span>
                     <strong className="pay-over">−{fmt(settleNum)} ₪</strong>
                   </div>
                 )}
                 <div className="pay-summary-row pay-summary-last">
-                  <span>المتبقي بعد الدفعة والخصم</span>
+                  <span>الباقي عليه بعد الدفعة والإسقاط</span>
                   <strong className={remainingAfter <= 0.001 ? 'pay-ok' : payExceedsDebt ? 'pay-over' : 'pay-due'}>
                     {fmt(Math.max(0, remainingAfter))} ₪
                   </strong>
@@ -675,7 +682,7 @@ export default function PendingDebts() {
               else                                   await dbService.directSale.delete(deleteDebt.id)
               await reload(['maintenance', 'directSale', 'salesInvoices', 'debts', 'warranties'])   // M10
               setDeleteDebt(null)
-            } catch (err) { showError('تعذّر حذف الدين', err) }
+            } catch (err) { showError('ما قدرنا نحذف الدين', err) }
           }}
           onCancel={() => setDeleteDebt(null)}
         />

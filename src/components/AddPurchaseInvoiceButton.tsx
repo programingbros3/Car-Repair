@@ -28,8 +28,8 @@ export default function AddPurchaseInvoiceButton({ label = '+ إضافة فات�
         <SourcePickerModal
           title="اختر نوع الفاتورة"
           options={[
-            { key: 'supplier', label: 'فاتورة مورد', desc: 'شراء بنود من مورد مع دفعات' },
-            { key: 'expense',  label: 'مصروف يومي',  desc: 'مصروف تشغيلي' },
+            { key: 'supplier', label: 'فاتورة مورد', desc: 'شراء قطع أو بضاعة من مورد' },
+            { key: 'expense',  label: 'مصروف يومي',  desc: 'مصروف يومي للكراج (كهرباء، أكل، أغراض...)' },
             { key: 'salary',   label: 'راتب',        desc: 'دفعة راتب موظف' },
           ]}
           onPick={k => setStep(k as Step)}

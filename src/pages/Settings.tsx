@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import PasswordInput from '../components/PasswordInput'
 import { dbService } from '../services/db'
-import { showError } from '../utils/notify'
+import { showError, toSimpleError } from '../utils/notify'
 import type { AutoBackupSettings, AutoBackupStatus, AutoLockSettings, ActivityLogRow, VatSettings } from '../db/types'
 
 /* ════════════════════════════════════════
@@ -26,7 +26,7 @@ export default function Settings() {
         setGarageName(identity.garage_name)
         setGarageLogo(identity.garage_logo)
       } catch (err) {
-        showError('تعذّر تحميل هوية الكراج', err)
+        showError('ما قدرنا نحمّل اسم وشعار الكراج', err)
       } finally {
         setIdentityLoaded(true)
       }
@@ -39,9 +39,9 @@ export default function Settings() {
     try {
       const updated = await dbService.garageIdentity.update({ garage_name: garageName })
       setGarageName(updated.garage_name)
-      setIdentityMsg('تم حفظ اسم الكراج بنجاح')
+      setIdentityMsg('تم حفظ اسم الكراج')
     } catch (err) {
-      showError('فشل حفظ اسم الكراج', err)
+      showError('ما قدرنا نحفظ اسم الكراج', err)
     } finally {
       setIdentitySaving(false)
     }
@@ -56,13 +56,13 @@ export default function Settings() {
         data?: string | null
         error?: string
       }
-      if (!res.success) throw new Error(res.error || 'تعذّر اختيار الشعار')
+      if (!res.success) throw new Error(res.error || 'ما قدرنا نختار الشعار')
       if (!res.data) return
       const updated = await dbService.garageIdentity.update({ garage_logo: res.data })
       setGarageLogo(updated.garage_logo)
-      setIdentityMsg('تم حفظ شعار الكراج بنجاح')
+      setIdentityMsg('تم حفظ شعار الكراج')
     } catch (err) {
-      showError('فشل اختيار وحفظ الشعار', err)
+      showError('ما قدرنا نحفظ الشعار', err)
     } finally {
       setIdentitySaving(false)
     }
@@ -79,9 +79,9 @@ export default function Settings() {
     setExportMsg(null)
     try {
       const filePath = await dbService.backup.export()
-      if (filePath) setExportMsg(`تم الحفظ في: ${filePath}`)
+      if (filePath) setExportMsg(`تم حفظ النسخة الاحتياطية في: ${filePath}`)
     } catch (err) {
-      showError('فشل تصدير النسخة الاحتياطية', err)
+      showError('ما قدرنا نحفظ النسخة الاحتياطية', err)
     } finally {
       setExporting(false)
     }
@@ -96,7 +96,7 @@ export default function Settings() {
       // إذا وصلنا هنا = المستخدم ألغى اختيار الملف (عند النجاح الفعلي يُعاد تشغيل التطبيق)
       setImporting(false)
     } catch (err) {
-      showError('فشل استيراد النسخة الاحتياطية', err)
+      showError('ما قدرنا نسترجع النسخة الاحتياطية', err)
       setImporting(false)
     }
   }
@@ -124,7 +124,7 @@ export default function Settings() {
         applySettings(settings)
         setAutoStatus(status)
       } catch (err) {
-        showError('تعذّر تحميل إعدادات النسخ الاحتياطي التلقائي', err)
+        showError('ما قدرنا نحمّل إعدادات النسخ الاحتياطي التلقائي', err)
       } finally {
         setAutoLoaded(true)
       }
@@ -144,7 +144,7 @@ export default function Settings() {
       const settings = await dbService.autoBackup.updateSettings(updates)
       applySettings(settings)
     } catch (err) {
-      showError('فشل حفظ إعدادات النسخ الاحتياطي التلقائي', err)
+      showError('ما قدرنا نحفظ إعدادات النسخ الاحتياطي التلقائي', err)
     } finally {
       setAutoSaving(false)
     }
@@ -155,7 +155,7 @@ export default function Settings() {
       const folder = await dbService.autoBackup.pickFolder()
       if (folder) await persistAutoSettings({ folder })
     } catch (err) {
-      showError('فشل اختيار المجلد', err)
+      showError('ما قدرنا نختار المجلد', err)
     }
   }
 
@@ -177,7 +177,7 @@ export default function Settings() {
       const folder = await dbService.autoBackup.pickFolder()
       if (folder) await persistAutoSettings({ secondaryFolder: folder })
     } catch (err) {
-      showError('فشل اختيار المجلد', err)
+      showError('ما قدرنا نختار المجلد', err)
     }
   }
 
@@ -188,12 +188,12 @@ export default function Settings() {
       const result = await dbService.autoBackup.runNow()
       const status = await dbService.autoBackup.getStatus()
       setAutoStatus(status)
-      let msg = result.success ? `تم الحفظ في: ${result.filePath}` : `فشلت المحاولة: ${result.error}`
-      if (result.success && result.secondaryStatus === 'success') msg += ' — ونُسخت أيضاً إلى المسار الثاني'
-      if (result.success && result.secondaryStatus === 'failed') msg += ` — تنبيه: فشل النسخ إلى المسار الثاني (${result.secondaryError ?? ''})`
+      let msg = result.success ? `تم الحفظ في: ${result.filePath}` : `ما زبطت المحاولة: ${toSimpleError(result.error, 'صار خطأ غير متوقع')}`
+      if (result.success && result.secondaryStatus === 'success') msg += ' — وانحفظت كمان في المجلد الثاني'
+      if (result.success && result.secondaryStatus === 'failed') msg += ` — تنبيه: ما قدرنا نحفظ في المجلد الثاني (${toSimpleError(result.secondaryError, 'تأكد من المجلد')})`
       setAutoRunMsg(msg)
     } catch (err) {
-      showError('فشل تنفيذ النسخة الاحتياطية التلقائية', err)
+      showError('ما قدرنا نعمل النسخة الاحتياطية التلقائية', err)
     } finally {
       setAutoRunning(false)
     }
@@ -220,15 +220,16 @@ export default function Settings() {
   const handleChangePassword = async () => {
     setPasswordMsg(null)
     setPasswordErr(null)
-    if (newPassword.length < 6) { setPasswordErr('كلمة السر الجديدة يجب أن تكون 6 أحرف على الأقل'); return }
-    if (newPassword !== confirmPassword) { setPasswordErr('كلمة السر الجديدة غير متطابقة مع التأكيد'); return }
+    if (newPassword.length < 6) { setPasswordErr('كلمة السر الجديدة لازم تكون 6 أحرف على الأقل'); return }
+    if (newPassword !== confirmPassword) { setPasswordErr('كلمتين السر الجداد مش متطابقتين'); return }
     setChangingPassword(true)
     try {
       await dbService.auth.changePassword(oldPassword, newPassword)
-      setPasswordMsg('تم تغيير كلمة السر بنجاح')
+      setPasswordMsg('تم تغيير كلمة السر')
       setOldPassword(''); setNewPassword(''); setConfirmPassword('')
     } catch (err) {
-      setPasswordErr(err instanceof Error ? err.message : 'فشل تغيير كلمة السر')
+      console.error('فشل تغيير كلمة السر:', err)
+      setPasswordErr(toSimpleError(err, 'ما قدرنا نغيّر كلمة السر'))
     } finally {
       setChangingPassword(false)
     }
@@ -249,7 +250,7 @@ export default function Settings() {
         setLockEnabled(settings.enabled)
         setLockMinutes(settings.minutes)
       } catch (err) {
-        showError('تعذّر تحميل إعدادات القفل التلقائي', err)
+        showError('ما قدرنا نحمّل إعدادات القفل التلقائي', err)
       } finally {
         setLockLoaded(true)
       }
@@ -263,7 +264,7 @@ export default function Settings() {
       setLockEnabled(settings.enabled)
       setLockMinutes(settings.minutes)
     } catch (err) {
-      showError('فشل حفظ إعدادات القفل التلقائي', err)
+      showError('ما قدرنا نحفظ إعدادات القفل التلقائي', err)
     } finally {
       setLockSaving(false)
     }
@@ -284,7 +285,7 @@ export default function Settings() {
         setVatEnabled(settings.enabled)
         setVatRate(settings.rate)
       } catch (err) {
-        showError('تعذّر تحميل إعدادات الضريبة', err)
+        showError('ما قدرنا نحمّل إعدادات الضريبة', err)
       } finally {
         setVatLoaded(true)
       }
@@ -298,7 +299,7 @@ export default function Settings() {
       setVatEnabled(settings.enabled)
       setVatRate(settings.rate)
     } catch (err) {
-      showError('فشل حفظ إعدادات الضريبة', err)
+      showError('ما قدرنا نحفظ إعدادات الضريبة', err)
     } finally {
       setVatSaving(false)
     }
@@ -315,7 +316,7 @@ export default function Settings() {
       try {
         setActivityLog(await dbService.activityLog.getAll(200))
       } catch (err) {
-        showError('تعذّر تحميل سجل النشاط', err)
+        showError('ما قدرنا نحمّل سجل التعديلات والحذف', err)
       } finally {
         setActivityLoaded(true)
       }
@@ -337,8 +338,8 @@ export default function Settings() {
     salary_payment: 'دفعة راتب',
     warranty: 'كفالة',
     supplier_directory: 'مورد (دليل)',
-    cash_audit: 'إحصاء نهاية اليوم',
-    supplier_bulk_payment: 'دفعة عامة لمورد',
+    cash_audit: 'حساب آخر اليوم',
+    supplier_bulk_payment: 'دفعة على الحساب لمورد',
   }
   const entityLabel = (t: string) => ENTITY_LABELS[t] ?? t
 
@@ -398,7 +399,7 @@ export default function Settings() {
           <div style={rowStyle}>
             <div>
               <div style={rowTitle}>شعار الكراج</div>
-              <div style={rowDesc}>اختر صورة بصيغة PNG أو JPG أو SVG</div>
+              <div style={rowDesc}>اختر صورة شعار الكراج من جهازك</div>
             </div>
             <button
               className="btn btn-secondary"
@@ -421,9 +422,9 @@ export default function Settings() {
           {/* تصدير */}
           <div style={rowStyle}>
             <div>
-              <div style={rowTitle}>تصدير نسخة احتياطية</div>
+              <div style={rowTitle}>حفظ نسخة احتياطية</div>
               <div style={rowDesc}>
-                يحفظ قاعدة البيانات الحالية كملف <code>.db</code> في المكان الذي تختاره
+                يحفظ كل بيانات الكراج في ملف نسخة احتياطية بالمكان اللي تختاره
               </div>
               {exportMsg && (
                 <div style={successMsg}>{exportMsg}</div>
@@ -435,7 +436,7 @@ export default function Settings() {
               onClick={handleExport}
               disabled={exporting}
             >
-              {exporting ? 'جارٍ التصدير…' : 'تصدير'}
+              {exporting ? 'جاري الحفظ…' : 'حفظ نسخة'}
             </button>
           </div>
 
@@ -444,13 +445,13 @@ export default function Settings() {
           {/* استيراد */}
           <div style={rowStyle}>
             <div>
-              <div style={rowTitle}>استيراد نسخة احتياطية</div>
+              <div style={rowTitle}>استرجاع نسخة احتياطية</div>
               <div style={rowDesc}>
-                يستبدل قاعدة البيانات الحالية بالملف المختار ثم يُعيد تشغيل التطبيق تلقائياً.
-                يُنشئ نسخة احتياطية تلقائية من القاعدة الحالية قبل الاستبدال.
+                يبدّل بيانات الكراج الحالية بالملف اللي تختاره ويعيد تشغيل البرنامج.
+                البرنامج بحفظ نسخة احتياطية تلقائية قبل ما يبدّل البيانات.
               </div>
               <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: '#E74C3C', fontWeight: 600 }}>
-                تحذير: هذه العملية لا يمكن التراجع عنها
+                تحذير: هذه الخطوة ما بتقدر تتراجع عنها
               </div>
             </div>
             <button
@@ -459,7 +460,7 @@ export default function Settings() {
               onClick={() => setShowImportDlg(true)}
               disabled={importing}
             >
-              {importing ? 'جارٍ الاستيراد…' : 'استيراد'}
+              {importing ? 'جاري الاسترجاع…' : 'استرجاع'}
             </button>
           </div>
         </div>
@@ -471,9 +472,8 @@ export default function Settings() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 560 }}>
           <div style={rowDesc}>
-            نسخ دوري لملف قاعدة البيانات إلى مجلد تختاره (مثلاً مجلد Google Drive أو Dropbox
-            المتزامن محلياً على جهازك). التطبيق لا يرفع أي شيء بنفسه للسحابة — فقط ينسخ الملف
-            محلياً، وبرنامج المزامنة عندك يتكفّل بالرفع.
+            حفظ نسخة من بيانات الكراج تلقائياً داخل مجلد تختاره على جهازك (مثلاً مجلد Google Drive أو Dropbox).
+            البرنامج بنسخ الملف للمجلد فقط.
           </div>
 
           {/* المجلد */}
@@ -543,24 +543,22 @@ export default function Settings() {
           {/* المسار الثاني (اختياري) */}
           <div style={rowStyle}>
             <div style={{ flex: 1 }}>
-              <div style={rowTitle}>مسار النسخ الاحتياطي الثاني (اختياري)</div>
+              <div style={rowTitle}>مجلد نسخ احتياطي ثاني (اختياري)</div>
               <div style={rowDesc}>
-                مجلد إضافي تُنسخ إليه نفس النسخة بنفس الاسم (مثلاً مجلد OneDrive أو Google Drive
-                المتزامن محلياً). اتركه فارغاً لتعطيل الميزة. فشل النسخ إليه لا يؤثر إطلاقاً على
-                النسخة المحلية الأساسية، ويُطبَّق عليه نفس عدد النسخ المحتفظ بها بشكل مستقل.
+                مجلد إضافي بتنسخ فيه نفس النسخة (مثلاً مجلد مزامنة أو فلاشة). اتركه فاضي لو ما بدك إياه.
               </div>
               <input
                 type="text"
                 dir="ltr"
                 style={textInputStyle}
-                placeholder="مثال: C:\Users\...\OneDrive\GarageBackups"
+                placeholder="اختياري: اكتب مسار المجلد أو اختاره من الزر"
                 value={secondaryFolderText}
                 disabled={!autoLoaded || autoSaving}
                 onChange={e => setSecondaryFolderText(e.target.value)}
                 onBlur={handleSecondaryFolderBlur}
               />
               <div style={{ marginTop: '0.5rem', fontSize: '0.83rem', color: '#444' }}>
-                آخر نسخة للمسار الثاني:{' '}
+                آخر نسخة للمجلد الثاني:{' '}
                 {secondaryFolderText.trim() === '' ? (
                   <span style={{ color: '#999' }}>غير مفعّل</span>
                 ) : autoStatus?.secondaryLastStatus === 'success' ? (
@@ -569,10 +567,10 @@ export default function Settings() {
                   </span>
                 ) : autoStatus?.secondaryLastStatus === 'failed' ? (
                   <span style={{ color: '#E74C3C', fontWeight: 600, wordBreak: 'break-all' }}>
-                    فشلت — تحقق من المسار{autoStatus.secondaryLastError ? ` (${autoStatus.secondaryLastError})` : ''}
+                    ما زبطت — تأكد من المجلد{autoStatus.secondaryLastError ? ` (${toSimpleError(autoStatus.secondaryLastError, 'المجلد مش متاح')})` : ''}
                   </span>
                 ) : (
-                  <span style={{ color: '#999' }}>لم تُنفَّذ أي نسخة بعد</span>
+                  <span style={{ color: '#999' }}>لسا ما انعملت ولا نسخة</span>
                 )}
               </div>
             </div>
@@ -591,9 +589,9 @@ export default function Settings() {
           {/* نسخ الآن + الحالة */}
           <div style={rowStyle}>
             <div>
-              <div style={rowTitle}>نسخ الآن يدوياً لهذا المسار</div>
+              <div style={rowTitle}>نسخ الآن يدوياً</div>
               <div style={rowDesc}>
-                لتجربة الإعدادات فوراً دون انتظار الجدولة التلقائية
+                عشان تجرّب الحفظ فوراً بدون انتظار
               </div>
               <div style={{ marginTop: '0.5rem', fontSize: '0.83rem', color: '#444' }}>
                 آخر نسخة ناجحة: {formatDateTime(autoStatus?.lastSuccessAt ?? null)}
@@ -602,7 +600,7 @@ export default function Settings() {
                 <div style={autoStatus.lastStatus === 'success' ? statusOk : statusFail}>
                   {autoStatus.lastStatus === 'success'
                     ? `آخر محاولة (${formatDateTime(autoStatus.lastRunAt)}): نجحت`
-                    : `آخر محاولة (${formatDateTime(autoStatus.lastRunAt)}): فشلت — ${autoStatus.lastError ?? ''}`}
+                    : `آخر محاولة (${formatDateTime(autoStatus.lastRunAt)}): ما زبطت — ${toSimpleError(autoStatus.lastError, 'صار خطأ')}`}
                 </div>
               )}
               {autoRunMsg && <div style={successMsg}>{autoRunMsg}</div>}
@@ -613,7 +611,7 @@ export default function Settings() {
               onClick={handleRunNow}
               disabled={!autoLoaded || autoRunning}
             >
-              {autoRunning ? 'جارٍ النسخ…' : 'نسخ الآن يدوياً'}
+              {autoRunning ? 'جاري النسخ…' : 'نسخ الآن يدوياً'}
             </button>
           </div>
         </div>
@@ -649,15 +647,15 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* ── قسم جديد: القفل التلقائي عند الخمول ── */}
+      {/* ── قسم جديد: القفل التلقائي ── */}
       <div className="mi-card">
-        <h2 className="mi-section-title">القفل التلقائي عند الخمول</h2>
+        <h2 className="mi-section-title">القفل التلقائي</h2>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 520 }}>
           <div style={rowStyle}>
             <div>
               <div style={rowTitle}>تفعيل القفل التلقائي</div>
-              <div style={rowDesc}>يُعاد عرض شاشة كلمة السر تلقائياً بعد فترة خمول بلا أي حركة</div>
+              <div style={rowDesc}>يقفل البرنامج بشاشة كلمة السر تلقائياً لو تركته بدون استخدام لفترة</div>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, cursor: 'pointer' }}>
               <input
@@ -675,8 +673,8 @@ export default function Settings() {
 
           <div style={rowStyle}>
             <div>
-              <div style={rowTitle}>مدة الخمول (بالدقائق)</div>
-              <div style={rowDesc}>عدد دقائق عدم الحركة قبل القفل التلقائي</div>
+              <div style={rowTitle}>المدة قبل القفل (بالدقائق)</div>
+              <div style={rowDesc}>كم دقيقة بدون استخدام وبعدها يقفل البرنامج</div>
             </div>
             <input
               type="number"
@@ -691,15 +689,15 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* ── قسم جديد: الضريبة (VAT) — اختيارية، معطّلة افتراضياً ── */}
+      {/* ── قسم جديد: الضريبة — اختيارية، معطّلة افتراضياً ── */}
       <div className="mi-card">
-        <h2 className="mi-section-title">الضريبة (VAT)</h2>
+        <h2 className="mi-section-title">الضريبة</h2>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 520 }}>
           <div style={rowStyle}>
             <div>
               <div style={rowTitle}>تفعيل الضريبة</div>
-              <div style={rowDesc}>عند التفعيل تظهر الضريبة المحسوبة تلقائياً في مودالات تفاصيل الفواتير والإيصالات المطبوعة. عند التعطيل لا يظهر أي شيء متعلق بالضريبة في أي مكان.</div>
+              <div style={rowDesc}>لو مفعّلة تنحسب الضريبة تلقائياً وتظهر في الفواتير المطبوعة وتفاصيل الفواتير. ولو معطّلة ما بتظهر بأي مكان.</div>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0, cursor: 'pointer' }}>
               <input
@@ -720,7 +718,7 @@ export default function Settings() {
               <div style={rowStyle}>
                 <div>
                   <div style={rowTitle}>نسبة الضريبة (%)</div>
-                  <div style={rowDesc}>النسبة المئوية المطبَّقة على المجموع بعد الخصم (الضريبة الرسمية في فلسطين 16%).</div>
+                  <div style={rowDesc}>النسبة اللي تنحسب على المجموع بعد الخصم (مثلاً 16%).</div>
                 </div>
                 <input
                   type="number"
@@ -738,10 +736,10 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* ── قسم جديد: سجل النشاط (قراءة فقط) ── */}
+      {/* ── قسم جديد: سجل التعديلات والحذف (قراءة فقط) ── */}
       <div className="mi-card">
-        <h2 className="mi-section-title">سجل النشاط</h2>
-        <div style={rowDesc}>سجل قراءة فقط لآخر عمليات التعديل والحذف الحساسة (آخر 200 عملية) — لغرض المراجعة.</div>
+        <h2 className="mi-section-title">سجل التعديلات والحذف</h2>
+        <div style={rowDesc}>يعرض آخر 200 حركة تعديل أو حذف صارت في البرنامج للمراجعة.</div>
 
         <div className="mi-table-wrap" style={{ marginTop: '1rem' }}>
           <table className="mi-table">
@@ -758,7 +756,7 @@ export default function Settings() {
                 </tr>
               ))}
               {activityLoaded && activityLog.length === 0 && (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#999' }}>لا يوجد نشاط مسجَّل بعد</td></tr>
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#999' }}>ما في حركات مسجّلة بعد</td></tr>
               )}
             </tbody>
           </table>
@@ -767,8 +765,8 @@ export default function Settings() {
 
       {showImportDlg && (
         <ConfirmDialog
-          title="تأكيد استيراد النسخة الاحتياطية"
-          message="ستُستبدل قاعدة البيانات الحالية بالكامل وسيُعاد تشغيل التطبيق. سيتم حفظ نسخة احتياطية تلقائية من البيانات الحالية. هل أنت متأكد؟"
+          title="تأكيد استرجاع النسخة الاحتياطية"
+          message="رح تتبدّل كل بيانات البرنامج بالنسخة اللي اخترتها ويعيد تشغيل البرنامج. (البرنامج بحفظ نسخة أمان تلقائية قبل التبديل). بدك تكمل؟"
           requirePassword={true}
           onConfirm={handleImportConfirm}
           onCancel={() => setShowImportDlg(false)}

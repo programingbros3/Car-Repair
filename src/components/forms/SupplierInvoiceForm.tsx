@@ -32,9 +32,9 @@ const partAfterDiscount = (p: FormPart): number => {
 }
 const partDiscountErr = (p: FormPart): string => {
   if (!p.discountType) return ''
-  if (p.discountValue < 0) return 'قيمة الخصم لا يمكن أن تكون سالبة'
-  if (p.discountType === 'percentage' && p.discountValue > 100) return 'نسبة الخصم يجب أن تكون بين 0 و 100'
-  if (p.discountType === 'fixed' && p.discountValue > partSubtotal(p)) return 'قيمة الخصم لا يمكن أن تتجاوز إجمالي البند'
+  if (p.discountValue < 0) return 'قيمة الخصم ما يصير تكون بالسالب'
+  if (p.discountType === 'percentage' && p.discountValue > 100) return 'نسبة الخصم لازم تكون بين 0 و 100'
+  if (p.discountType === 'fixed' && p.discountValue > partSubtotal(p)) return 'قيمة الخصم أكبر من مجموع القطعة'
   return ''
 }
 
@@ -125,14 +125,14 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
   // المجموع الكلي = مجموع (إجمالي كل بند بعد خصمه الخاص)
   const formTotal   = parts.reduce((s, p) => s + partAfterDiscount(p), 0)
   const formPaid    = paymentRows.reduce((s, r) => s + (r.amount || 0), 0)
-  const supplierErr = form.supplierName.trim() ? '' : 'يجب اختيار المورد'
+  const supplierErr = form.supplierName.trim() ? '' : 'لازم تختار المورد'
   const phoneErr    = validatePhone(form.phone)
 
   const partsErrMap: Record<number, FormPartErr> = {}
   for (const p of parts) {
     partsErrMap[p.id] = {
       nameErr: p.name.trim() ? '' : 'اسم القطعة مطلوب',
-      qtyErr:  p.qty >= 1   ? '' : 'العدد يجب أن يكون 1 على الأقل',
+      qtyErr:  p.qty >= 1   ? '' : 'العدد لازم يكون 1 على الأقل',
       discountErr: partDiscountErr(p),
     }
   }
@@ -162,7 +162,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
       if (useDraft && !editing) localStorage.removeItem(SUPPLIER_DRAFT_KEY)
       onSaved()
     } catch (err) {
-      showError('تعذّر حفظ فاتورة المورد', err)
+      showError('ما قدرنا نحفظ فاتورة المورد', err)
     }
   }
 
@@ -208,7 +208,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
       </div>
 
       <div className="mi-parts-header">
-        <h2 className="mi-section-title">بنود الشراء</h2>
+        <h2 className="mi-section-title">القطع المشتراة</h2>
         <button className="btn btn-secondary" onClick={addPart}>+ إضافة قطعة</button>
       </div>
       <div className="mi-parts-table-wrap">
@@ -275,7 +275,7 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
           </tbody>
         </table>
       </div>
-      <div className="mi-total-row">الإجمالي الكلي (بعد الخصومات): <strong>{fmt(formTotal)} ₪</strong></div>
+      <div className="mi-total-row">المجموع النهائي (بعد الخصومات): <strong>{fmt(formTotal)} ₪</strong></div>
 
       <div className="pay-section-title">طريقة الدفع</div>
       {paymentRows.map(row => (
@@ -326,16 +326,19 @@ const SupplierInvoiceForm = forwardRef<SupplierInvoiceFormHandle, Props>(functio
 
       <div className="pay-summary">
         <div className="pay-summary-row">
-          <span>إجمالي الفاتورة</span><strong>{fmt(formTotal)} ₪</strong>
+          <span>مجموع الفاتورة</span><strong>{fmt(formTotal)} ₪</strong>
         </div>
         <div className="pay-summary-row">
-          <span>إجمالي المدفوع</span><strong className="pay-paid">{fmt(formPaid)} ₪</strong>
+          <span>المدفوع للمورد</span><strong className="pay-paid">{fmt(formPaid)} ₪</strong>
         </div>
-        <div className="pay-summary-row pay-summary-last">
-          <span>المتبقي (دين)</span>
+        <div className="pay-summary-row pay-summary-last" style={{ flexWrap: 'wrap' }}>
+          <span>الباقي للمورد (دين)</span>
           <strong className={formTotal - formPaid <= 0 ? 'pay-ok' : 'pay-due'}>
             {fmt(Math.max(0, formTotal - formPaid))} ₪
           </strong>
+          <div style={{ width: '100%', fontSize: '0.72rem', color: '#888', marginTop: '0.2rem' }}>
+            المبلغ اللي لسا ما دفعته للمورد
+          </div>
         </div>
       </div>
     </>

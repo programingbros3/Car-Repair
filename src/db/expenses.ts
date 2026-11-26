@@ -130,12 +130,12 @@ export function addSalaryPayment(employeeId: number, input: SalaryInput): number
 
     // M5: القيم غير سالبة، والصافي لا يجوز أن يكون سالباً (الخصم أكبر من المستحق)
     assertNonNegative(input.days_worked, 'عدد أيام الدوام')
-    assertNonNegative(input.bonus, 'البونص')
+    assertNonNegative(input.bonus, 'المكافأة')
     assertNonNegative(input.deduction, 'الخصم')
     const dailyWage = emp?.daily_wage ?? 0
     const amount = dailyWage * input.days_worked + input.bonus - input.deduction
     if (amount < 0) {
-      throw new Error('صافي الراتب لا يمكن أن يكون سالباً — الخصم يتجاوز المستحق')
+      throw new Error('صافي الراتب ما يصير يكون بالسالب — الخصم أكبر من اللي بيستحقه الموظف')
     }
 
     const { lastInsertRowid } = db.prepare(`
@@ -173,11 +173,11 @@ export function updateSalaryPayment(id: number, input: SalaryInput): void {
     if (!existing) throw new Error('دفعة الراتب غير موجودة')
 
     assertNonNegative(input.days_worked, 'عدد أيام الدوام')
-    assertNonNegative(input.bonus, 'البونص')
+    assertNonNegative(input.bonus, 'المكافأة')
     assertNonNegative(input.deduction, 'الخصم')
     const amount = existing.daily_wage_snapshot * input.days_worked + input.bonus - input.deduction
     if (amount < 0) {
-      throw new Error('صافي الراتب لا يمكن أن يكون سالباً — الخصم يتجاوز المستحق')
+      throw new Error('صافي الراتب ما يصير يكون بالسالب — الخصم أكبر من اللي بيستحقه الموظف')
     }
 
     db.prepare(`

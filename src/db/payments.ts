@@ -29,13 +29,13 @@ export function applySettlementDiscount(
 ): void {
   const disc = settlementDiscount || 0
   if (disc <= 0) return
-  if (disc < 0) throw new Error('خصم التسوية لا يمكن أن يكون سالباً')
+  if (disc < 0) throw new Error('مبلغ الإسقاط من الدين ما يصير يكون بالسالب')
   if (disc > remainingBefore + 0.001) {
-    throw new Error(`خصم التسوية (${disc.toFixed(2)} ₪) يتجاوز المتبقي بعد الدفعة (${Math.max(0, remainingBefore).toFixed(2)} ₪)`)
+    throw new Error(`مبلغ الإسقاط من الدين (${disc.toFixed(2)} ₪) أكبر من الباقي عليه بعد الدفعة (${Math.max(0, remainingBefore).toFixed(2)} ₪)`)
   }
   db.prepare(`
     INSERT INTO ${paymentsTable} (invoice_id, invoice_type, payment_date, method, amount, settlement_discount, notes)
-    VALUES (?, ?, ?, 'cash', 0, ?, 'خصم تسوية')
+    VALUES (?, ?, ?, 'cash', 0, ?, 'إسقاط من الدين')
   `).run(invoiceId, invoiceType, paymentDate, disc)
   // يُخصم من المتبقّي فقط — لا يمسّ amount_paid ولا cash_ledger
   db.prepare(`UPDATE ${invoiceTable} SET amount_remaining = amount_remaining - ? WHERE id = ?`).run(disc, invoiceId)
@@ -60,7 +60,7 @@ export function addPayment(
     if (!invoice) throw new Error('الفاتورة غير موجودة')
     const totalNew = payments.filter(p => p.amount > 0 && p.method !== 'debt').reduce((s, p) => s + p.amount, 0)
     if (totalNew > invoice.amount_remaining + 0.001) {
-      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) أكبر من الباقي عليه (${invoice.amount_remaining.toFixed(2)} ₪)`)
     }
 
     for (const p of payments) {
@@ -121,7 +121,7 @@ export function addDebtPayment(
     if (!invoice) throw new Error('الفاتورة غير موجودة')
     // التحقق من عدم تجاوز مجموع الدفعة للمتبقي (خصم التسوية يُتحقَّق منه لاحقاً مقابل ما يتبقّى بعد الدفعة)
     if (totalNew > invoice.amount_remaining + 0.001) {
-      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${invoice.amount_remaining.toFixed(2)} ₪)`)
+      throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) أكبر من الباقي عليه (${invoice.amount_remaining.toFixed(2)} ₪)`)
     }
 
     for (const p of payments) {

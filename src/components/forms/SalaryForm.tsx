@@ -46,10 +46,10 @@ const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
                     + Number(salaryForm.bonus || 0)
                     - Number(salaryForm.deduction || 0)
 
-  const salaryEmpErr    = salaryForm.employeeId ? '' : 'يجب اختيار الموظف'
-  const salaryDaysErr   = Number(salaryForm.daysWorked) > 0 ? '' : 'عدد الأيام يجب أن يكون أكبر من صفر'
-  const salaryBonusErr  = Number(salaryForm.bonus) >= 0 ? '' : 'البونص يجب أن يكون صفرًا أو أكبر'
-  const salaryDeductErr = Number(salaryForm.deduction) >= 0 ? '' : 'الخصم يجب أن يكون صفرًا أو أكبر'
+  const salaryEmpErr    = salaryForm.employeeId ? '' : 'لازم تختار الموظف'
+  const salaryDaysErr   = Number(salaryForm.daysWorked) > 0 ? '' : 'عدد الأيام لازم يكون أكبر من صفر'
+  const salaryBonusErr  = Number(salaryForm.bonus) >= 0 ? '' : 'المكافأة لازم تكون صفر أو أكثر'
+  const salaryDeductErr = Number(salaryForm.deduction) >= 0 ? '' : 'الخصم لازم يكون صفر أو أكثر'
   const salaryHasError  = !!salaryEmpErr || !!salaryDaysErr || !!salaryBonusErr || !!salaryDeductErr
 
   const handleSave = async () => {
@@ -72,7 +72,7 @@ const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
       await reload(['salaries', 'purchaseInvoices'])   // M10
       onSaved()
     } catch (err) {
-      showError('تعذّر حفظ دفعة الراتب', err)
+      showError('ما قدرنا نحفظ دفعة الراتب', err)
     }
   }
 
@@ -102,7 +102,7 @@ const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
         {showSalaryErr(salaryDaysErr)}
       </label>
       <label className="mi-field">
-        <span>بونص (₪)</span>
+        <span>مكافأة (₪)</span>
         <input type="number" min={0} step="0.01" value={salaryForm.bonus}
           onChange={e => setSalaryField('bonus', e.target.value)} placeholder="0"
           className={errCls(salarySubmitted && !!salaryBonusErr)} />
@@ -128,6 +128,7 @@ const SalaryForm = forwardRef<SalaryFormHandle, Props>(function SalaryForm(
             </span>
           )}
         </div>
+        <span className="mi-field-hint">اليومية × أيام الدوام + المكافأة − الخصم</span>
       </div>
       <label className="mi-field">
         <span>تاريخ الدفعة</span>

@@ -115,13 +115,13 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
   const formTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.unitPrice || 0), 0)
   const nameErr   = validateName(form.customerName)
   const itemsErrMap: Record<number, FormItemErr> = {}
-  for (const it of items) itemsErrMap[it.id] = { nameErr: it.name.trim() ? '' : 'اسم الصنف مطلوب', qtyErr: Number(it.qty) >= 1 ? '' : 'العدد يجب أن يكون 1 على الأقل' }
+  for (const it of items) itemsErrMap[it.id] = { nameErr: it.name.trim() ? '' : 'اسم الصنف مطلوب', qtyErr: Number(it.qty) >= 1 ? '' : 'العدد لازم يكون 1 على الأقل' }
 
   const discountValueNum = Number(form.discountValue || 0)
   const discountErr = !form.discountType ? ''
-    : discountValueNum < 0 ? 'قيمة الخصم لا يمكن أن تكون سالبة'
-    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم يجب أن تكون بين 0 و 100'
-    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم لا يمكن أن تتجاوز مجموع البنود'
+    : discountValueNum < 0 ? 'قيمة الخصم ما يصير تكون بالسالب'
+    : form.discountType === 'percentage' && discountValueNum > 100 ? 'نسبة الخصم لازم تكون بين 0 و 100'
+    : form.discountType === 'fixed' && discountValueNum > formTotal ? 'قيمة الخصم أكبر من مجموع الأصناف'
     : ''
   const discountAmount = form.discountType && !discountErr
     ? (form.discountType === 'percentage' ? formTotal * discountValueNum / 100 : discountValueNum)
@@ -130,7 +130,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
 
   const formPayTotal   = !editingInvoice ? formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0) : 0
   const formPayExceedsErr = !editingInvoice && formPayTotal > formTotalAfterDiscount + 0.001
-    ? `المبلغ المُدفع (${formPayTotal.toLocaleString('en-US')} ₪) يتجاوز إجمالي الفاتورة (${formTotalAfterDiscount.toLocaleString('en-US')} ₪)` : ''
+    ? `المبلغ المدفوع (${formPayTotal.toLocaleString('en-US')} ₪) أكبر من إجمالي الفاتورة (${formTotalAfterDiscount.toLocaleString('en-US')} ₪)` : ''
 
   const hasErrors = !!nameErr || !!discountErr || Object.values(itemsErrMap).some(e => e.nameErr || e.qtyErr) || !!formPayExceedsErr
 
@@ -172,7 +172,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
       if (useDraft && !editingInvoice) localStorage.removeItem(DIRECT_SALE_DRAFT_KEY)
       onSaved()
     } catch (err) {
-      showError('تعذّر حفظ فاتورة البيع', err)
+      showError('ما قدرنا نحفظ فاتورة البيع', err)
     }
   }
 
@@ -225,7 +225,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
       </div>
 
       <div className="mi-parts-header">
-        <h2 className="mi-section-title">البنود</h2>
+        <h2 className="mi-section-title">الأصناف</h2>
         <button className="btn btn-secondary" onClick={addItem}>+ إضافة صنف</button>
       </div>
       <div className="mi-parts-table-wrap">
@@ -295,7 +295,7 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
       {!editingInvoice && (
         <>
           <div className="pay-section-title" style={{ marginTop: '1.25rem' }}>
-            طريقة الدفع <span style={{ fontSize: '0.8rem', color: '#888', fontWeight: 400 }}>(اختياري — المتبقي يُسجَّل ديناً تلقائياً)</span>
+            طريقة الدفع <span style={{ fontSize: '0.8rem', color: '#888', fontWeight: 400 }}>(اختياري — الباقي عليه ينكتب دين تلقائياً)</span>
           </div>
           {formPayRows.map(row => (
             <div key={row.id} className="pay-row">
@@ -339,16 +339,19 @@ const DirectSaleForm = forwardRef<DirectSaleFormHandle, Props>(function DirectSa
               <strong>{fmt(formTotalAfterDiscount)} ₪</strong>
             </div>
             <div className="pay-summary-row">
-              <span>إجمالي المدفوع</span>
+              <span>المدفوع</span>
               <strong className="pay-paid">
                 {fmt(formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0))} ₪
               </strong>
             </div>
-            <div className="pay-summary-row pay-summary-last">
-              <span>المتبقي (يُسجَّل ديناً تلقائياً)</span>
+            <div className="pay-summary-row pay-summary-last" style={{ flexWrap: 'wrap' }}>
+              <span>الباقي عليه (ينكتب دين تلقائياً)</span>
               <strong className="pay-due">
                 {fmt(Math.max(0, formTotalAfterDiscount - formPayRows.reduce((s, r) => s + Number(r.amount || 0), 0)))} ₪
               </strong>
+              <div style={{ width: '100%', fontSize: '0.72rem', color: '#888', marginTop: '0.2rem' }}>
+                المبلغ اللي لسا الزبون مديونك فيه
+              </div>
             </div>
           </div>
         </>

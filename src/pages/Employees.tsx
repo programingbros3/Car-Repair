@@ -88,11 +88,11 @@ export default function Employees() {
         <div class="detail-item"><label>اليومية (وقت الدفعة)</label><span>${rec.dailyWageSnapshot.toLocaleString('en-US')} ₪/يوم</span></div>
         <div class="detail-item"><label>عدد أيام الدوام</label><span>${rec.daysWorked} يوم</span></div>
         <div class="detail-item" style="grid-column:span 2"><label>اليومية × الأيام (${rec.dailyWageSnapshot.toLocaleString('en-US')} × ${rec.daysWorked})</label><span>${base.toLocaleString('en-US')} ₪</span></div>
-        <div class="detail-item"><label>البونص</label><span class="amount-in">+${rec.bonus.toLocaleString('en-US')} ₪</span></div>
+        <div class="detail-item"><label>المكافأة</label><span class="amount-in">+${rec.bonus.toLocaleString('en-US')} ₪</span></div>
         <div class="detail-item"><label>الخصم</label><span class="amount-out">−${rec.deduction.toLocaleString('en-US')} ₪</span></div>
       </div>
       <div style="text-align:center;margin:20px 0;padding:16px;background:#f0fdf4;border-radius:8px;border:2px solid #27ae60;">
-        <div style="font-size:12px;color:#888;margin-bottom:4px;">الصافي النهائي</div>
+        <div style="font-size:12px;color:#888;margin-bottom:4px;">صافي الراتب</div>
         <div style="font-size:24px;font-weight:700;color:#27ae60;">${rec.amount.toLocaleString('en-US')} ₪</div>
       </div>
       ${rec.notes ? `<div style="margin-top:12px;padding:12px;background:#fafafa;border-radius:6px;"><span style="font-size:11px;color:#888;">ملاحظات:</span> ${esc(rec.notes)}</div>` : ''}
@@ -159,7 +159,7 @@ export default function Employees() {
       await reload(['employees', 'salaries'])   // M10: الاسم يظهر في سجل الرواتب أيضاً
       clearEmpForm()
     } catch (err) {
-      showError('تعذّر حفظ الموظف', err)
+      showError('ما قدرنا نحفظ الموظف', err)
     }
   }
 
@@ -344,7 +344,10 @@ export default function Employees() {
           paddingBottom: '1.25rem', marginBottom: '1.25rem',
           borderBottom: '1px solid #e8edf2',
         }}>
-          <span className="stat-label">إجمالي الرواتب المدفوعة (الصافي)</span>
+          <div>
+            <span className="stat-label" style={{ display: 'block' }}>مجموع الرواتب المدفوعة</span>
+            <span className="mi-field-hint">مجموع الرواتب الصافية اللي اندفعت للموظفين</span>
+          </div>
           <span className="stat-value outgoing">{totalSalaries.toLocaleString('en-US')} ₪</span>
         </div>
         <div className="mi-filters">
@@ -377,9 +380,9 @@ export default function Employees() {
                 <th>الموظف</th>
                 <th>اليومية (وقت الدفعة)</th>
                 <th>الأيام</th>
-                <th>بونص ₪</th>
+                <th>مكافأة ₪</th>
                 <th>خصم ₪</th>
-                <th>الصافي ₪</th>
+                <th>صافي الراتب ₪</th>
                 <th>تاريخ الدفعة</th>
                 <th>الإجراءات</th>
               </tr>
@@ -444,7 +447,7 @@ export default function Employees() {
                   <span className="mi-amount">{detailsEmp.dailyWage.toLocaleString('en-US')} ₪/يوم</span>
                 </div>
                 <div className="mi-detail-item mi-detail-full">
-                  <span className="mi-detail-label">إجمالي الرواتب المدفوعة (الصافي)</span>
+                  <span className="mi-detail-label">مجموع الرواتب المدفوعة</span>
                   <span className="mi-amount">
                     {salaries.filter(s => s.employeeId === detailsEmp.id).reduce((sum, s) => sum + s.amount, 0).toLocaleString('en-US')} ₪
                   </span>
@@ -488,7 +491,7 @@ export default function Employees() {
                   <span>{detailsSalary.daysWorked} يوم</span>
                 </div>
                 <div className="mi-detail-item">
-                  <span className="mi-detail-label">بونص</span>
+                  <span className="mi-detail-label">مكافأة</span>
                   <span className="cl-amount-in">+{detailsSalary.bonus.toLocaleString('en-US')} ₪</span>
                 </div>
                 <div className="mi-detail-item">
@@ -496,10 +499,11 @@ export default function Employees() {
                   <span className="cl-amount-out">−{detailsSalary.deduction.toLocaleString('en-US')} ₪</span>
                 </div>
                 <div className="mi-detail-item mi-detail-full" style={{ borderTop: '2px solid #27ae60', paddingTop: '12px' }}>
-                  <span className="mi-detail-label">الصافي النهائي</span>
+                  <span className="mi-detail-label">صافي الراتب</span>
                   <span className="mi-amount" style={{ fontSize: '18px', color: '#27ae60', fontWeight: 700 }}>
                     {detailsSalary.amount.toLocaleString('en-US')} ₪
                   </span>
+                  <span className="mi-field-hint">اليومية × أيام الدوام + المكافأة − الخصم</span>
                 </div>
                 {detailsSalary.notes && (
                   <div className="mi-detail-item mi-detail-full">
@@ -529,7 +533,7 @@ export default function Employees() {
           message={`هل أنت متأكد من حذف الموظف "${deleteEmp.name}"؟`}
           onConfirm={async () => {
             try { await dbService.employee.delete(deleteEmp.id); await reload(['employees', 'salaries', 'purchaseInvoices']); setDeleteEmp(null) }
-            catch (err) { showError('تعذّر حذف الموظف', err) }
+            catch (err) { showError('ما قدرنا نحذف الموظف', err) }
           }}
           onCancel={() => setDeleteEmp(null)}
         />
@@ -542,7 +546,7 @@ export default function Employees() {
           message={`هل أنت متأكد من حذف دفعة راتب الموظف "${empName(deleteSalary.employeeId)}"؟`}
           onConfirm={async () => {
             try { await dbService.salary.delete(deleteSalary.id); await reload(['salaries', 'purchaseInvoices']); setDeleteSalary(null) }
-            catch (err) { showError('تعذّر حذف دفعة الراتب', err) }
+            catch (err) { showError('ما قدرنا نحذف دفعة الراتب', err) }
           }}
           onCancel={() => setDeleteSalary(null)}
         />

@@ -42,7 +42,7 @@ function assertSupplierPaymentWithinRemaining(invoiceId: number, payments: Payme
   if (!inv) throw new Error('الفاتورة غير موجودة')
   const totalNew = calcPaid(payments)
   if (totalNew > inv.amount_remaining + 0.001) {
-    throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) يتجاوز المتبقي (${inv.amount_remaining.toFixed(2)} ₪)`)
+    throw new Error(`مجموع الدفعة (${totalNew.toFixed(2)} ₪) أكبر من الباقي للمورد (${inv.amount_remaining.toFixed(2)} ₪)`)
   }
 }
 
@@ -98,16 +98,16 @@ function insertSupplierPayments(
   // خصم التسوية: يُخصم من amount_remaining دون تسجيل نقدية (لا صادر ولا وارد) في cash_ledger
   const disc = settlementDiscount || 0
   if (disc > 0) {
-    if (disc < 0) throw new Error('خصم التسوية لا يمكن أن يكون سالباً')
+    if (disc < 0) throw new Error('مبلغ الإسقاط من الدين ما يصير يكون بالسالب')
     // amount_remaining هنا هو المتبقّي بعد خصم الدفعات النقدية الفعلية أعلاه
     const inv = db.prepare('SELECT amount_remaining FROM supplier_invoices WHERE id = ?').get(invoiceId) as { amount_remaining: number } | undefined
     if (!inv) throw new Error('الفاتورة غير موجودة')
     if (disc > inv.amount_remaining + 0.001) {
-      throw new Error(`خصم التسوية (${disc.toFixed(2)} ₪) يتجاوز المتبقي بعد الدفعة (${Math.max(0, inv.amount_remaining).toFixed(2)} ₪)`)
+      throw new Error(`مبلغ الإسقاط من الدين (${disc.toFixed(2)} ₪) أكبر من الباقي للمورد بعد الدفعة (${Math.max(0, inv.amount_remaining).toFixed(2)} ₪)`)
     }
     db.prepare(`
       INSERT INTO ${paymentsTable} (invoice_id, payment_date, method, amount, settlement_discount, notes)
-      VALUES (?, ?, 'cash', 0, ?, 'خصم تسوية')
+      VALUES (?, ?, 'cash', 0, ?, 'إسقاط من الدين')
     `).run(invoiceId, paymentDate, disc)
     db.prepare('UPDATE supplier_invoices SET amount_remaining = amount_remaining - ? WHERE id = ?').run(disc, invoiceId)
   }
@@ -190,7 +190,7 @@ export function updateSupplierInvoice(id: number, input: SupplierInvoiceInput): 
         SELECT settlement_discount FROM supplier_debt_payments WHERE invoice_id=?
       )`).get(id, id) as { v: number }).v
     if (total_amount < paid + settle - 0.001) {
-      throw new Error(`لا يمكن تعديل الفاتورة: الإجمالي بعد التعديل (${total_amount.toFixed(2)} ₪) أقل من المدفوع مسبقاً + خصم التسوية (${(paid + settle).toFixed(2)} ₪)`)
+      throw new Error(`ما قدرنا نعدّل الفاتورة: المجموع الجديد (${total_amount.toFixed(2)} ₪) أقل من المدفوع + الإسقاط من الدين (${(paid + settle).toFixed(2)} ₪)`)
     }
 
     db.prepare(`
@@ -294,9 +294,9 @@ export function addSupplierBulkPayment(input: SupplierBulkPaymentInput): number 
 
   assertNonEmpty(input.supplier_name, 'اسم المورد')
   assertPositiveAmount(p.amount, 'مبلغ الدفعة')
-  if (p.method === 'debt') throw new Error('طريقة الدفع غير صالحة لدفعة عامة (نقد/شيك/فيزا فقط)')
+  if (p.method === 'debt') throw new Error('لازم تختار كاش أو شيك أو فيزا للدفعة على الحساب')
   if (!input.allocations || input.allocations.length === 0) {
-    throw new Error('لا يوجد توزيع للدفعة — لا فواتير غير مسدَّدة لهذا المورد')
+    throw new Error('ما في فواتير مفتوحة لهذا المورد عشان نوزّع عليها الدفعة')
   }
 
   const run = db.transaction(() => {
@@ -306,13 +306,13 @@ export function addSupplierBulkPayment(input: SupplierBulkPaymentInput): number 
       WHERE supplier_name = ? AND amount_remaining > 0
     `).get(input.supplier_name) as { v: number }).v
     if (p.amount > totalDebt + 0.001) {
-      throw new Error(`مبلغ الدفعة (${p.amount.toFixed(2)} ₪) يتجاوز إجمالي الديون المستحقة للمورد (${totalDebt.toFixed(2)} ₪)`)
+      throw new Error(`مبلغ الدفعة (${p.amount.toFixed(2)} ₪) أكبر من كل الباقي للمورد (${totalDebt.toFixed(2)} ₪)`)
     }
 
     // المبلغ يجب أن يُوزَّع بالكامل — توزيع أقل يترك نقدية بلا وجهة، وأكثر يتجاوز الدفعة
     const allocTotal = input.allocations.reduce((s, a) => s + a.amount, 0)
     if (Math.abs(allocTotal - p.amount) > 0.001) {
-      throw new Error(`مجموع التوزيع (${allocTotal.toFixed(2)} ₪) يجب أن يساوي مبلغ الدفعة (${p.amount.toFixed(2)} ₪)`)
+      throw new Error(`مجموع التوزيع على الفواتير (${allocTotal.toFixed(2)} ₪) لازم يساوي مبلغ الدفعة (${p.amount.toFixed(2)} ₪)`)
     }
 
     const { lastInsertRowid: bulkRowid } = db.prepare(`
@@ -340,7 +340,7 @@ export function addSupplierBulkPayment(input: SupplierBulkPaymentInput): number 
         throw new Error(`الفاتورة #${alloc.invoice_id} لا تخصّ المورد "${input.supplier_name}"`)
       }
       if (alloc.amount > inv.amount_remaining + 0.001) {
-        throw new Error(`التوزيع على الفاتورة #${alloc.invoice_id} (${alloc.amount.toFixed(2)} ₪) يتجاوز المتبقي عليها (${inv.amount_remaining.toFixed(2)} ₪)`)
+        throw new Error(`المبلغ الموزّع على الفاتورة #${alloc.invoice_id} (${alloc.amount.toFixed(2)} ₪) أكبر من الباقي للمورد عليها (${inv.amount_remaining.toFixed(2)} ₪)`)
       }
 
       // الملاحظة تحمل رقم الفاتورة الفعلي (PUR-…) واسم المورد — سجل الصندوق يجمّع صفوف
