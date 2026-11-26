@@ -7,22 +7,22 @@
  القادم للنسخة المحزَّمة كـ"أول تشغيل حقيقي" ويُعاد ربط الجهاز من جديد.
 
  المصادر التي أُخذت منها الأسماء والمسارات (لا تغيّرها هنا دون تغييرها هناك):
-   - electron/license.ts      → REGISTRY_PATH = HKCU\Software\GarageManagerPro
+   - electron/license.ts      → REGISTRY_PATH = HKCU\Software\GreenLineGarage
                                  REGISTRY_VALUE = lic
-                                 الملف المخفي  = <userData>\.gmp-lic
+                                 الملف المخفي  = <userData>\.glg-lic
    - src/database.ts          → garage.db داخل <userData>
-   - package.json             → name = garage-management-system
-                                 (userData الفعلي: %APPDATA%\garage-management-system —
+   - package.json             → name = car-repair-shop
+                                 (userData الفعلي: %APPDATA%\car-repair-shop —
                                  للنسخة المحزَّمة ولوضع التطوير معاً، لأن productName
                                  غير معرَّف في package.json نفسه؛ تحقّقنا من هذا
                                  عملياً بتشغيل النسخة المحزَّمة يوم 2026-07-05)
-   - electron-builder.json5   → productName = GarageManagerPro (اسم الـ exe فقط؛
-                                 يُشمل مجلد %APPDATA%\GarageManagerPro احتياطاً لو
+   - electron-builder.json5   → productName = GreenLineGarage (اسم الـ exe فقط؛
+                                 يُشمل مجلد %APPDATA%\GreenLineGarage احتياطاً لو
                                  أُضيف productName إلى package.json مستقبلاً)
 
  ما يفعله السكربت:
-   1) يحذف مفتاح الريجستري HKCU\Software\GarageManagerPro بالكامل.
-   2) يحذف الملف المخفي .gmp-lic من مجلدَي بيانات البرنامج (إن وُجد).
+   1) يحذف مفتاح الريجستري HKCU\Software\GreenLineGarage بالكامل.
+   2) يحذف الملف المخفي .glg-lic من مجلدَي بيانات البرنامج (إن وُجد).
    3) ينقل (rename — لا يحذف) كل مجلد بيانات موجود إلى نسخة احتياطية
       بلاحقة _OLD_BACKUP_<طابع زمني> في نفس المكان، تحسّباً للرجوع إليها.
 
@@ -40,11 +40,11 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 # ── الأسماء الفعلية كما في الكود ────────────────────────────────────────────
-$RegistryPath = 'HKCU:\Software\GarageManagerPro'        # license.ts → REGISTRY_PATH
-$MarkFileName = '.gmp-lic'                              # license.ts → externalMarkFilePath()
+$RegistryPath = 'HKCU:\Software\GreenLineGarage'        # license.ts → REGISTRY_PATH
+$MarkFileName = '.glg-lic'                              # license.ts → externalMarkFilePath()
 $DataFolders  = @(
-    (Join-Path $env:APPDATA 'garage-management-system'),         # userData الفعلي (محزَّم + تطوير)
-    (Join-Path $env:APPDATA 'GarageManagerPro')          # احتياط لو أُضيف productName لاحقاً
+    (Join-Path $env:APPDATA 'car-repair-shop'),         # userData الفعلي (محزَّم + تطوير)
+    (Join-Path $env:APPDATA 'GreenLineGarage')          # احتياط لو أُضيف productName لاحقاً
 )
 
 Write-Host ''

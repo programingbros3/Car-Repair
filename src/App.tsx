@@ -1,4 +1,3 @@
-import { GarageIdentityProvider } from './context/GarageIdentityContext'
 import { useCallback, useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { GarageProvider, useGarage } from './store/GarageContext'
@@ -95,7 +94,6 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <GarageIdentityProvider>
       {!isUnlocked ? (
         <PasswordGate onUnlock={() => setIsUnlocked(true)} />
       ) : (
@@ -104,7 +102,6 @@ export default function App() {
           <ErrorToast />
         </GarageProvider>
       )}
-    </GarageIdentityProvider>
     </ErrorBoundary>
   )
 }

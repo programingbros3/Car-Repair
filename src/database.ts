@@ -97,7 +97,6 @@ export function applySchemaAndMigrations(db: BetterSqlite3): void {
   migrateCashAuditLock(db)
   migrateUniqueInvoiceNumbers(db)
   backfillInvoiceNumbers(db)
-  migrateGarageIdentity(db)
 }
 
 /**
@@ -291,17 +290,4 @@ function backfillGroup(
 export function getDB(): BetterSqlite3 {
   if (!db) throw new Error('قاعدة البيانات لم تُهيَّأ بعد — استدع initDB() أولاً')
   return db
-}
-
-/**
- * تهيئة قيم هوية الكراج الافتراضية إذا لم تكن موجودة (آمن لإعادة التشغيل ولا يكسر القواعد القديمة)
- */
-function migrateGarageIdentity(db: BetterSqlite3): void {
-  try {
-    const seed = db.prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`)
-    seed.run('garage_name', '')
-    seed.run('garage_logo', '')
-  } catch (err) {
-    console.warn('⚠️ تعذّر تهيئة إعدادات هوية الكراج:', err)
-  }
 }

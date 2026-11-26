@@ -1,4 +1,3 @@
-import { useGarageIdentity } from '../context/GarageIdentityContext'
 import { NavLink } from 'react-router-dom'
 import NavIcon, { type IconName } from './NavIcon'
 
@@ -25,13 +24,9 @@ function getArabicDate(): string {
 }
 
 export default function Sidebar() {
-  const { garageName, displayLogo } = useGarageIdentity()
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', justifyContent: 'center' }}>
-        <img src={displayLogo} alt={garageName} style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 4 }} />
-        <span>{garageName}</span>
-      </div>
+      <div className="sidebar-logo">كراج الخط الأخضر</div>
 
       <ul className="sidebar-nav">
         {navItems.map(({ to, icon, label }) => (

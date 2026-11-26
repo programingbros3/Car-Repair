@@ -36,7 +36,7 @@ const KEYS = {
 } as const
 
 // H4: مسار العلامة الخارجية (سجل ويندوز + ملف مخفي)
-const REGISTRY_PATH = 'HKCU\\Software\\GarageManagerPro'
+const REGISTRY_PATH = 'HKCU\\Software\\GreenLineGarage'
 const REGISTRY_VALUE = 'lic'
 
 function getSetting(db: DB, key: string): string | null {
@@ -70,7 +70,7 @@ function getCurrentHwid(): string | null {
    تفعيلها على هذا الجهاز". كل عمليات النظام محاطة بـ try/catch — غياب إحدى
    العلامتين (صلاحيات/نظام غير ويندوز) لا يعطّل التطبيق. */
 function externalMarkFilePath(): string {
-    return path.join(app.getPath('userData'), '.gmp-lic')
+    return path.join(app.getPath('userData'), '.glg-lic')
 }
 
 function readExternalMark(): string | null {

@@ -13,25 +13,7 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-
-let cachedGarageName = 'نظام إدارة الكراج'
-let cachedGarageLogo: string | null = null
-
-export function setPrintPdfIdentity(name: string, logo: string | null): void {
-  if (name) cachedGarageName = name
-  cachedGarageLogo = logo || null
-}
-
-export interface PrintPdfOptions {
-  garageName?: string
-  garageLogo?: string | null
-}
-
-export function printPdf(title: string, bodyHtml: string, options?: PrintPdfOptions): void {
-  const garageName = options?.garageName || cachedGarageName || "نظام إدارة الكراج"
-  const garageLogo = options?.garageLogo !== undefined ? options.garageLogo : cachedGarageLogo
-  const logoHtml = garageLogo ? `<div style="margin-bottom:8px;"><img src="${garageLogo}" alt="${escapeHtml(garageName)}" style="max-height:60px; max-width:140px; object-fit:contain;" /></div>` : ""
-
+export function printPdf(title: string, bodyHtml: string): void {
   const win = window.open('', '_blank', 'width=794,height=1123')
   if (!win) return
   win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar">
@@ -62,8 +44,7 @@ export function printPdf(title: string, bodyHtml: string, options?: PrintPdfOpti
 </head>
 <body>
   <div class="header">
-    ${logoHtml}
-    <h1>🔧 ${escapeHtml(garageName)}</h1>
+    <h1>🔧 كراج الخط الأخضر</h1>
     <h2>${escapeHtml(title)}</h2>
   </div>
   ${bodyHtml}

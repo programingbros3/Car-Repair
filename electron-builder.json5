@@ -1,9 +1,9 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.garagesoft.manager",
+  "appId": "com.greenline.garage",
   "asar": true,
-  "productName": "GarageManagerPro",
+  "productName": "GreenLineGarage",
   "directories": {
     "output": "../Car-Repair-release/${version}"
   },
