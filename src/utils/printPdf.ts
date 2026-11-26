@@ -44,7 +44,7 @@ export function printPdf(title: string, bodyHtml: string): void {
 </head>
 <body>
   <div class="header">
-    <h1>🔧 كراج الخط الأخضر</h1>
+    <h1>🔧 اسم الكراج</h1>
     <h2>${escapeHtml(title)}</h2>
   </div>
   ${bodyHtml}
