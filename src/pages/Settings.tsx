@@ -10,6 +10,64 @@ import type { AutoBackupSettings, AutoBackupStatus, AutoLockSettings, ActivityLo
    + الأمان: تغيير كلمة السر / القفل التلقائي عند الخمول / سجل النشاط
 ════════════════════════════════════════ */
 export default function Settings() {
+  /* ════════════════════════════════════════
+     هوية الكراج (الاسم والشعار)
+  ════════════════════════════════════════ */
+  const [garageName, setGarageName]         = useState('')
+  const [garageLogo, setGarageLogo]         = useState('')
+  const [identityLoaded, setIdentityLoaded] = useState(false)
+  const [identitySaving, setIdentitySaving] = useState(false)
+  const [identityMsg, setIdentityMsg]       = useState<string | null>(null)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const identity = await dbService.garageIdentity.get()
+        setGarageName(identity.garage_name)
+        setGarageLogo(identity.garage_logo)
+      } catch (err) {
+        showError('تعذّر تحميل هوية الكراج', err)
+      } finally {
+        setIdentityLoaded(true)
+      }
+    })()
+  }, [])
+
+  const handleSaveGarageName = async () => {
+    setIdentitySaving(true)
+    setIdentityMsg(null)
+    try {
+      const updated = await dbService.garageIdentity.update({ garage_name: garageName })
+      setGarageName(updated.garage_name)
+      setIdentityMsg('تم حفظ اسم الكراج بنجاح')
+    } catch (err) {
+      showError('فشل حفظ اسم الكراج', err)
+    } finally {
+      setIdentitySaving(false)
+    }
+  }
+
+  const handlePickGarageLogo = async () => {
+    setIdentitySaving(true)
+    setIdentityMsg(null)
+    try {
+      const res = (await window.ipcRenderer.invoke('garageIdentity:pickLogo')) as {
+        success: boolean
+        data?: string | null
+        error?: string
+      }
+      if (!res.success) throw new Error(res.error || 'تعذّر اختيار الشعار')
+      if (!res.data) return
+      const updated = await dbService.garageIdentity.update({ garage_logo: res.data })
+      setGarageLogo(updated.garage_logo)
+      setIdentityMsg('تم حفظ شعار الكراج بنجاح')
+    } catch (err) {
+      showError('فشل اختيار وحفظ الشعار', err)
+    } finally {
+      setIdentitySaving(false)
+    }
+  }
+
   const [exporting, setExporting]       = useState(false)
   const [exportMsg, setExportMsg]       = useState<string | null>(null)
   const [showImportDlg, setShowImportDlg] = useState(false)
@@ -291,6 +349,69 @@ export default function Settings() {
     <div>
       <div className="page-header">
         <h1 className="page-title">الإعدادات</h1>
+      </div>
+
+      <div className="mi-card">
+        <h2 className="mi-section-title">هوية الكراج</h2>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 520 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            {garageLogo && (
+              <img
+                src={garageLogo}
+                alt={garageName || 'اسم الكراج'}
+                style={{ maxHeight: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 6, border: '1px solid #e8edf2', padding: 4, background: '#fff' }}
+              />
+            )}
+            <div>
+              <div style={rowTitle}>{garageName.trim() || 'اسم الكراج'}</div>
+              <div style={rowDesc}>{garageLogo ? 'الشعار مفعّل' : 'لم يتم تعيين شعار بعد'}</div>
+            </div>
+          </div>
+
+          <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
+
+          <div style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <div style={rowTitle}>اسم الكراج</div>
+              <input
+                type="text"
+                style={textInputStyle}
+                placeholder="اسم الكراج"
+                value={garageName}
+                disabled={!identityLoaded || identitySaving}
+                onChange={e => setGarageName(e.target.value)}
+              />
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ flexShrink: 0, alignSelf: 'flex-end' }}
+              onClick={handleSaveGarageName}
+              disabled={!identityLoaded || identitySaving}
+            >
+              {identitySaving ? 'جارٍ الحفظ…' : 'حفظ'}
+            </button>
+          </div>
+
+          <hr style={{ border: 'none', borderTop: '1px solid #e8edf2', margin: 0 }} />
+
+          <div style={rowStyle}>
+            <div>
+              <div style={rowTitle}>شعار الكراج</div>
+              <div style={rowDesc}>اختر صورة بصيغة PNG أو JPG أو SVG</div>
+            </div>
+            <button
+              className="btn btn-secondary"
+              style={{ flexShrink: 0 }}
+              onClick={handlePickGarageLogo}
+              disabled={!identityLoaded || identitySaving}
+            >
+              اختيار شعار
+            </button>
+          </div>
+
+          {identityMsg && <div style={successMsg}>{identityMsg}</div>}
+        </div>
       </div>
 
       <div className="mi-card">

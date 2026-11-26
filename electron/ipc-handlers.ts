@@ -907,4 +907,25 @@ export function registerIpcHandlers(db: DB): void {
     })()
     return readGarageIdentity()
   })
+
+  ipcMain.handle('garageIdentity:pickLogo', async () => {
+    try {
+      const { filePaths, canceled } = await dialog.showOpenDialog({
+        title: 'اختيار شعار الكراج',
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
+        properties: ['openFile'],
+      })
+      if (canceled || filePaths.length === 0) return { success: true, data: null }
+      const filePath = filePaths[0]
+      const ext = path.extname(filePath).toLowerCase()
+      const mime =
+        ext === '.svg' ? 'image/svg+xml'
+        : ext === '.png' ? 'image/png'
+        : 'image/jpeg'
+      const base64 = fs.readFileSync(filePath).toString('base64')
+      return { success: true, data: `data:${mime};base64,${base64}` }
+    } catch (err) {
+      return { success: false, error: toArabicError(err) }
+    }
+  })
 }

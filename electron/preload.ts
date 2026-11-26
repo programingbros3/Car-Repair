@@ -57,7 +57,7 @@ const ALLOWED_CHANNELS = new Set<string>([
   // الضريبة
   'vat:getSettings', 'vat:updateSettings',
   // هوية الكراج
-  'garageIdentity:get', 'garageIdentity:update',
+  'garageIdentity:get', 'garageIdentity:update', 'garageIdentity:pickLogo',
   // روابط خارجية
   'shell:openExternal',
 ])
