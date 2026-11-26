@@ -45,7 +45,7 @@ import type {
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
   UpcomingChequeRow, ChequeRow, ChequeFilters, ChequeStatus, ChequeTableKind,
-  DebtAgingRow,
+  DebtAgingRow, GarageIdentitySettings,
 } from '../db/types'
 
 import type { CarHeaderFields } from '../utils/dbMapper'
@@ -397,6 +397,13 @@ export const dbService = {
     getSettings: () => invoke<VatSettings>('vat:getSettings'),
     updateSettings: (updates: Partial<VatSettings>) =>
       invoke<VatSettings>('vat:updateSettings', updates),
+  },
+
+  /* ─────────────── هوية الكراج (الاسم والشعار) ─────────────── */
+  garageIdentity: {
+    get: () => invoke<GarageIdentitySettings>('garageIdentity:get'),
+    update: (updates: Partial<GarageIdentitySettings>) =>
+      invoke<GarageIdentitySettings>('garageIdentity:update', updates),
   },
 }
 

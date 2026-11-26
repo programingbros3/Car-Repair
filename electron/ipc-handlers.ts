@@ -67,7 +67,7 @@ import type {
   MaintenanceInvoiceInput, DirectSaleInput, SupplierInvoiceInput, SupplierBulkPaymentInput,
   SupplierBulkPaymentFilters,
   DailyExpenseInput, EmployeeInput, SalaryInput,
-  SupplierDirectoryInput, WarrantyInput, AutoLockSettings,
+  SupplierDirectoryInput, WarrantyInput, AutoLockSettings, GarageIdentitySettings,
 } from '../src/db/types'
 
 type DB = Database.Database
@@ -885,4 +885,26 @@ export function registerIpcHandlers(db: DB): void {
   on('vat:getSettings', () => getVatSettings(db))
   on('vat:updateSettings', (updates: Partial<{ enabled: boolean; rate: number }>) =>
     updateVatSettings(db, updates))
+
+  /* ─────────────── هوية الكراج (الاسم والشعار) ─────────────── */
+  const readGarageIdentity = (): GarageIdentitySettings => {
+    const read = (key: string): string =>
+      (db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key) as { value: string } | undefined)?.value ?? ''
+    return {
+      garage_name: read('garage_name'),
+      garage_logo: read('garage_logo'),
+    }
+  }
+  on('garageIdentity:get', () => readGarageIdentity())
+  on('garageIdentity:update', (updates: Partial<GarageIdentitySettings>) => {
+    const upsert = db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `)
+    db.transaction(() => {
+      if (updates?.garage_name !== undefined) upsert.run('garage_name', String(updates.garage_name).trim())
+      if (updates?.garage_logo !== undefined) upsert.run('garage_logo', String(updates.garage_logo).trim())
+    })()
+    return readGarageIdentity()
+  })
 }

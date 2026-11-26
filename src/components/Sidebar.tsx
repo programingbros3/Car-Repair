@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import NavIcon, { type IconName } from './NavIcon'
+import { dbService } from '../services/db'
 
 const navItems: { to: string; icon: IconName; label: string }[] = [
   { to: '/cash-ledger',        icon: 'ledger',      label: 'الصندوق الرئيسي'   },
@@ -24,9 +26,30 @@ function getArabicDate(): string {
 }
 
 export default function Sidebar() {
+  const [garageName, setGarageName] = useState('اسم الكراج')
+  const [garageLogo, setGarageLogo] = useState('')
+
+  useEffect(() => {
+    dbService.garageIdentity.get()
+      .then(({ garage_name, garage_logo }) => {
+        if (garage_name.trim()) setGarageName(garage_name.trim())
+        if (garage_logo.trim()) setGarageLogo(garage_logo.trim())
+      })
+      .catch(() => {})
+  }, [])
+
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">اسم الكراج</div>
+      <div className="sidebar-logo">
+        {garageLogo && (
+          <img
+            src={garageLogo}
+            alt={garageName}
+            style={{ maxHeight: 40, maxWidth: '100%', objectFit: 'contain', display: 'block', margin: '0 auto 6px' }}
+          />
+        )}
+        <span>{garageName}</span>
+      </div>
 
       <ul className="sidebar-nav">
         {navItems.map(({ to, icon, label }) => (

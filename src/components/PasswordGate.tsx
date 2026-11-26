@@ -20,11 +20,19 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   /* M2: أول تشغيل بلا كلمة سر ⇒ شاشة تعيين كلمة السر بدل تسجيل الدخول */
   const [mode, setMode] = useState<'loading' | 'setup' | 'login'>('loading')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [garageName, setGarageName] = useState('اسم الكراج')
+  const [garageLogo, setGarageLogo] = useState('')
 
   useEffect(() => {
     dbService.auth.needsPasswordSetup()
       .then(needs => setMode(needs ? 'setup' : 'login'))
       .catch(() => setMode('login'))
+    dbService.garageIdentity.get()
+      .then(({ garage_name, garage_logo }) => {
+        if (garage_name.trim()) setGarageName(garage_name.trim())
+        if (garage_logo.trim()) setGarageLogo(garage_logo.trim())
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -89,11 +97,24 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
     )
   }
 
+  const brandHeader = (
+    <div style={logo}>
+      {garageLogo && (
+        <img
+          src={garageLogo}
+          alt={garageName}
+          style={{ maxHeight: 56, maxWidth: '100%', objectFit: 'contain', display: 'block', margin: '0 auto 0.5rem' }}
+        />
+      )}
+      <span>{garageName}</span>
+    </div>
+  )
+
   if (mode === 'setup') {
     return (
       <div style={overlay}>
         <form style={card} onSubmit={handleSetup}>
-          <div style={logo}>اسم الكراج</div>
+          {brandHeader}
           <p style={subtitle}>مرحباً بك — عيّن كلمة سر للدخول (أول تشغيل)</p>
           <PasswordInput
             value={password}
@@ -120,7 +141,7 @@ export default function PasswordGate({ onUnlock }: PasswordGateProps) {
   return (
     <div style={overlay}>
       <form style={card} onSubmit={handleSubmit}>
-        <div style={logo}>اسم الكراج</div>
+        {brandHeader}
         <p style={subtitle}>الرجاء إدخال كلمة السر للدخول</p>
         <PasswordInput
           value={password}

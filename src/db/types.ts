@@ -710,3 +710,9 @@ export interface ActivityLogRow {
   details: string | null
   created_at: string
 }
+
+// ── هوية الكراج (الاسم والشعار) ──────────────────────────────────────────────
+export interface GarageIdentitySettings {
+  garage_name: string
+  garage_logo: string
+}

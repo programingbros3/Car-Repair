@@ -1,5 +1,6 @@
 import tajawal400 from '@fontsource/tajawal/400.css?inline'
 import tajawal700 from '@fontsource/tajawal/700.css?inline'
+import { dbService } from '../services/db'
 
 /* H3: كل قيمة مصدرها المستخدم (اسم زبون، ملاحظة، اسم قطعة…) يجب أن تمرّ من هنا
    قبل حقنها في HTML الطباعة — وإلا نفّذت نافذة الطباعة أي وسوم/سكربتات مكتوبة
@@ -13,9 +14,20 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-export function printPdf(title: string, bodyHtml: string): void {
+export async function printPdf(title: string, bodyHtml: string): Promise<void> {
+  let garageName = 'اسم الكراج'
+  let garageLogo = ''
+  try {
+    const identity = await dbService.garageIdentity.get()
+    if (identity.garage_name.trim()) garageName = identity.garage_name.trim()
+    if (identity.garage_logo.trim()) garageLogo = identity.garage_logo.trim()
+  } catch { /* fallback to default */ }
+
   const win = window.open('', '_blank', 'width=794,height=1123')
   if (!win) return
+  const logoHtml = garageLogo
+    ? `<img src="${escapeHtml(garageLogo)}" alt="${escapeHtml(garageName)}" style="max-height:56px;max-width:180px;object-fit:contain;display:block;margin:0 auto 6px;"/>`
+    : ''
   win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar">
 <head>
   <meta charset="UTF-8"/>
@@ -44,7 +56,8 @@ export function printPdf(title: string, bodyHtml: string): void {
 </head>
 <body>
   <div class="header">
-    <h1>🔧 اسم الكراج</h1>
+    ${logoHtml}
+    <h1>${garageLogo ? '' : '🔧 '}${escapeHtml(garageName)}</h1>
     <h2>${escapeHtml(title)}</h2>
   </div>
   ${bodyHtml}
