@@ -30,6 +30,11 @@ dist-electron/
 electron/.license-secret
 .env*.local
 
+# أداة توليد المفاتيح وأكواد التفعيل والمفتاح الخاص (خارج git وحزمة البناء)
+tools/
+*.pem
+*.key
+
 # L2: ملفات قواعد البيانات الثنائية لا تدخل المستودع
 *.db
 *.db-shm

@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { GarageProvider, useGarage } from './store/GarageContext'
 import { useAutoLock } from './utils/useAutoLock'
+import { dbService } from './services/db'
+import type { LicenseStatus } from './db/types'
 import PasswordGate from './components/PasswordGate'
+import LicenseGate from './components/LicenseGate'
+import TrialBanner from './components/TrialBanner'
 import Sidebar from './components/Sidebar'
 import Footer from './components/Footer'
 import ErrorToast from './components/ErrorToast'
@@ -22,7 +26,13 @@ import Reports from './pages/Reports'
 import Settings from './pages/Settings'
 import './App.css'
 
-function AppShell() {
+function AppShell({
+  licenseStatus,
+  onOpenActivate,
+}: {
+  licenseStatus: LicenseStatus
+  onOpenActivate: () => void
+}) {
   const { loading } = useGarage()
 
   if (loading) {
@@ -36,28 +46,31 @@ function AppShell() {
 
   return (
     <HashRouter>
-      <div className="app-layout">
-        <Sidebar />
-        <div className="app-main">
-          <main className="main-content">
-            <Routes>
-            <Route path="/"                   element={<Navigate to="/cash-ledger" replace />} />
-            <Route path="/cash-ledger"        element={<CashLedger />} />
-            <Route path="/sales-invoices"     element={<SalesInvoices />} />
-            <Route path="/purchase-invoices"  element={<PurchaseInvoices />} />
-            <Route path="/maintenance"        element={<MaintenanceInvoices />} />
-            <Route path="/direct-sales"       element={<DirectSales />} />
-            <Route path="/pending-debts"      element={<PendingDebts />} />
-            <Route path="/cheques"            element={<Cheques />} />
-            <Route path="/expenses"           element={<DailyExpenses />} />
-            <Route path="/suppliers"          element={<Suppliers />} />
-            <Route path="/employees"          element={<Employees />} />
-            <Route path="/warranties"         element={<Warranties />} />
-            <Route path="/reports"            element={<Reports />} />
-            <Route path="/settings"           element={<Settings />} />
-            </Routes>
-          </main>
-          <Footer />
+      <div className="app-viewport">
+        <TrialBanner licenseStatus={licenseStatus} onOpenActivate={onOpenActivate} />
+        <div className="app-layout">
+          <Sidebar />
+          <div className="app-main">
+            <main className="main-content">
+              <Routes>
+              <Route path="/"                   element={<Navigate to="/cash-ledger" replace />} />
+              <Route path="/cash-ledger"        element={<CashLedger />} />
+              <Route path="/sales-invoices"     element={<SalesInvoices />} />
+              <Route path="/purchase-invoices"  element={<PurchaseInvoices />} />
+              <Route path="/maintenance"        element={<MaintenanceInvoices />} />
+              <Route path="/direct-sales"       element={<DirectSales />} />
+              <Route path="/pending-debts"      element={<PendingDebts />} />
+              <Route path="/cheques"            element={<Cheques />} />
+              <Route path="/expenses"           element={<DailyExpenses />} />
+              <Route path="/suppliers"          element={<Suppliers />} />
+              <Route path="/employees"          element={<Employees />} />
+              <Route path="/warranties"         element={<Warranties />} />
+              <Route path="/reports"            element={<Reports />} />
+              <Route path="/settings"           element={<Settings />} />
+              </Routes>
+            </main>
+            <Footer />
+          </div>
         </div>
       </div>
     </HashRouter>
@@ -87,18 +100,62 @@ function useDateClampGuard() {
 
 export default function App() {
   useDateClampGuard()
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null)
+  const [showActivation, setShowActivation] = useState(false)
   const [isUnlocked, setIsUnlocked] = useState(false)
   const lock = useCallback(() => setIsUnlocked(false), [])
 
-  useAutoLock(isUnlocked, lock)
+  useEffect(() => {
+    dbService.license.getStatus()
+      .then(setLicenseStatus)
+      .catch(() => setLicenseStatus({ status: 'hwid_error', hwid: null, daysRemaining: 0, trialEndAt: null }))
+  }, [])
+
+  // متابعة صلاحية الفترة التجريبية أثناء عمل البرنامج
+  useEffect(() => {
+    if (licenseStatus?.status !== 'trial') return
+    const timer = setInterval(() => {
+      dbService.license.getStatus().then(setLicenseStatus).catch(() => {})
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, [licenseStatus?.status])
+
+  const isLicenseLocked =
+    licenseStatus?.status === 'trial_expired' || licenseStatus?.status === 'blocked'
+
+  useAutoLock(isUnlocked && !isLicenseLocked && !showActivation, lock)
+
+  if (!licenseStatus) {
+    return (
+      <ErrorBoundary>
+        <div className="app-loading">
+          <div className="app-spinner" />
+          <span>جارٍ التحقق من الترخيص…</span>
+        </div>
+      </ErrorBoundary>
+    )
+  }
 
   return (
     <ErrorBoundary>
-      {!isUnlocked ? (
+      {isLicenseLocked || showActivation ? (
+        <LicenseGate
+          hwid={licenseStatus.hwid}
+          isExpired={isLicenseLocked}
+          onActivated={next => {
+            setLicenseStatus(next)
+            setShowActivation(false)
+          }}
+          onCancel={isLicenseLocked ? undefined : () => setShowActivation(false)}
+        />
+      ) : !isUnlocked ? (
         <PasswordGate onUnlock={() => setIsUnlocked(true)} />
       ) : (
         <GarageProvider>
-          <AppShell />
+          <AppShell
+            licenseStatus={licenseStatus}
+            onOpenActivate={() => setShowActivation(true)}
+          />
           <ErrorToast />
         </GarageProvider>
       )}

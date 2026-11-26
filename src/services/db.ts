@@ -45,7 +45,7 @@ import type {
   AutoBackupSettings, AutoBackupStatus, AutoBackupRunResult,
   PasswordVerifyResult, AutoLockSettings, ActivityLogRow, VatSettings,
   UpcomingChequeRow, ChequeRow, ChequeFilters, ChequeStatus, ChequeTableKind,
-  DebtAgingRow, GarageIdentitySettings,
+  DebtAgingRow, GarageIdentitySettings, LicenseStatus,
 } from '../db/types'
 
 import type { CarHeaderFields } from '../utils/dbMapper'
@@ -404,6 +404,12 @@ export const dbService = {
     get: () => invoke<GarageIdentitySettings>('garageIdentity:get'),
     update: (updates: Partial<GarageIdentitySettings>) =>
       invoke<GarageIdentitySettings>('garageIdentity:update', updates),
+  },
+
+  /* ─────────────── الترخيص والفترة التجريبية ─────────────── */
+  license: {
+    getStatus: () => invoke<LicenseStatus>('license:getStatus'),
+    activate: (code: string) => invoke<LicenseStatus>('license:activate', code),
   },
 }
 

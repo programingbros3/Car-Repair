@@ -59,6 +59,9 @@ import {
   logActivity, getActivityLog,
   readDeviceAuthState, applyDeviceAuthState,
 } from './auth'
+import {
+  getLicenseStatus, activateWithCode, assertLicenseUnlocked,
+} from './license'
 
 import type {
   MaintenanceFilters, DirectSaleFilters, SupplierFilters, ExpenseFilters, DebtFilters,
@@ -213,21 +216,7 @@ function toArabicError(err: unknown): string {
   return 'صار خطأ غير متوقع، جرّب مرة ثانية'
 }
 
-/** يسجّل معالجاً ملفوفاً بـ try/catch موحّد */
-function on(channel: string, fn: (...args: any[]) => any): void {
-  ipcMain.handle(channel, async (_event, ...args: any[]) => {
-    try {
-      return { success: true, data: fn(...args) }
-    } catch (err) {
-      return { success: false, error: toArabicError(err) }
-    }
-  })
-}
-
-/* ════════════════════════════════════════
-   أدوات حذف داخلية (تنظيف الصندوق + الجداول المرتبطة)
-════════════════════════════════════════ */
-/** يحذف قيود الصندوق التي تشير إلى دفعات محدّدة (reference_id = payment id) */
+/* ── حالة الحفظ / أدوات داخلية ── */
 function clearLedgerForPayments(db: DB, refTypes: string[], payIds: number[]): void {
   if (payIds.length === 0) return
   const placeholders = payIds.map(() => '?').join(',')
@@ -244,6 +233,34 @@ function paymentIds(db: DB, table: string, where: string, ...params: any[]): num
    التسجيل الرئيسي للمعالجات
 ════════════════════════════════════════ */
 export function registerIpcHandlers(db: DB): void {
+  /** يسجّل معالجاً متزامناً محمياً بقفل الترخيص + try/catch موحّد */
+  const on = (channel: string, fn: (...args: any[]) => any): void => {
+    ipcMain.handle(channel, async (_event, ...args: any[]) => {
+      try {
+        assertLicenseUnlocked(db, channel)
+        return { success: true, data: fn(...args) }
+      } catch (err) {
+        return { success: false, error: toArabicError(err) }
+      }
+    })
+  }
+
+  /** يسجّل معالجاً غير متزامن (مثل مربعات الحوار) بنفس حماية قفل الترخيص */
+  const onAsync = (channel: string, fn: (...args: any[]) => Promise<any>): void => {
+    ipcMain.handle(channel, async (_event, ...args: any[]) => {
+      try {
+        assertLicenseUnlocked(db, channel)
+        return { success: true, data: await fn(...args) }
+      } catch (err) {
+        return { success: false, error: toArabicError(err) }
+      }
+    })
+  }
+
+  /* ─────────────── الترخيص والفترة التجريبية ─────────────── */
+  on('license:getStatus', () => getLicenseStatus(db))
+  on('license:activate', (code: string) => activateWithCode(db, code))
+
   /* ─────────────── روابط خارجية ─────────────── */
   // فتح رابط في المتصفح الافتراضي بدل نافذة التطبيق. نقيّد على http/https فقط
   // لمنع فتح مخططات خطيرة (file:, javascript:) عبر قناة الـ IPC.
@@ -789,25 +806,21 @@ export function registerIpcHandlers(db: DB): void {
   )
 
   /* ─────────────── النسخ الاحتياطي ─────────────── */
-  ipcMain.handle('backup:export', async () => {
-    try {
-      const dbPath = db.name
-      const dateStr = new Date().toISOString().slice(0, 10)
-      const { filePath, canceled } = await dialog.showSaveDialog({
-        title: 'حفظ نسخة احتياطية',
-        defaultPath: path.join(app.getPath('downloads'), `garage-backup-${dateStr}.db`),
-        filters: [{ name: 'SQLite Database', extensions: ['db'] }],
-      })
-      if (canceled || !filePath) return { success: true, data: null }
-      db.pragma('wal_checkpoint(FULL)')
-      fs.copyFileSync(dbPath, filePath)
-      return { success: true, data: filePath }
-    } catch (err) {
-      return { success: false, error: toArabicError(err) }
-    }
+  onAsync('backup:export', async () => {
+    const dbPath = db.name
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'حفظ نسخة احتياطية',
+      defaultPath: path.join(app.getPath('downloads'), `garage-backup-${dateStr}.db`),
+      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+    })
+    if (canceled || !filePath) return null
+    db.pragma('wal_checkpoint(FULL)')
+    fs.copyFileSync(dbPath, filePath)
+    return filePath
   })
 
-  ipcMain.handle('backup:import', async () => {
+  onAsync('backup:import', async () => {
     try {
       const dbPath = db.name
       const { filePaths, canceled } = await dialog.showOpenDialog({
@@ -815,7 +828,7 @@ export function registerIpcHandlers(db: DB): void {
         filters: [{ name: 'SQLite Database', extensions: ['db'] }],
         properties: ['openFile'],
       })
-      if (canceled || filePaths.length === 0) return { success: true, data: null }
+      if (canceled || filePaths.length === 0) return null
       const importPath = filePaths[0]
 
       // التحقق من أن الملف نسخة احتياطية صالحة للتطبيق
@@ -825,7 +838,7 @@ export function registerIpcHandlers(db: DB): void {
       ).get()
       db.prepare('DETACH DATABASE _imported_validate').run()
       if (!validTable) {
-        return { success: false, error: 'الملف اللي اخترته مش نسخة احتياطية صالحة للبرنامج' }
+        throw new Error('الملف اللي اخترته مش نسخة احتياطية صالحة للبرنامج')
       }
 
       // كلمة السر تخصّ الجهاز لا الملف: نلتقط حالة مصادقة الجهاز الحالية قبل
@@ -834,10 +847,6 @@ export function registerIpcHandlers(db: DB): void {
       const deviceAuth = readDeviceAuthState(db)
 
       // ── تجهيز على نسخة مؤقّتة أولاً ثم التبديل عند النجاح فقط ──
-      // نُحضّر النسخة المستوردة على ملف مؤقّت (ترقية بنيتها للبنية الحالية عبر
-      // applySchemaAndMigrations ثم تثبيت كلمة سر الجهاز). هكذا لو كانت النسخة
-      // قديمة/تالفة (مثلاً بلا جدول app_settings) يفشل التجهيز **دون أن نمسّ قاعدة
-      // الإنتاج إطلاقاً** — لا تبديل، لا فقدان بيانات، لا حاجة لاستعادة يدوية.
       const tempPath = `${dbPath}.import-tmp-${Date.now()}`
       const cleanupTemp = () => {
         for (const s of ['', '-wal', '-shm']) { try { fs.rmSync(tempPath + s, { force: true }) } catch { /* تجاهل */ } }
@@ -855,7 +864,7 @@ export function registerIpcHandlers(db: DB): void {
       } catch (err) {
         cleanupTemp()
         console.error('[backup:import prepare error]', err)
-        return { success: false, error: 'ما قدرنا نجهّز النسخة الاحتياطية للاستيراد، ممكن الملف تالف أو من إصدار قديم' }
+        throw new Error('ما قدرنا نجهّز النسخة الاحتياطية للاستيراد، ممكن الملف تالف أو من إصدار قديم')
       }
 
       // التجهيز نجح → الآن فقط نبدّل قاعدة الإنتاج (مع نسخة احتياطية أمان منها)
@@ -871,10 +880,10 @@ export function registerIpcHandlers(db: DB): void {
       // إعادة التشغيل
       app.relaunch()
       app.exit(0)
-      return { success: true, data: null }
+      return null
     } catch (err) {
       try { db.prepare('DETACH DATABASE _imported_validate').run() } catch { /* تجاهل */ }
-      return { success: false, error: toArabicError(err) }
+      throw err
     }
   })
 
@@ -885,14 +894,7 @@ export function registerIpcHandlers(db: DB): void {
   on('autoBackup:runNow', () => runAutoBackup(db))
   on('autoBackup:getStatus', () => getAutoBackupStatus(db))
 
-  ipcMain.handle('autoBackup:pickFolder', async () => {
-    try {
-      const folder = await pickAutoBackupFolder()
-      return { success: true, data: folder }
-    } catch (err) {
-      return { success: false, error: toArabicError(err) }
-    }
-  })
+  onAsync('autoBackup:pickFolder', () => pickAutoBackupFolder())
 
   /* ─────────────── الأمان: كلمة السر / القفل عند تجاوز المحاولات / القفل التلقائي / سجل النشاط ─────────────── */
   on('auth:needsPasswordSetup', () => needsPasswordSetup(db))
@@ -932,24 +934,20 @@ export function registerIpcHandlers(db: DB): void {
     return readGarageIdentity()
   })
 
-  ipcMain.handle('garageIdentity:pickLogo', async () => {
-    try {
-      const { filePaths, canceled } = await dialog.showOpenDialog({
-        title: 'اختيار شعار الكراج',
-        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
-        properties: ['openFile'],
-      })
-      if (canceled || filePaths.length === 0) return { success: true, data: null }
-      const filePath = filePaths[0]
-      const ext = path.extname(filePath).toLowerCase()
-      const mime =
-        ext === '.svg' ? 'image/svg+xml'
-        : ext === '.png' ? 'image/png'
-        : 'image/jpeg'
-      const base64 = fs.readFileSync(filePath).toString('base64')
-      return { success: true, data: `data:${mime};base64,${base64}` }
-    } catch (err) {
-      return { success: false, error: toArabicError(err) }
-    }
+  onAsync('garageIdentity:pickLogo', async () => {
+    const { filePaths, canceled } = await dialog.showOpenDialog({
+      title: 'اختيار شعار الكراج',
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
+      properties: ['openFile'],
+    })
+    if (canceled || filePaths.length === 0) return null
+    const filePath = filePaths[0]
+    const ext = path.extname(filePath).toLowerCase()
+    const mime =
+      ext === '.svg' ? 'image/svg+xml'
+      : ext === '.png' ? 'image/png'
+      : 'image/jpeg'
+    const base64 = fs.readFileSync(filePath).toString('base64')
+    return `data:${mime};base64,${base64}`
   })
 }

@@ -716,3 +716,13 @@ export interface GarageIdentitySettings {
   garage_name: string
   garage_logo: string
 }
+
+// ── الترخيص والفترة التجريبية ─────────────────────────────────────────────────
+export type LicenseStatusKind = 'licensed' | 'trial' | 'trial_expired' | 'hwid_error' | 'blocked'
+
+export interface LicenseStatus {
+  status: LicenseStatusKind
+  hwid: string | null
+  daysRemaining: number
+  trialEndAt: number | null
+}

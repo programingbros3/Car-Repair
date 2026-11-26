@@ -28,8 +28,21 @@ function resolveLicenseSecret(): string {
   return 'DEV_ONLY_INSECURE_LICENSE_SECRET_do_not_ship'
 }
 
+function resolveLicensePublicKey(): string | undefined {
+  const pubFile = path.join(__dirname, 'tools', 'public.pem')
+  if (fs.existsSync(pubFile)) {
+    const fromFile = fs.readFileSync(pubFile, 'utf-8').trim()
+    if (fromFile) return fromFile
+  }
+  return undefined
+}
+
 const LICENSE_SECRET = resolveLicenseSecret()
-const licenseDefine = { __LICENSE_SECRET__: JSON.stringify(LICENSE_SECRET) }
+const LICENSE_PUBLIC_KEY = resolveLicensePublicKey()
+const licenseDefine = {
+  __LICENSE_SECRET__: JSON.stringify(LICENSE_SECRET),
+  ...(LICENSE_PUBLIC_KEY ? { __LICENSE_PUBLIC_KEY__: JSON.stringify(LICENSE_PUBLIC_KEY) } : {}),
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({

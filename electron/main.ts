@@ -4,7 +4,7 @@ import path from 'node:path'
 import { initDB, getDB } from '../src/database'
 import { registerIpcHandlers } from './ipc-handlers'
 import { maybeRunAutoBackupOnStartup, runAutoBackupOnQuit } from './auto-backup'
-import { verifyOrBindDevice } from './license'
+import { initLicense, touchTrialLastSeen } from './license'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -27,6 +27,7 @@ export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
 
 let win: BrowserWindow | null
+let trialHeartbeatTimer: NodeJS.Timeout | null = null
 
 function createWindow() {
   win = new BrowserWindow({
@@ -87,11 +88,12 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   initDB()
 
-  // القفل الأمني: يتجاوز تلقائياً في وضع التطوير (npm run dev)
-  // ويشتغل فعلياً فقط في النسخة النهائية (exe) المسلَّمة للعميل
-  if (!VITE_DEV_SERVER_URL) {
-    const licenseResult = verifyOrBindDevice(getDB())
-    if (licenseResult === 'blocked') {
+  // القفل الأمني: يتجاوز تلقائياً في وضع التطوير (npm run dev) ما لم يُفعَّل صراحةً بـ GARAGE_ENFORCE_LICENSE=1
+  // ويشتغل فعلياً في النسخة النهائية (exe) المسلَّمة للعميل
+  let skipStartupBackup = false
+  if (!VITE_DEV_SERVER_URL || process.env.GARAGE_ENFORCE_LICENSE === '1') {
+    const licenseStatus = initLicense(getDB())
+    if (licenseStatus.status === 'blocked') {
       dialog.showErrorBox(
         'غير مصرح',
         'هذا البرنامج غير مصرح له بالعمل على هذا الجهاز. تواصل مع المطوّر.'
@@ -99,20 +101,35 @@ app.whenReady().then(() => {
       app.quit()
       return
     }
-    // H4: فشل قراءة معرّف الجهاز لا يعطّل الإقلاع — رسالة واضحة ثم متابعة
-    if (licenseResult === 'hwid_error') {
+    // 7: فشل قراءة معرّف الجهاز لا يقفل العميل — تحذير فقط ثم متابعة
+    if (licenseStatus.status === 'hwid_error') {
       dialog.showErrorBox(
         'تنبيه — التحقق من الترخيص',
         'تعذّرت قراءة معرّف هذا الجهاز، فلم يكتمل التحقق من الترخيص.\nسيستمر البرنامج بالعمل بشكل طبيعي. إذا تكررت هذه الرسالة تواصل مع المطوّر.'
       )
     }
+    if (licenseStatus.status === 'trial_expired') {
+      skipStartupBackup = true
+    }
+    if (licenseStatus.status === 'trial') {
+      // تحديث دوري لآخر وقت تشغيل أثناء بقاء التطبيق مفتوحاً (مقاومة ترجيع الساعة)
+      trialHeartbeatTimer = setInterval(() => {
+        try { touchTrialLastSeen(getDB(), false) } catch { /* تجاهل */ }
+      }, 15 * 60 * 1000)
+      trialHeartbeatTimer.unref()
+    }
   }
 
   registerIpcHandlers(getDB())
-  maybeRunAutoBackupOnStartup(getDB())
+  if (!skipStartupBackup) maybeRunAutoBackupOnStartup(getDB())
   createWindow()
 })
 
 app.on('before-quit', () => {
+  if (trialHeartbeatTimer) {
+    clearInterval(trialHeartbeatTimer)
+    trialHeartbeatTimer = null
+  }
+  try { touchTrialLastSeen(getDB(), true) } catch { /* تجاهل */ }
   runAutoBackupOnQuit(getDB())
 })
